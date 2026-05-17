@@ -2,31 +2,29 @@ import { computeArgsHash, canonicalStringify } from "./cache-keys.js";
 import * as repo from "./query-cache-repo.js";
 
 export const CACHEABLE_TOOLS = [
-  "wordstat_keywords",
+  "yandex_metrika_api",
+  "yandex_webmaster_api",
+  "yandex_direct_api",
   "mutagen_competition",
-  "webmaster_top_queries",
-  "metrika_search_phrases",
-  "webmaster_indexing_issues",
-  "webmaster_site_summary",
-  "metrika_traffic_summary",
 ] as const;
 export type CacheableTool = (typeof CACHEABLE_TOOLS)[number];
 
+const GENERIC_API_TOOLS = new Set<CacheableTool>(["yandex_metrika_api", "yandex_webmaster_api", "yandex_direct_api"]);
+
 const TTL_DEFAULTS: Record<CacheableTool, number> = {
-  wordstat_keywords:        7 * 24 * 3600,
-  mutagen_competition:     30 * 24 * 3600,
-  webmaster_top_queries:        1 * 3600,
-  metrika_search_phrases:       1 * 3600,
-  webmaster_indexing_issues:    1 * 3600,
-  webmaster_site_summary:       6 * 3600,
-  metrika_traffic_summary:      6 * 3600,
+  yandex_metrika_api:   3600,
+  yandex_webmaster_api: 3600,
+  yandex_direct_api:    3600,
+  mutagen_competition:  30 * 24 * 3600,
 };
 
 const ttlCache = new Map<CacheableTool, number>();
 
 export function getTtlForTool(name: CacheableTool): number {
   if (ttlCache.has(name)) return ttlCache.get(name)!;
-  const envKey = "MCP_YANDEX_SEO_CACHE_TTL_" + name.toUpperCase();
+  const envKey = GENERIC_API_TOOLS.has(name)
+    ? "MCP_YANDEX_SEO_CACHE_TTL_API"
+    : "MCP_YANDEX_SEO_CACHE_TTL_" + name.toUpperCase();
   const raw = process.env[envKey];
   const def = TTL_DEFAULTS[name];
   if (raw === undefined || raw === "") {
@@ -50,6 +48,7 @@ export async function withCache<T>(
     accountId: number | null;
     args: Record<string, unknown>;
     forceRefresh: boolean;
+    skipCacheIf?: (result: T) => boolean;
   },
   fn: () => Promise<T>,
 ): Promise<T> {
@@ -65,6 +64,7 @@ export async function withCache<T>(
   }
 
   const result = await fn(); // throws → no cache write
+  if (opts.skipCacheIf?.(result)) return result;
   const ttl = getTtlForTool(opts.toolName);
   const { force_refresh: _ignored, ...rest } = opts.args ?? {};
   const argsJson = canonicalStringify({ tool: opts.toolName, account_id: opts.accountId, args: rest });

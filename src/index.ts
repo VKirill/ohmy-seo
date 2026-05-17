@@ -8,12 +8,6 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { getMasterKey } from "./lib/crypto/master-key.js";
-import { runWebmasterSiteSummary } from "./tools/webmaster-site-summary.js";
-import { runWebmasterTopQueries } from "./tools/webmaster-top-queries.js";
-import { runWebmasterIndexingIssues } from "./tools/webmaster-indexing-issues.js";
-import { runMetrikaSearchPhrases } from "./tools/metrika-search-phrases.js";
-import { runMetrikaTrafficSummary } from "./tools/metrika-traffic-summary.js";
-import { runWordstatKeywords } from "./tools/wordstat-keywords.js";
 import { runMutagenCompetition } from "./tools/mutagen-competition.js";
 import { runListOauthApps } from "./tools/oauth-list-apps.js";
 import { runRegisterOauthApp } from "./tools/oauth-register-app.js";
@@ -29,20 +23,28 @@ import { runFindProperty } from "./tools/find-property.js";
 import { runRefreshInventory } from "./tools/refresh-inventory.js";
 import { runInvalidateCache } from "./tools/invalidate-cache.js";
 import { runCacheStats } from "./tools/cache-stats.js";
+import { runYandexMetrikaApi } from "./tools/yandex-metrika-api.js";
+import { runYandexWebmasterApi } from "./tools/yandex-webmaster-api.js";
+import { runYandexDirectApi } from "./tools/yandex-direct-api.js";
 
 const READ_ONLY = { readOnlyHint: true, openWorldHint: true, idempotentHint: false };
 
 const server = new McpServer(
-  { name: "mcp-yandex-seo", version: "0.2.0" },
+  { name: "mcp-yandex-seo", version: "0.5.0" },
   {
     instructions:
-      "You have access to mcp-yandex-seo: 7 read-only tools for Russian SEO analytics. " +
-      "- webmaster_site_summary / webmaster_top_queries / webmaster_indexing_issues — Yandex Webmaster diagnostics (SQI, top queries, errors). " +
-      "- metrika_search_phrases / metrika_traffic_summary — Yandex Metrika traffic and organic search analytics. " +
-      "- wordstat_keywords — Russian keyword research via Yandex Direct Wordstat (volumes, related phrases). " +
-      "- mutagen_competition — keyword competition scoring via Mutagen (1-25 scale + cost estimates). " +
-      "All tools call external APIs. On rate-limit errors, wait the seconds suggested in the error text before retry. " +
-      "Domain tools accept an optional 'account' parameter to select a specific connected Yandex account.",
+      "You have access to mcp-yandex-seo: 18 tools for Russian SEO analytics and Yandex API access. " +
+      "Generic API gateways (use these for full API coverage): " +
+      "yandex_metrika_api — any Yandex Metrika endpoint; see skill yandex-metrica (cookbook.md) for examples. " +
+      "yandex_webmaster_api — any Yandex Webmaster endpoint; see skill yandex-webmaster (cookbook.md). " +
+      "yandex_direct_api — any Yandex Direct v5 endpoint (Bearer auth, optional client_login); see skill yandex-direct (cookbook.md). " +
+      "mutagen_competition — keyword competition scoring via Mutagen (1-25 scale + cost estimates). " +
+      "Inventory tools: list_sites, list_counters, find_property, refresh_inventory. " +
+      "OAuth management: list_oauth_apps, register_oauth_app, delete_oauth_app, list_accounts, start_oauth_flow, complete_oauth_flow, delete_account, set_default_account. " +
+      "Cache tools: invalidate_cache, cache_stats. " +
+      "GET responses are cached (TTL MCP_YANDEX_SEO_CACHE_TTL_API, default 3600 s). " +
+      "On rate-limit errors, wait the seconds suggested in the error text before retry. " +
+      "Most tools accept an optional 'account' parameter to select a specific connected Yandex account.",
   },
 );
 
@@ -54,140 +56,6 @@ function validateRequiredEnv(): void {
     process.exit(1);
   }
 }
-
-server.registerTool(
-  "webmaster_site_summary",
-  {
-    title: "Yandex Webmaster — Site Summary",
-    description:
-      "Returns a diagnostic summary for a Yandex Webmaster host: SQI (Site Quality Index), " +
-      "number of pages in the Yandex index, count of active diagnostics issues, and the " +
-      "timestamp of the last crawl. Results are cached for 6 hours unless force_refresh:true is passed. " +
-      "Use this tool to get a quick health-check of a site's standing in Yandex before diving into specific issues or query data.",
-    inputSchema: {
-      host_id: z.string().optional().describe('Webmaster host ID, format "https:example.com:443"'),
-      site: z.string().min(1).optional().describe("Site domain or URL substring; alternative to host_id for fuzzy lookup"),
-      account: z.string().min(1).optional().describe("Account label from list_accounts (optional if exactly one matching account or one is_default)"),
-      force_refresh: z.boolean().optional().default(false).describe("If true, bypass cache read and re-fetch from upstream API, overwriting any cached entry."),
-    },
-    annotations: READ_ONLY,
-  },
-  async (args) => runWebmasterSiteSummary({ host_id: args.host_id, site: args.site, account: args.account }),
-);
-
-server.registerTool(
-  "webmaster_top_queries",
-  {
-    title: "Yandex Webmaster — Top Search Queries",
-    description:
-      "Returns the top organic search queries for a Yandex Webmaster host over the specified " +
-      "date range: impressions, clicks, CTR, and average position in Yandex SERP. Supports " +
-      "filtering by query text and limiting result count. Results are cached for 1 hour unless force_refresh:true is passed. " +
-      "Use this to analyse keyword performance and identify queries that drive the most (or least) organic traffic.",
-    inputSchema: {
-      host_id: z.string().optional().describe('Webmaster host ID, format "https:example.com:443"'),
-      site: z.string().min(1).optional().describe("Site domain or URL substring; alternative to host_id for fuzzy lookup"),
-      date_from: z.string().describe("Start date YYYY-MM-DD"),
-      date_to: z.string().describe("End date YYYY-MM-DD"),
-      limit: z.number().int().min(1).max(500).default(50).describe("Max rows to return (default 50, max 500)"),
-      query_filter: z.string().optional().describe("Optional substring filter applied to query text"),
-      account: z.string().min(1).optional().describe("Account label from list_accounts (optional if exactly one matching account or one is_default)"),
-      force_refresh: z.boolean().optional().default(false).describe("If true, bypass cache read and re-fetch from upstream API, overwriting any cached entry."),
-    },
-    annotations: READ_ONLY,
-  },
-  async (args) => runWebmasterTopQueries({ host_id: args.host_id, site: args.site, date_from: args.date_from, date_to: args.date_to, limit: args.limit, query_filter: args.query_filter, account: args.account }),
-);
-
-server.registerTool(
-  "webmaster_indexing_issues",
-  {
-    title: "Yandex Webmaster — Indexing Issues",
-    description:
-      "Returns the current list of diagnostic issues for a Yandex Webmaster host, including " +
-      "critical errors, warnings, and informational notices about crawl and indexing problems. " +
-      "Each item includes issue type, severity level, and affected URL count. Results are cached for 1 hour unless force_refresh:true is passed. " +
-      "Use this tool to detect and prioritise technical SEO problems that may suppress rankings in Yandex.",
-    inputSchema: {
-      host_id: z.string().optional().describe('Webmaster host ID, format "https:example.com:443"'),
-      site: z.string().min(1).optional().describe("Site domain or URL substring; alternative to host_id for fuzzy lookup"),
-      account: z.string().min(1).optional().describe("Account label from list_accounts (optional if exactly one matching account or one is_default)"),
-      force_refresh: z.boolean().optional().default(false).describe("If true, bypass cache read and re-fetch from upstream API, overwriting any cached entry."),
-    },
-    annotations: READ_ONLY,
-  },
-  async (args) => runWebmasterIndexingIssues({ host_id: args.host_id, site: args.site, account: args.account }),
-);
-
-server.registerTool(
-  "metrika_search_phrases",
-  {
-    title: "Yandex Metrika — Top Organic Search Phrases",
-    description:
-      "Returns the top organic search phrases for a Yandex Metrika counter over the specified " +
-      "date range, filtered to organic search traffic only. Metrics per phrase include visits, " +
-      "bounce rate, and page depth. Results are cached for 1 hour unless force_refresh:true is passed. " +
-      "Use this tool to understand which search queries actually drive engaged users to the site, complementing Webmaster impressions/click data.",
-    inputSchema: {
-      counter_id: z.string().optional().describe("Metrika counter ID (numeric string)"),
-      site: z.string().min(1).optional().describe("Counter name or site substring; alternative to counter_id for fuzzy lookup"),
-      date_from: z.string().describe("Start date YYYY-MM-DD"),
-      date_to: z.string().describe("End date YYYY-MM-DD"),
-      limit: z.number().int().min(1).max(200).default(50).describe("Max rows to return (default 50, max 200)"),
-      search_engine: z.enum(["yandex", "google", "all"]).default("all").describe("Filter by search engine"),
-      account: z.string().min(1).optional().describe("Account label from list_accounts (optional if exactly one matching account or one is_default)"),
-      force_refresh: z.boolean().optional().default(false).describe("If true, bypass cache read and re-fetch from upstream API, overwriting any cached entry."),
-    },
-    annotations: READ_ONLY,
-  },
-  async (args) => runMetrikaSearchPhrases({ counter_id: args.counter_id, site: args.site, date_from: args.date_from, date_to: args.date_to, limit: args.limit, search_engine: args.search_engine, account: args.account }),
-);
-
-server.registerTool(
-  "metrika_traffic_summary",
-  {
-    title: "Yandex Metrika — Traffic Summary by Source",
-    description:
-      "Returns aggregated traffic metrics for a Yandex Metrika counter broken down by traffic " +
-      "source (organic search, direct, referral, social, ad). Metrics include visits, unique " +
-      "visitors, and pageviews per source. Results are cached for 6 hours unless force_refresh:true is passed. " +
-      "Use this tool to assess the overall traffic mix and measure how much Yandex organic contributes relative to other channels.",
-    inputSchema: {
-      counter_id: z.string().optional().describe("Metrika counter ID (numeric string)"),
-      site: z.string().min(1).optional().describe("Counter name or site substring; alternative to counter_id for fuzzy lookup"),
-      date_from: z.string().describe("Start date YYYY-MM-DD"),
-      date_to: z.string().describe("End date YYYY-MM-DD"),
-      group_by: z.enum(["day", "week", "month", "none"]).default("none").describe("Group results by time period"),
-      account: z.string().min(1).optional().describe("Account label from list_accounts (optional if exactly one matching account or one is_default)"),
-      force_refresh: z.boolean().optional().default(false).describe("If true, bypass cache read and re-fetch from upstream API, overwriting any cached entry."),
-    },
-    annotations: READ_ONLY,
-  },
-  async (args) => runMetrikaTrafficSummary({ counter_id: args.counter_id, site: args.site, date_from: args.date_from, date_to: args.date_to, group_by: args.group_by, account: args.account }),
-);
-
-server.registerTool(
-  "wordstat_keywords",
-  {
-    title: "Yandex Direct Wordstat — Keyword Research",
-    description:
-      "Returns monthly search volume estimates and related keyword suggestions from Yandex " +
-      "Direct Wordstat for one or more seed phrases. Optionally filters by region (geo_id). " +
-      "Results include phrase-match and broad-match frequency counts plus a list of associated queries. " +
-      "Results are cached for 7 days unless force_refresh:true is passed. " +
-      "Use this tool for keyword research, cluster seeding, and demand estimation in the Russian-language search market.",
-    inputSchema: {
-      phrases: z.array(z.string().min(1)).min(1).max(10).describe("Seed phrases to research (1-10)"),
-      geo_id: z.array(z.number().int()).optional().describe("Yandex region IDs to filter by (optional)"),
-      poll_timeout_sec: z.number().int().min(30).max(300).default(120).describe("Max seconds to wait for Wordstat report (default 120)"),
-      client_login: z.string().optional().describe("Yandex Direct agency client login (optional)"),
-      account: z.string().min(1).optional().describe("Account label from list_accounts (optional if exactly one matching account or one is_default)"),
-      force_refresh: z.boolean().optional().default(false).describe("If true, bypass cache read and re-fetch from upstream API, overwriting any cached entry."),
-    },
-    annotations: READ_ONLY,
-  },
-  async (args) => runWordstatKeywords({ phrases: args.phrases, geo_id: args.geo_id, poll_timeout_sec: args.poll_timeout_sec, client_login: args.client_login, account: args.account }),
-);
 
 server.registerTool(
   "mutagen_competition",
@@ -512,13 +380,10 @@ server.registerTool(
     inputSchema: {
       tool: z
         .enum([
-          "wordstat_keywords",
+          "yandex_metrika_api",
+          "yandex_webmaster_api",
+          "yandex_direct_api",
           "mutagen_competition",
-          "webmaster_top_queries",
-          "metrika_search_phrases",
-          "webmaster_indexing_issues",
-          "webmaster_site_summary",
-          "metrika_traffic_summary",
         ])
         .optional()
         .describe("Restrict invalidation to a specific cacheable tool (optional)"),
@@ -553,11 +418,100 @@ server.registerTool(
   async () => runCacheStats(),
 );
 
+const GENERIC_API_INPUT = {
+  endpoint: z.string().min(1).describe("API endpoint path, e.g. '/user/2/hosts' or '/stat/v1/data'"),
+  method: z.enum(["GET", "POST", "PUT", "DELETE"]).optional().describe("HTTP method (default: GET)"),
+  params: z.record(z.string(), z.unknown()).optional().describe("Query string parameters as key-value object (GET requests)"),
+  body: z.unknown().optional().describe("Request body for POST/PUT requests (will be JSON-serialised)"),
+  account: z.string().min(1).optional().describe("Account label from list_accounts (optional if one default account is configured)"),
+  force_refresh: z.boolean().optional().describe("If true, bypass cache read and re-fetch from upstream API, overwriting any cached entry"),
+};
+
+server.registerTool(
+  "yandex_metrika_api",
+  {
+    title: "Yandex Metrika — Generic API Gateway",
+    description:
+      "Direct gateway to Yandex Metrika (Яндекс.Метрика) REST API. Pass any endpoint path, " +
+      "HTTP method, query params, and optional body — the tool handles OAuth, caching (TTL " +
+      "MCP_YANDEX_SEO_CACHE_TTL_API, default 3600 s), and error normalisation. " +
+      "GET responses are cached; POST/PUT/DELETE bypass cache and invalidate related GET entries. " +
+      "Endpoint catalog and usage examples: see skill yandex-metrica (cookbook.md). " +
+      "Example: endpoint='/stat/v1/data', params={id:'12345', metrics:'ym:s:visits', date1:'2024-01-01', date2:'2024-01-31'}.",
+    inputSchema: GENERIC_API_INPUT,
+    annotations: READ_ONLY,
+  },
+  async (args) =>
+    runYandexMetrikaApi({
+      endpoint: args.endpoint,
+      method: args.method,
+      params: args.params,
+      body: args.body,
+      account: args.account,
+      force_refresh: args.force_refresh,
+    }),
+);
+
+server.registerTool(
+  "yandex_webmaster_api",
+  {
+    title: "Yandex Webmaster — Generic API Gateway",
+    description:
+      "Direct gateway to Yandex Webmaster REST API. Pass any endpoint path, HTTP method, " +
+      "query params, and optional body — the tool handles OAuth, caching (TTL " +
+      "MCP_YANDEX_SEO_CACHE_TTL_API, default 3600 s), and error normalisation. " +
+      "GET responses are cached; POST/PUT/DELETE bypass cache and invalidate related GET entries. " +
+      "Endpoint catalog and usage examples: see skill yandex-webmaster (cookbook.md). " +
+      "Example: endpoint='/user/2/hosts', method='GET' to list all verified sites in Yandex Webmaster.",
+    inputSchema: GENERIC_API_INPUT,
+    annotations: READ_ONLY,
+  },
+  async (args) =>
+    runYandexWebmasterApi({
+      endpoint: args.endpoint,
+      method: args.method,
+      params: args.params,
+      body: args.body,
+      account: args.account,
+      force_refresh: args.force_refresh,
+    }),
+);
+
+server.registerTool(
+  "yandex_direct_api",
+  {
+    title: "Yandex Direct — Generic API Gateway",
+    description:
+      "Direct gateway to Yandex Direct API v5 (Яндекс.Директ). Pass any endpoint path, " +
+      "HTTP method, query params, and optional body — the tool handles Bearer OAuth auth, " +
+      "optional Client-Login header for agency accounts, caching (TTL " +
+      "MCP_YANDEX_SEO_CACHE_TTL_API, default 3600 s), and error normalisation. " +
+      "GET responses are cached; POST/PUT/DELETE bypass cache and invalidate related GET entries. " +
+      "Endpoint catalog and usage examples: see skill yandex-direct (cookbook.md). " +
+      "Pass client_login for agency sub-client access.",
+    inputSchema: {
+      ...GENERIC_API_INPUT,
+      client_login: z.string().optional().describe("Yandex Direct agency client login for sub-client access (optional)"),
+    },
+    annotations: READ_ONLY,
+  },
+  async (args) =>
+    runYandexDirectApi({
+      endpoint: args.endpoint,
+      method: args.method,
+      params: args.params,
+      body: args.body,
+      account: args.account,
+      client_login: args.client_login,
+      force_refresh: args.force_refresh,
+    }),
+);
+
 async function main(): Promise<void> {
   validateRequiredEnv();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("mcp-yandex-seo v0.2.0 running via stdio");
+  console.error("mcp-yandex-seo v0.5.0 running via stdio");
 }
 
 main().catch((err: Error) => {

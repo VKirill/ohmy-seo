@@ -15,10 +15,5 @@ export function hasScope(grantedScopes: string, required: Scope): boolean {
 }
 
 export const REQUIRED_SCOPE_BY_TOOL: Record<string, Scope> = {
-  webmaster_site_summary: SCOPES.WEBMASTER_HOSTINFO,
-  webmaster_top_queries: SCOPES.WEBMASTER_HOSTINFO,
-  webmaster_indexing_issues: SCOPES.WEBMASTER_HOSTINFO,
-  metrika_search_phrases: SCOPES.METRIKA_READ,
-  metrika_traffic_summary: SCOPES.METRIKA_READ,
-  wordstat_keywords: SCOPES.DIRECT_API,
+  mutagen_competition: SCOPES.DIRECT_API,
 };

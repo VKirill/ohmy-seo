@@ -2,6 +2,7 @@ import { getAccountByLabel } from "../lib/db/accounts-repo.js";
 import { deleteWhere } from "../lib/cache/query-cache-repo.js";
 import { errorToMcpContent } from "../lib/errors.js";
 import { CACHEABLE_TOOLS } from "../lib/cache/cache-policy.js";
+// Valid tool values: yandex_metrika_api | yandex_webmaster_api | yandex_direct_api | mutagen_competition
 
 export async function runInvalidateCache(input: {
   tool?: string;

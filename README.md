@@ -1,12 +1,13 @@
-# mcp-yandex-seo v0.3.0
+# mcp-yandex-seo v0.5.0
 
-MCP server for Claude Code providing 19 tools for Russian-language SEO via Yandex Webmaster,
-Metrika, Wordstat (Direct), and Mutagen. v0.2 adds multi-account OAuth management: you register
-one or more OAuth apps, connect Yandex accounts via Authorization Code flow, and all domain tools
-resolve the right token automatically. Secrets are encrypted in a local SQLite database using
-AES-256-GCM. v0.3 adds an inventory cache (list_sites, list_counters, find_property,
-refresh_inventory) with 24h stale-while-revalidate TTL and a `site` shorthand for all domain
-tools.
+MCP server for Claude Code providing 18 tools for Russian-language SEO via Yandex Webmaster,
+Metrika, Direct, and Mutagen. Multi-account OAuth management: register one or more OAuth apps,
+connect Yandex accounts via Authorization Code flow, and all domain tools resolve the right token
+automatically. Secrets are encrypted in a local SQLite database using AES-256-GCM.
+
+v0.5 replaces six narrow domain tools with three generic API gateways (`yandex_metrika_api`,
+`yandex_webmaster_api`, `yandex_direct_api`) that accept any endpoint + method + params/body,
+covering ~100% of each Yandex API instead of the former ~10%. See migration table below.
 
 ## Prerequisites
 
@@ -70,20 +71,19 @@ complete_oauth_flow({ account_label: "kirill", code: "<7-char code>" })
 The account is now stored, tokens are encrypted. Refresh happens automatically when the token
 nears expiry.
 
-## Use any domain tool
+## Use any API tool
 
 ```
-webmaster_top_queries({
+yandex_webmaster_api({
   account: "kirill",
-  host_id: "https:treba.pro:443",
-  date_from: "2026-05-01",
-  date_to: "2026-05-15"
+  endpoint: "/user/2/hosts/https:treba.pro:443/search-queries/all/history",
+  params: { date_from: "2026-05-01", date_to: "2026-05-15" }
 })
 ```
 
 You can omit `account` if only one account exists or one is marked as default.
 
-## All 19 tools
+## All 18 tools
 
 ### OAuth management (8 tools)
 
@@ -98,87 +98,86 @@ You can omit `account` if only one account exists or one is marked as default.
 | `delete_account` | Remove an account from the local database |
 | `set_default_account` | Mark one account as default for tools that resolve automatically |
 
-### Domain tools (7 tools)
+### Inventory (4 tools)
 
 | Tool | What it does |
 |---|---|
-| `webmaster_site_summary` | Host SQI, pages indexed, last crawl, issue count |
-| `webmaster_top_queries` | Top queries: impressions/clicks/CTR/position for a date range |
-| `webmaster_indexing_issues` | Diagnostic indexing problems for a host |
-| `metrika_search_phrases` | Top organic search phrases with engagement metrics |
-| `metrika_traffic_summary` | Traffic summary by source for a date range |
-| `wordstat_keywords` | Keyword research via Direct Wordstat (frequencies + related) |
-| `mutagen_competition` | Competition score 1–25 + CPC estimate for phrases |
-
-All 7 domain tools accept an optional `account` parameter (account label).
-
-## Inventory
-
-The MCP keeps a local cache of all Webmaster sites and Metrika counters available to your
-connected accounts. Cache TTL is 24 hours by default (configurable via
-`MCP_YANDEX_SEO_CACHE_TTL_HOURS`). The behavior is **stale-while-revalidate**: if cached
-data is older than the TTL, the call returns immediately with the stale rows and
-triggers an async refresh in the background.
-
-### Inventory tools
-
-| Tool | What it does |
-|---|---|
-| `list_sites({account?})` | Webmaster hosts for one or all accounts (lazy refresh on cold cache) |
-| `list_counters({account?})` | Metrika counters for one or all accounts |
+| `list_sites` | Webmaster hosts for one or all accounts (lazy refresh on cold cache) |
+| `list_counters` | Metrika counters for one or all accounts |
 | `find_property({query, kind?})` | Case-insensitive substring search; returns host_id/counter_id + account |
 | `refresh_inventory({account?, kind?})` | Force refresh; without args refreshes all accounts × kinds |
 
-### Using `site` instead of `host_id` / `counter_id`
+Cache TTL is 24 hours by default (configurable via `MCP_YANDEX_SEO_CACHE_TTL_HOURS`).
+The behavior is **stale-while-revalidate**: if cached data is older than the TTL, the call
+returns immediately with the stale rows and triggers an async refresh in the background.
 
-All five domain tools (`webmaster_*`, `metrika_*`) accept an optional `site` parameter as an
-alternative to `host_id` / `counter_id`. Example:
-
-```
-webmaster_top_queries({site: "treba.pro", date_from: "2026-05-01", date_to: "2026-05-15"})
-```
-
-The MCP resolves the site name via property-resolver. If the substring matches multiple
-candidates with equal score, the tool returns an `AmbiguousSiteError` with the candidate
-list — pass `account` filter or use direct `host_id` to disambiguate.
-
-## Query Result Cache
-
-Seven domain tools cache their results in a local SQLite table (`query_cache`) keyed by
-a SHA-256 hash of normalized arguments + account_id. Repeat calls with identical inputs
-return the cached result without hitting Yandex / Mutagen.
-
-### Default TTLs
-
-| Tool | TTL |
-|---|---|
-| `wordstat_keywords` | 7 days |
-| `mutagen_competition` | 30 days |
-| `webmaster_top_queries` | 1 hour |
-| `metrika_search_phrases` | 1 hour |
-| `webmaster_indexing_issues` | 1 hour |
-| `webmaster_site_summary` | 6 hours |
-| `metrika_traffic_summary` | 6 hours |
-
-Override any TTL via `MCP_YANDEX_SEO_CACHE_TTL_<TOOLNAME>=<seconds>` env var
-(see `.env.example`).
-
-### Cache management tools
+### Cache management (2 tools)
 
 | Tool | What it does |
 |---|---|
 | `invalidate_cache({tool?, account?, older_than_hours?})` | Manual wipe with optional AND filters |
 | `cache_stats({})` | total entries, DB size, top-10 tools by hits, 24h activity |
 
-### Force-refresh
+**force_refresh:** every cacheable tool accepts `force_refresh: true` to bypass cache read and
+overwrite the entry. Use when upstream data is known to have changed.
 
-Every cacheable tool accepts `force_refresh: true` to bypass cache read and overwrite
-the entry. Use when upstream data is known to have changed.
+### Yandex API (4 tools)
 
-### Smart routing
+| Tool | What it does |
+|---|---|
+| `yandex_metrika_api` | Generic gateway to any Yandex Metrika endpoint (GET cached, POST/PUT/DELETE invalidate) |
+| `yandex_webmaster_api` | Generic gateway to any Yandex Webmaster endpoint |
+| `yandex_direct_api` | Generic gateway to any Yandex Direct v5 endpoint (Bearer auth + optional `client_login`) |
+| `mutagen_competition` | Keyword competition score 1–25 + CPC estimate for phrases via Mutagen |
 
-Domain tools auto-resolve `account` when an explicit `host_id` is uniquely owned by one
-account in the local inventory. Explicit `account` parameter always wins.
+All three generic tools accept `endpoint`, `method` (default GET), `params`, `body`,
+`account`, and `force_refresh`. `yandex_direct_api` additionally accepts `client_login` for
+agency sub-client access.
+
+**GET responses are cached** with TTL `MCP_YANDEX_SEO_CACHE_TTL_API` (default 3600 s).
+POST/PUT/DELETE bypass the cache and automatically invalidate related GET entries.
+
+**Endpoint catalog:** full lists of endpoints, parameters, and usage examples live in skill
+files on this machine:
+- `~/.claude/skills/yandex-metrica/` — Yandex Metrika API (cookbook.md)
+- `~/.claude/skills/yandex-webmaster/` — Yandex Webmaster API (cookbook.md)
+- `~/.claude/skills/yandex-direct/` — Yandex Direct API v5 (cookbook.md, Reports lifecycle)
+
+## Smart routing
+
+Domain tools auto-resolve `account` when an explicit endpoint contains a `host_id` uniquely
+owned by one account in the local inventory. Explicit `account` parameter always wins.
+
+## Migrating from v0.4
+
+v0.5 is a **breaking change**. Six narrow tools are removed. Use the generic gateways instead:
+
+| Deleted v0.4 tool | v0.5 replacement |
+|---|---|
+| `webmaster_site_summary` | `yandex_webmaster_api({endpoint: "/user/{user_id}/hosts/{host_id}/summary"})` |
+| `webmaster_top_queries` | `yandex_webmaster_api({endpoint: "/user/{user_id}/hosts/{host_id}/search-queries/all/history", params: {date_from, date_to}})` |
+| `webmaster_indexing_issues` | `yandex_webmaster_api({endpoint: "/user/{user_id}/hosts/{host_id}/diagnostics/problems"})` |
+| `metrika_search_phrases` | `yandex_metrika_api({endpoint: "/stat/v1/data", params: {id: counter_id, dimensions: "ym:s:searchPhrase", metrics: "ym:s:visits", ...}})` |
+| `metrika_traffic_summary` | `yandex_metrika_api({endpoint: "/stat/v1/data", params: {id: counter_id, dimensions: "ym:s:trafficSource", metrics: "ym:s:visits", ...}})` |
+| `wordstat_keywords` | `yandex_direct_api({endpoint: "/v5/keywordresearch", method: "POST", body: {method: "hasSearchVolume", params: {...}}})` |
+
+**After upgrading from v0.4:** run `invalidate_cache({})` to clean orphan cache entries
+that reference the deleted tool names.
+
+See `~/.claude/skills/yandex-webmaster/references/cookbook.md` and sibling cookbooks for
+complete endpoint examples.
+
+## Query Result Cache
+
+The three generic API tools and `mutagen_competition` cache GET results in a local SQLite
+table (`query_cache`) keyed by a SHA-256 hash of normalized arguments + account_id.
+
+| Tool | TTL |
+|---|---|
+| `yandex_metrika_api` | 3600 s (1 hour) — override with `MCP_YANDEX_SEO_CACHE_TTL_API` |
+| `yandex_webmaster_api` | 3600 s (1 hour) — same env var |
+| `yandex_direct_api` | 3600 s (1 hour) — same env var |
+| `mutagen_competition` | 30 days — override with `MCP_YANDEX_SEO_CACHE_TTL_MUTAGEN_COMPETITION` |
 
 ## Troubleshooting
 
@@ -196,9 +195,9 @@ Register an OAuth app with that scope, then connect an account via `start_oauth_
 The probe at `complete_oauth_flow` failed. Reconnect: `delete_account` → `start_oauth_flow` →
 `complete_oauth_flow`.
 
-## Migrating from v0.1
+## Migrating from v0.1 / v0.2
 
-v0.2 is a **breaking change**. The following env vars are removed and no longer read:
+v0.2 is a breaking change. The following env vars are removed and no longer read:
 
 | Removed in v0.2 | Was used for |
 |---|---|
@@ -214,7 +213,6 @@ Replace these with the OAuth app + account flow described above.
 - Tokens and `client_secret` are encrypted with AES-256-GCM; the master key lives only in env.
 - `data/state.db` is created with `chmod 0600` — readable only by the owning user.
 - The master key is never logged or included in tool responses.
-- v0.5 will move master key storage to the OS keychain.
 
 ## Smoke test
 
@@ -224,10 +222,9 @@ export MCP_YANDEX_SEO_MASTER_KEY=$(openssl rand -hex 32)
 export SMOKE_OAUTH_CLIENT_ID=<your_client_id>
 export SMOKE_OAUTH_CLIENT_SECRET=<your_client_secret>
 export SMOKE_ACCESS_TOKEN=<your_access_token>   # skips browser flow
-export SMOKE_TEST_HOST=https:treba.pro:443
-export SMOKE_TEST_COUNTER=12345
 npm run smoke
 # For mutagen: SMOKE_MUTAGEN=1 npm run smoke -- --only=mutagen
+# Generic API: npm run smoke -- --only=generic
 ```
 
 Without `SMOKE_ACCESS_TOKEN` the runner prints the authorize URL and exits cleanly (code 0).
@@ -238,8 +235,9 @@ See [docs/plans/mcp-yandex-seo/ROADMAP.md](docs/plans/mcp-yandex-seo/ROADMAP.md)
 versions:
 
 - v0.3 — Inventory cache (list_sites, find_property, list_counters) ✓ done
-- v0.4 — Query result cache with TTL (Wordstat/Mutagen)
-- v0.5 — OS keychain for master key (keytar)
+- v0.4 — Query result cache with TTL ✓ done
+- v0.5 — Generic API gateway (3 tools) ✓ done
+- v0.6 — OS keychain for master key, audit log, per-endpoint TTL patterns
 
 ## License
 

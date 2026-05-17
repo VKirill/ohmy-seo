@@ -1,18 +1,18 @@
 /**
- * Smoke runner — exercises each tool group with real Yandex OAuth (v0.2 multi-account flow).
+ * Smoke runner — exercises each tool group with real Yandex OAuth (v0.5 generic gateway flow).
  * Output goes to stderr only (safe for MCP stdio).
  *
  * Usage:
  *   npm run smoke                       # all groups
  *   npm run smoke -- --only=oauth-setup
- *   npm run smoke -- --only=webmaster
- *   npm run smoke -- --only=metrika
- *   npm run smoke -- --only=wordstat
+ *   npm run smoke -- --only=generic
  *   npm run smoke -- --only=mutagen     # also requires SMOKE_MUTAGEN=1
+ *   npm run smoke -- --only=inventory
+ *   npm run smoke -- --only=cache
  *
  * Env vars (smoke-only): MCP_YANDEX_SEO_MASTER_KEY (required), SMOKE_OAUTH_CLIENT_ID/SECRET,
  * SMOKE_OAUTH_SCOPES, SMOKE_ACCESS_TOKEN, SMOKE_REFRESH_TOKEN, SMOKE_CODE,
- * SMOKE_TEST_HOST, SMOKE_TEST_COUNTER, MUTAGEN_API_KEY, SMOKE_MUTAGEN.
+ * MUTAGEN_API_KEY, SMOKE_MUTAGEN.
  */
 
 import { config as dotenvConfig } from "dotenv";
@@ -42,18 +42,14 @@ import { insertAccount, deleteAccount } from "./lib/db/accounts-repo.js";
 import { buildAuthorizeUrl, exchangeCode } from "./lib/oauth/yandex-flow.js";
 import { probeLogin, probeWebmasterUserId } from "./lib/oauth/login-probe.js";
 
-import { runWebmasterSiteSummary } from "./tools/webmaster-site-summary.js";
-import { runWebmasterTopQueries } from "./tools/webmaster-top-queries.js";
-import { runWebmasterIndexingIssues } from "./tools/webmaster-indexing-issues.js";
-import { runMetrikaSearchPhrases } from "./tools/metrika-search-phrases.js";
-import { runMetrikaTrafficSummary } from "./tools/metrika-traffic-summary.js";
-import { runWordstatKeywords } from "./tools/wordstat-keywords.js";
 import { runMutagenCompetition } from "./tools/mutagen-competition.js";
 import { runRefreshInventory } from "./tools/refresh-inventory.js";
 import { runListSites } from "./tools/list-sites.js";
 import { runFindProperty } from "./tools/find-property.js";
 import { runInvalidateCache } from "./tools/invalidate-cache.js";
 import { runCacheStats } from "./tools/cache-stats.js";
+import { runYandexWebmasterApi } from "./tools/yandex-webmaster-api.js";
+import { runYandexMetrikaApi } from "./tools/yandex-metrika-api.js";
 import { withCache } from "./lib/cache/cache-policy.js";
 import * as cacheRepo from "./lib/cache/query-cache-repo.js";
 
@@ -65,15 +61,6 @@ const log = (msg: string): void => {
   process.stderr.write("[smoke] " + msg + "\n");
 };
 
-function isoDateDaysAgo(n: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return d.toISOString().slice(0, 10);
-}
-
-function isoToday(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 function previewText(result: unknown): string {
   const r = result as { content?: Array<{ text?: string }> };
@@ -246,45 +233,91 @@ async function runOauthSetup(): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
-// Domain groups
+// Generic API gateway group (v0.5)
+// Requires a live account with webmaster:hostinfo scope for sub-tests a/b/c.
+// Sub-test d (metrika) is optional and fires only if SMOKE_TEST_COUNTER is set.
 // ---------------------------------------------------------------------------
 
-async function runWebmaster(): Promise<void> {
-  log("--- group: webmaster ---");
-  const host = process.env.SMOKE_TEST_HOST ?? "https:example.com:443";
-  const date_from = isoDateDaysAgo(30);
-  const date_to = isoToday();
+async function runGeneric(accountReady: boolean): Promise<void> {
+  log("--- group: generic ---");
 
-  await run("webmaster:site-summary", () =>
-    runWebmasterSiteSummary({ host_id: host, account: SMOKE_ACC_LABEL }),
-  );
-  await run("webmaster:top-queries", () =>
-    runWebmasterTopQueries({ host_id: host, date_from, date_to, limit: 10, account: SMOKE_ACC_LABEL }),
-  );
-  await run("webmaster:indexing-issues", () =>
-    runWebmasterIndexingIssues({ host_id: host, account: SMOKE_ACC_LABEL }),
-  );
-}
+  if (!accountReady) {
+    log("  SKIP: no account ready — complete oauth-setup first");
+    return;
+  }
 
-async function runMetrika(): Promise<void> {
-  log("--- group: metrika ---");
-  const counter_id = process.env.SMOKE_TEST_COUNTER ?? "12345";
-  const date_from = isoDateDaysAgo(30);
-  const date_to = isoToday();
+  const ACC = "smoke-acc";
 
-  await run("metrika:search-phrases", () =>
-    runMetrikaSearchPhrases({ counter_id, date_from, date_to, limit: 10, account: SMOKE_ACC_LABEL }),
-  );
-  await run("metrika:traffic-summary", () =>
-    runMetrikaTrafficSummary({ counter_id, date_from, date_to, account: SMOKE_ACC_LABEL }),
-  );
-}
+  // a) First call — expect cache miss (upstream called)
+  await run("generic:webmaster_api first-call (cache miss)", async () => {
+    const before = await runCacheStats();
+    const beforeText = (before as { content?: Array<{ text?: string }> })?.content?.[0]?.text ?? "{}";
+    const beforeStats = JSON.parse(beforeText) as { total_entries?: number };
+    const beforeCount = beforeStats.total_entries ?? 0;
 
-async function runWordstat(): Promise<void> {
-  log("--- group: wordstat ---");
-  await run("wordstat:keywords", () =>
-    runWordstatKeywords({ phrases: ["seo тест"], poll_timeout_sec: 60, account: SMOKE_ACC_LABEL }),
-  );
+    const result = await runYandexWebmasterApi({ endpoint: "/v4/user", account: ACC });
+    log(`  result.ok=${!(result as { isError?: boolean }).isError}`);
+
+    const after = await runCacheStats();
+    const afterText = (after as { content?: Array<{ text?: string }> })?.content?.[0]?.text ?? "{}";
+    const afterStats = JSON.parse(afterText) as { total_entries?: number };
+    const afterCount = afterStats.total_entries ?? 0;
+
+    if (afterCount <= beforeCount) {
+      throw new Error(`expected cache entry to be written: before=${beforeCount} after=${afterCount}`);
+    }
+    log(`  cache entries: ${beforeCount} → ${afterCount} (miss confirmed)`);
+    return result;
+  });
+
+  // b) Same call again — expect cache hit (entry count unchanged)
+  await run("generic:webmaster_api second-call (cache hit)", async () => {
+    const before = await runCacheStats();
+    const beforeText = (before as { content?: Array<{ text?: string }> })?.content?.[0]?.text ?? "{}";
+    const beforeStats = JSON.parse(beforeText) as { total_entries?: number };
+    const beforeCount = beforeStats.total_entries ?? 0;
+
+    await runYandexWebmasterApi({ endpoint: "/v4/user", account: ACC });
+
+    const after = await runCacheStats();
+    const afterText = (after as { content?: Array<{ text?: string }> })?.content?.[0]?.text ?? "{}";
+    const afterStats = JSON.parse(afterText) as { total_entries?: number };
+    const afterCount = afterStats.total_entries ?? 0;
+
+    if (afterCount !== beforeCount) {
+      throw new Error(`expected cache hit (no new entries): before=${beforeCount} after=${afterCount}`);
+    }
+    log(`  cache entries unchanged at ${afterCount} (hit confirmed)`);
+    return { content: [{ type: "text" as const, text: "cache hit confirmed" }] };
+  });
+
+  // c) force_refresh:true — expect cache miss again (upstream re-fetched)
+  await run("generic:webmaster_api force_refresh (cache miss)", async () => {
+    const before = await runCacheStats();
+    const beforeText = (before as { content?: Array<{ text?: string }> })?.content?.[0]?.text ?? "{}";
+    const beforeStats = JSON.parse(beforeText) as { total_entries?: number };
+    const beforeCount = beforeStats.total_entries ?? 0;
+
+    const result = await runYandexWebmasterApi({ endpoint: "/v4/user", account: ACC, force_refresh: true });
+    log(`  result.ok=${!(result as { isError?: boolean }).isError}`);
+
+    // force_refresh rewrites the entry (count stays same unless evicted); main check is no error
+    const after = await runCacheStats();
+    const afterText = (after as { content?: Array<{ text?: string }> })?.content?.[0]?.text ?? "{}";
+    const afterStats = JSON.parse(afterText) as { total_entries?: number };
+    log(`  cache entries: ${beforeCount} → ${afterStats.total_entries ?? 0} (force_refresh done)`);
+    return result;
+  });
+
+  // d) Optional: light metrika read (fires only if SMOKE_TEST_COUNTER is set)
+  const counter = process.env.SMOKE_TEST_COUNTER ?? "";
+  if (counter) {
+    await run("generic:metrika_api counters list (optional)", async () => {
+      return runYandexMetrikaApi({ endpoint: "/management/v1/counters", account: ACC });
+    });
+  } else {
+    log("  generic:metrika_api — SKIP (set SMOKE_TEST_COUNTER to enable)");
+  }
 }
 
 async function runInventory(): Promise<void> {
@@ -336,7 +369,7 @@ async function runMutagen(): Promise<void> {
 
 async function runCache(): Promise<void> {
   log("--- group: cache ---");
-  const TOOL = "webmaster_site_summary" as const;
+  const TOOL = "yandex_webmaster_api" as const;
   const FAKE_ARGS = { host_id: "https:smoke-test.example.com:443" };
   const FAKE_ACC_ID = null;
   const FAKE_RESULT = { smoke: true };
@@ -406,7 +439,7 @@ async function main(): Promise<void> {
   const only =
     process.argv.find((a) => a.startsWith("--only="))?.split("=")[1] ?? "all";
 
-  const validValues = ["oauth-setup", "webmaster", "metrika", "wordstat", "mutagen", "inventory", "cache", "all"];
+  const validValues = ["oauth-setup", "generic", "mutagen", "inventory", "cache", "all"];
   if (!validValues.includes(only)) {
     log(`ERROR: unknown --only value "${only}". Valid: ${validValues.join(", ")}`);
     process.exit(1);
@@ -434,9 +467,7 @@ async function main(): Promise<void> {
   }
 
   if (accountReady || !runSetup) {
-    if (only === "webmaster" || only === "all") await runWebmaster();
-    if (only === "metrika" || only === "all") await runMetrika();
-    if (only === "wordstat" || only === "all") await runWordstat();
+    if (only === "generic" || only === "all") await runGeneric(accountReady);
     if (only === "mutagen" || only === "all") await runMutagen();
     if (only === "inventory" || only === "all") await runInventory();
     if (only === "cache" || only === "all") await runCache();

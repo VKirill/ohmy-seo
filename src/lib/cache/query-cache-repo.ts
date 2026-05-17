@@ -87,6 +87,15 @@ export function deleteWhere(filter: DeleteFilter): number {
   return result.changes;
 }
 
+export function deleteByEndpointPrefix(toolName: string, endpoint: string): number {
+  const exactPattern = `%"endpoint":${JSON.stringify(endpoint)}%`;
+  const subPattern   = `%"endpoint":"${endpoint}/%`;
+  const stmt = getDb().prepare(
+    `DELETE FROM query_cache WHERE tool_name = ? AND (args_json LIKE ? OR args_json LIKE ?)`
+  );
+  return stmt.run(toolName, exactPattern, subPattern).changes;
+}
+
 export function countEntries(): number {
   const row = getDb()
     .prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM query_cache")
