@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+.claude/orchestrator.db*
+.claude/orchestrator-*.jsonl
+npm-debug.log*
+data/
+data/*
