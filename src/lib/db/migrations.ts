@@ -66,6 +66,24 @@ const MIGRATION_V2_SQL = `
   );
 `;
 
+const MIGRATION_V3_SQL = `
+  CREATE TABLE IF NOT EXISTS query_cache (
+    args_hash TEXT PRIMARY KEY,
+    tool_name TEXT NOT NULL,
+    account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
+    args_json TEXT NOT NULL,
+    response_json TEXT NOT NULL,
+    fetched_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    hit_count INTEGER NOT NULL DEFAULT 0,
+    last_hit_at INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS idx_query_cache_tool    ON query_cache(tool_name);
+  CREATE INDEX IF NOT EXISTS idx_query_cache_account ON query_cache(account_id);
+  CREATE INDEX IF NOT EXISTS idx_query_cache_expires ON query_cache(expires_at);
+  CREATE INDEX IF NOT EXISTS idx_query_cache_fetched ON query_cache(fetched_at);
+`;
+
 export function applyMigrations(db: Database.Database): void {
   const currentVersion = db.pragma("user_version", { simple: true }) as number;
 
@@ -80,6 +98,13 @@ export function applyMigrations(db: Database.Database): void {
     db.transaction(() => {
       db.exec(MIGRATION_V2_SQL);
       db.pragma("user_version = 2");
+    })();
+  }
+
+  if (currentVersion < 3) {
+    db.transaction(() => {
+      db.exec(MIGRATION_V3_SQL);
+      db.pragma("user_version = 3");
     })();
   }
 }

@@ -142,6 +142,44 @@ The MCP resolves the site name via property-resolver. If the substring matches m
 candidates with equal score, the tool returns an `AmbiguousSiteError` with the candidate
 list — pass `account` filter or use direct `host_id` to disambiguate.
 
+## Query Result Cache
+
+Seven domain tools cache their results in a local SQLite table (`query_cache`) keyed by
+a SHA-256 hash of normalized arguments + account_id. Repeat calls with identical inputs
+return the cached result without hitting Yandex / Mutagen.
+
+### Default TTLs
+
+| Tool | TTL |
+|---|---|
+| `wordstat_keywords` | 7 days |
+| `mutagen_competition` | 30 days |
+| `webmaster_top_queries` | 1 hour |
+| `metrika_search_phrases` | 1 hour |
+| `webmaster_indexing_issues` | 1 hour |
+| `webmaster_site_summary` | 6 hours |
+| `metrika_traffic_summary` | 6 hours |
+
+Override any TTL via `MCP_YANDEX_SEO_CACHE_TTL_<TOOLNAME>=<seconds>` env var
+(see `.env.example`).
+
+### Cache management tools
+
+| Tool | What it does |
+|---|---|
+| `invalidate_cache({tool?, account?, older_than_hours?})` | Manual wipe with optional AND filters |
+| `cache_stats({})` | total entries, DB size, top-10 tools by hits, 24h activity |
+
+### Force-refresh
+
+Every cacheable tool accepts `force_refresh: true` to bypass cache read and overwrite
+the entry. Use when upstream data is known to have changed.
+
+### Smart routing
+
+Domain tools auto-resolve `account` when an explicit `host_id` is uniquely owned by one
+account in the local inventory. Explicit `account` parameter always wins.
+
 ## Troubleshooting
 
 **MASTER_KEY missing → server won't start**  

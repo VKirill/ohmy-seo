@@ -52,6 +52,10 @@ import { runMutagenCompetition } from "./tools/mutagen-competition.js";
 import { runRefreshInventory } from "./tools/refresh-inventory.js";
 import { runListSites } from "./tools/list-sites.js";
 import { runFindProperty } from "./tools/find-property.js";
+import { runInvalidateCache } from "./tools/invalidate-cache.js";
+import { runCacheStats } from "./tools/cache-stats.js";
+import { withCache } from "./lib/cache/cache-policy.js";
+import * as cacheRepo from "./lib/cache/query-cache-repo.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -327,6 +331,74 @@ async function runMutagen(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Cache group (offline — uses DB repo directly, no real OAuth required)
+// ---------------------------------------------------------------------------
+
+async function runCache(): Promise<void> {
+  log("--- group: cache ---");
+  const TOOL = "webmaster_site_summary" as const;
+  const FAKE_ARGS = { host_id: "https:smoke-test.example.com:443" };
+  const FAKE_ACC_ID = null;
+  const FAKE_RESULT = { smoke: true };
+
+  // Seed: first call writes an entry into the cache
+  await run("cache:first-call-writes-entry", async () => {
+    let callCount = 0;
+    await withCache(
+      { toolName: TOOL, accountId: FAKE_ACC_ID, args: FAKE_ARGS, forceRefresh: false },
+      async () => { callCount++; return FAKE_RESULT; },
+    );
+    if (callCount !== 1) throw new Error(`expected 1 upstream call, got ${callCount}`);
+    return { content: [{ type: "text" as const, text: "entry written" }] };
+  });
+
+  // Stats: total_entries should be > 0
+  await run("cache:stats-total-entries", async () => {
+    const result = await runCacheStats();
+    const text = (result as { content?: Array<{ text?: string }> })?.content?.[0]?.text ?? "{}";
+    const stats = JSON.parse(text) as { total_entries?: number };
+    if ((stats.total_entries ?? 0) < 1) throw new Error(`total_entries=${stats.total_entries}`);
+    log(`  total_entries=${stats.total_entries}`);
+    return result;
+  });
+
+  // Second call: same args → cache hit, upstream not called
+  await run("cache:second-call-is-hit", async () => {
+    let callCount = 0;
+    await withCache(
+      { toolName: TOOL, accountId: FAKE_ACC_ID, args: FAKE_ARGS, forceRefresh: false },
+      async () => { callCount++; return FAKE_RESULT; },
+    );
+    if (callCount !== 0) throw new Error(`expected 0 upstream calls (cache hit), got ${callCount}`);
+    return { content: [{ type: "text" as const, text: "cache hit confirmed" }] };
+  });
+
+  // force_refresh: upstream called again, entry rewritten
+  await run("cache:force-refresh-rewrites-entry", async () => {
+    let callCount = 0;
+    await withCache(
+      { toolName: TOOL, accountId: FAKE_ACC_ID, args: FAKE_ARGS, forceRefresh: true },
+      async () => { callCount++; return { ...FAKE_RESULT, refreshed: true }; },
+    );
+    if (callCount !== 1) throw new Error(`expected 1 upstream call (force refresh), got ${callCount}`);
+    return { content: [{ type: "text" as const, text: "force refresh ok" }] };
+  });
+
+  // invalidate: entry deleted
+  await run("cache:invalidate-tool", async () => {
+    const result = await runInvalidateCache({ tool: TOOL });
+    const text = (result as { content?: Array<{ text?: string }> })?.content?.[0]?.text ?? "{}";
+    const parsed = JSON.parse(text) as { deleted?: number };
+    if ((parsed.deleted ?? 0) < 1) throw new Error(`expected deleted>=1, got ${parsed.deleted}`);
+    log(`  deleted=${parsed.deleted}`);
+    // Verify entry is gone
+    const remaining = cacheRepo.countEntries();
+    log(`  remaining entries=${remaining}`);
+    return result;
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -334,7 +406,7 @@ async function main(): Promise<void> {
   const only =
     process.argv.find((a) => a.startsWith("--only="))?.split("=")[1] ?? "all";
 
-  const validValues = ["oauth-setup", "webmaster", "metrika", "wordstat", "mutagen", "inventory", "all"];
+  const validValues = ["oauth-setup", "webmaster", "metrika", "wordstat", "mutagen", "inventory", "cache", "all"];
   if (!validValues.includes(only)) {
     log(`ERROR: unknown --only value "${only}". Valid: ${validValues.join(", ")}`);
     process.exit(1);
@@ -356,8 +428,9 @@ async function main(): Promise<void> {
 
   if (!accountReady && runDomain && only === "all") {
     log("Domain groups skipped — complete oauth-setup first.");
+    await runCache();
     log(`\n=== ${ok} OK, ${fail} FAIL ===`);
-    process.exit(0);
+    process.exit(ok > 0 ? 0 : fail > 0 ? 1 : 0);
   }
 
   if (accountReady || !runSetup) {
@@ -366,6 +439,7 @@ async function main(): Promise<void> {
     if (only === "wordstat" || only === "all") await runWordstat();
     if (only === "mutagen" || only === "all") await runMutagen();
     if (only === "inventory" || only === "all") await runInventory();
+    if (only === "cache" || only === "all") await runCache();
   }
 
   log(`\n=== ${ok} OK, ${fail} FAIL ===`);

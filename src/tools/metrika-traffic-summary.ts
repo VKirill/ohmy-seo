@@ -5,6 +5,7 @@ import { SCOPES } from "../lib/scopes.js";
 import { errorToMcpContent } from "../lib/errors.js";
 import { pickUniqueCounterOrThrow } from "../lib/property-resolver.js";
 import { getCountersWithPolicy } from "../lib/inventory/cache-policy.js";
+import { withCache } from "../lib/cache/cache-policy.js";
 
 export async function runMetrikaTrafficSummary(input: {
   counter_id?: string;
@@ -13,6 +14,7 @@ export async function runMetrikaTrafficSummary(input: {
   date_to: string;
   group_by?: "day" | "week" | "month" | "none";
   account?: string;
+  force_refresh?: boolean;
 }) {
   try {
     const acc = resolveAccount(SCOPES.METRIKA_READ, input.account);
@@ -22,14 +24,25 @@ export async function runMetrikaTrafficSummary(input: {
       const counters = await getCountersWithPolicy(acc.id);
       counterId = pickUniqueCounterOrThrow(input.site, counters, { accountLabel: acc.label });
     }
-    const accessToken = await getAccessToken(acc.id);
-    const result = await getTrafficSummary({
-      accessToken,
-      counterId,
-      dateFrom: input.date_from,
-      dateTo: input.date_to,
-      groupBy: input.group_by ?? "none",
-    });
+    const canonicalArgs: Record<string, unknown> = {
+      counter_id: counterId,
+      date_from: input.date_from,
+      date_to: input.date_to,
+      group_by: input.group_by ?? "none",
+    };
+    const result = await withCache(
+      { toolName: "metrika_traffic_summary", accountId: acc.id, args: canonicalArgs, forceRefresh: input.force_refresh ?? false },
+      async () => {
+        const accessToken = await getAccessToken(acc.id);
+        return getTrafficSummary({
+          accessToken,
+          counterId: counterId!,
+          dateFrom: input.date_from,
+          dateTo: input.date_to,
+          groupBy: input.group_by ?? "none",
+        });
+      }
+    );
     return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
   } catch (e) { return errorToMcpContent(e); }
 }

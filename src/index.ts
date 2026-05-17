@@ -27,6 +27,8 @@ import { runListSites } from "./tools/list-sites.js";
 import { runListCounters } from "./tools/list-counters.js";
 import { runFindProperty } from "./tools/find-property.js";
 import { runRefreshInventory } from "./tools/refresh-inventory.js";
+import { runInvalidateCache } from "./tools/invalidate-cache.js";
+import { runCacheStats } from "./tools/cache-stats.js";
 
 const READ_ONLY = { readOnlyHint: true, openWorldHint: true, idempotentHint: false };
 
@@ -60,12 +62,13 @@ server.registerTool(
     description:
       "Returns a diagnostic summary for a Yandex Webmaster host: SQI (Site Quality Index), " +
       "number of pages in the Yandex index, count of active diagnostics issues, and the " +
-      "timestamp of the last crawl. Use this tool to get a quick health-check of a site's " +
-      "standing in Yandex before diving into specific issues or query data.",
+      "timestamp of the last crawl. Results are cached for 6 hours unless force_refresh:true is passed. " +
+      "Use this tool to get a quick health-check of a site's standing in Yandex before diving into specific issues or query data.",
     inputSchema: {
       host_id: z.string().optional().describe('Webmaster host ID, format "https:example.com:443"'),
       site: z.string().min(1).optional().describe("Site domain or URL substring; alternative to host_id for fuzzy lookup"),
       account: z.string().min(1).optional().describe("Account label from list_accounts (optional if exactly one matching account or one is_default)"),
+      force_refresh: z.boolean().optional().default(false).describe("If true, bypass cache read and re-fetch from upstream API, overwriting any cached entry."),
     },
     annotations: READ_ONLY,
   },
@@ -79,8 +82,8 @@ server.registerTool(
     description:
       "Returns the top organic search queries for a Yandex Webmaster host over the specified " +
       "date range: impressions, clicks, CTR, and average position in Yandex SERP. Supports " +
-      "filtering by query text and limiting result count. Use this to analyse keyword performance " +
-      "and identify queries that drive the most (or least) organic traffic.",
+      "filtering by query text and limiting result count. Results are cached for 1 hour unless force_refresh:true is passed. " +
+      "Use this to analyse keyword performance and identify queries that drive the most (or least) organic traffic.",
     inputSchema: {
       host_id: z.string().optional().describe('Webmaster host ID, format "https:example.com:443"'),
       site: z.string().min(1).optional().describe("Site domain or URL substring; alternative to host_id for fuzzy lookup"),
@@ -89,6 +92,7 @@ server.registerTool(
       limit: z.number().int().min(1).max(500).default(50).describe("Max rows to return (default 50, max 500)"),
       query_filter: z.string().optional().describe("Optional substring filter applied to query text"),
       account: z.string().min(1).optional().describe("Account label from list_accounts (optional if exactly one matching account or one is_default)"),
+      force_refresh: z.boolean().optional().default(false).describe("If true, bypass cache read and re-fetch from upstream API, overwriting any cached entry."),
     },
     annotations: READ_ONLY,
   },
@@ -102,12 +106,13 @@ server.registerTool(
     description:
       "Returns the current list of diagnostic issues for a Yandex Webmaster host, including " +
       "critical errors, warnings, and informational notices about crawl and indexing problems. " +
-      "Each item includes issue type, severity level, and affected URL count. Use this tool " +
-      "to detect and prioritise technical SEO problems that may suppress rankings in Yandex.",
+      "Each item includes issue type, severity level, and affected URL count. Results are cached for 1 hour unless force_refresh:true is passed. " +
+      "Use this tool to detect and prioritise technical SEO problems that may suppress rankings in Yandex.",
     inputSchema: {
       host_id: z.string().optional().describe('Webmaster host ID, format "https:example.com:443"'),
       site: z.string().min(1).optional().describe("Site domain or URL substring; alternative to host_id for fuzzy lookup"),
       account: z.string().min(1).optional().describe("Account label from list_accounts (optional if exactly one matching account or one is_default)"),
+      force_refresh: z.boolean().optional().default(false).describe("If true, bypass cache read and re-fetch from upstream API, overwriting any cached entry."),
     },
     annotations: READ_ONLY,
   },
@@ -121,8 +126,8 @@ server.registerTool(
     description:
       "Returns the top organic search phrases for a Yandex Metrika counter over the specified " +
       "date range, filtered to organic search traffic only. Metrics per phrase include visits, " +
-      "bounce rate, and page depth. Use this tool to understand which search queries actually " +
-      "drive engaged users to the site, complementing Webmaster impressions/click data.",
+      "bounce rate, and page depth. Results are cached for 1 hour unless force_refresh:true is passed. " +
+      "Use this tool to understand which search queries actually drive engaged users to the site, complementing Webmaster impressions/click data.",
     inputSchema: {
       counter_id: z.string().optional().describe("Metrika counter ID (numeric string)"),
       site: z.string().min(1).optional().describe("Counter name or site substring; alternative to counter_id for fuzzy lookup"),
@@ -131,6 +136,7 @@ server.registerTool(
       limit: z.number().int().min(1).max(200).default(50).describe("Max rows to return (default 50, max 200)"),
       search_engine: z.enum(["yandex", "google", "all"]).default("all").describe("Filter by search engine"),
       account: z.string().min(1).optional().describe("Account label from list_accounts (optional if exactly one matching account or one is_default)"),
+      force_refresh: z.boolean().optional().default(false).describe("If true, bypass cache read and re-fetch from upstream API, overwriting any cached entry."),
     },
     annotations: READ_ONLY,
   },
@@ -144,8 +150,8 @@ server.registerTool(
     description:
       "Returns aggregated traffic metrics for a Yandex Metrika counter broken down by traffic " +
       "source (organic search, direct, referral, social, ad). Metrics include visits, unique " +
-      "visitors, and pageviews per source. Use this tool to assess the overall traffic mix and " +
-      "measure how much Yandex organic contributes relative to other channels.",
+      "visitors, and pageviews per source. Results are cached for 6 hours unless force_refresh:true is passed. " +
+      "Use this tool to assess the overall traffic mix and measure how much Yandex organic contributes relative to other channels.",
     inputSchema: {
       counter_id: z.string().optional().describe("Metrika counter ID (numeric string)"),
       site: z.string().min(1).optional().describe("Counter name or site substring; alternative to counter_id for fuzzy lookup"),
@@ -153,6 +159,7 @@ server.registerTool(
       date_to: z.string().describe("End date YYYY-MM-DD"),
       group_by: z.enum(["day", "week", "month", "none"]).default("none").describe("Group results by time period"),
       account: z.string().min(1).optional().describe("Account label from list_accounts (optional if exactly one matching account or one is_default)"),
+      force_refresh: z.boolean().optional().default(false).describe("If true, bypass cache read and re-fetch from upstream API, overwriting any cached entry."),
     },
     annotations: READ_ONLY,
   },
@@ -166,15 +173,16 @@ server.registerTool(
     description:
       "Returns monthly search volume estimates and related keyword suggestions from Yandex " +
       "Direct Wordstat for one or more seed phrases. Optionally filters by region (geo_id). " +
-      "Results include phrase-match and broad-match frequency counts plus a list of associated " +
-      "queries. Use this tool for keyword research, cluster seeding, and demand estimation in the " +
-      "Russian-language search market.",
+      "Results include phrase-match and broad-match frequency counts plus a list of associated queries. " +
+      "Results are cached for 7 days unless force_refresh:true is passed. " +
+      "Use this tool for keyword research, cluster seeding, and demand estimation in the Russian-language search market.",
     inputSchema: {
       phrases: z.array(z.string().min(1)).min(1).max(10).describe("Seed phrases to research (1-10)"),
       geo_id: z.array(z.number().int()).optional().describe("Yandex region IDs to filter by (optional)"),
       poll_timeout_sec: z.number().int().min(30).max(300).default(120).describe("Max seconds to wait for Wordstat report (default 120)"),
       client_login: z.string().optional().describe("Yandex Direct agency client login (optional)"),
       account: z.string().min(1).optional().describe("Account label from list_accounts (optional if exactly one matching account or one is_default)"),
+      force_refresh: z.boolean().optional().default(false).describe("If true, bypass cache read and re-fetch from upstream API, overwriting any cached entry."),
     },
     annotations: READ_ONLY,
   },
@@ -189,10 +197,12 @@ server.registerTool(
       "Returns competition scores for a list of keywords using the Mutagen service. Each keyword " +
       "receives a competition level (strong: 1-25 scale), Wordstat frequency, and Yandex Direct " +
       "cost estimates (spec, first, garant positions). Requires MUTAGEN_API_KEY in .env. " +
+      "Results are cached for 30 days unless force_refresh:true is passed. " +
       "Use this tool to prioritise which keywords are worth targeting based on actual SERP competition.",
     inputSchema: {
       phrases: z.array(z.string().min(1)).min(1).max(25).describe("Keywords to check (1-25)"),
       poll_timeout_sec: z.number().int().min(10).max(300).default(60).optional().describe("Max seconds to wait per keyword (default 60)"),
+      force_refresh: z.boolean().optional().default(false).describe("If true, bypass cache read and re-fetch from upstream API, overwriting any cached entry."),
     },
     annotations: READ_ONLY,
   },
@@ -487,6 +497,60 @@ server.registerTool(
     annotations: READ_ONLY,
   },
   async (args) => runRefreshInventory({ account: args.account, kind: args.kind }),
+);
+
+server.registerTool(
+  "invalidate_cache",
+  {
+    title: "Cache — Invalidate Entries",
+    description:
+      "Deletes cached query results from the local SQLite cache. Filters are optional and combine with AND: " +
+      "pass 'tool' to clear entries for a specific cacheable tool, 'account' to clear all entries for a connected " +
+      "Yandex account, 'older_than_hours' to purge entries fetched more than N hours ago. Omit all filters to wipe " +
+      "the entire query cache. Returns the count of deleted rows and the applied filters. Use this tool after " +
+      "a site change or known Yandex data refresh to force the next call to fetch live results.",
+    inputSchema: {
+      tool: z
+        .enum([
+          "wordstat_keywords",
+          "mutagen_competition",
+          "webmaster_top_queries",
+          "metrika_search_phrases",
+          "webmaster_indexing_issues",
+          "webmaster_site_summary",
+          "metrika_traffic_summary",
+        ])
+        .optional()
+        .describe("Restrict invalidation to a specific cacheable tool (optional)"),
+      account: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Restrict invalidation to entries for this account label (optional)"),
+      older_than_hours: z
+        .number()
+        .positive()
+        .optional()
+        .describe("Delete only entries fetched more than this many hours ago (optional)"),
+    },
+    annotations: READ_ONLY,
+  },
+  async (args) => runInvalidateCache({ tool: args.tool, account: args.account, older_than_hours: args.older_than_hours }),
+);
+
+server.registerTool(
+  "cache_stats",
+  {
+    title: "Cache — Statistics",
+    description:
+      "Returns aggregate statistics about the local query result cache: total_entries (all rows), " +
+      "db_size_bytes (SQLite file size on disk), top_tools (top-10 tools by entry count with hit totals), " +
+      "and recent_24h (entries fetched within the last 24 hours). Use this tool to monitor cache growth " +
+      "and determine whether a periodic invalidate_cache call is needed to free disk space.",
+    inputSchema: {},
+    annotations: READ_ONLY,
+  },
+  async () => runCacheStats(),
 );
 
 async function main(): Promise<void> {

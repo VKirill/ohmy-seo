@@ -1,6 +1,6 @@
 import { request } from "./http.js";
 
-const BASE_URL = "https://api.mutagen.ru/json";
+const BASE_URL = "http://api.mutagen.ru/json";
 
 function getApiKey(): string {
   const k = process.env.MUTAGEN_API_KEY;

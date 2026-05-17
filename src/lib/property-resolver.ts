@@ -1,4 +1,5 @@
 import { AmbiguousSiteError } from "./errors.js";
+import { listAllSites } from "./db/inventory-repo.js";
 
 type SiteCandidate = {
   kind: "site";
@@ -140,6 +141,18 @@ export function pickUniqueCounterOrThrow(
   if (matches[0].score > matches[1].score) return (matches[0] as CounterCandidate).counter_id;
   const tied = matches.filter((m) => m.score === matches[0].score);
   throw new AmbiguousSiteError(query, tied);
+}
+
+/**
+ * If host_id appears in inv_sites under exactly one account_id → returns that account_id.
+ * Otherwise (0 or 2+ owners) → null.
+ * Does not trigger a refresh; cache-policy for inventory handles staleness.
+ */
+export function resolveAccountByHostId(hostId: string): number | null {
+  const allSites = listAllSites();
+  const matches = allSites.filter((s) => s.host_id === hostId);
+  if (matches.length === 1) return matches[0].account_id;
+  return null;
 }
 
 if (process.argv[2] === "smoke") {
