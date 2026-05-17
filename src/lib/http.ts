@@ -14,7 +14,7 @@ export async function request(url: string, init?: RequestInit): Promise<HttpResp
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   const headers: Record<string, string> = {
-    "User-Agent": "mcp-yandex-seo/0.5.0",
+    "User-Agent": "mcp-yandex-seo/0.6.0",
     "Accept": "application/json",
     ...(init?.headers as Record<string, string> | undefined),
   };

@@ -26,18 +26,20 @@ import { runCacheStats } from "./tools/cache-stats.js";
 import { runYandexMetrikaApi } from "./tools/yandex-metrika-api.js";
 import { runYandexWebmasterApi } from "./tools/yandex-webmaster-api.js";
 import { runYandexDirectApi } from "./tools/yandex-direct-api.js";
+import { runMutagenApi } from "./tools/mutagen-api.js";
 
 const READ_ONLY = { readOnlyHint: true, openWorldHint: true, idempotentHint: false };
 
 const server = new McpServer(
-  { name: "mcp-yandex-seo", version: "0.5.0" },
+  { name: "mcp-yandex-seo", version: "0.6.0" },
   {
     instructions:
-      "You have access to mcp-yandex-seo: 18 tools for Russian SEO analytics and Yandex API access. " +
+      "You have access to mcp-yandex-seo: 19 tools for Russian SEO analytics and Yandex API access. " +
       "Generic API gateways (use these for full API coverage): " +
       "yandex_metrika_api — any Yandex Metrika endpoint; see skill yandex-metrica (cookbook.md) for examples. " +
       "yandex_webmaster_api — any Yandex Webmaster endpoint; see skill yandex-webmaster (cookbook.md). " +
       "yandex_direct_api — any Yandex Direct v5 endpoint (Bearer auth, optional client_login); see skill yandex-direct (cookbook.md). " +
+      "mutagen_api — generic Mutagen gateway: SERP reports (serp.report), keyword analytics, balance, projects; see skill mutagen for method catalog. " +
       "mutagen_competition — keyword competition scoring via Mutagen (1-25 scale + cost estimates). " +
       "Inventory tools: list_sites, list_counters, find_property, refresh_inventory. " +
       "OAuth management: list_oauth_apps, register_oauth_app, delete_oauth_app, list_accounts, start_oauth_flow, complete_oauth_flow, delete_account, set_default_account. " +
@@ -75,6 +77,44 @@ server.registerTool(
     annotations: READ_ONLY,
   },
   async (args) => runMutagenCompetition({ phrases: args.phrases, poll_timeout_sec: args.poll_timeout_sec }),
+);
+
+server.registerTool(
+  "mutagen_api",
+  {
+    title: "Mutagen API — Generic Gateway (SERP Reports, Keyword Analytics)",
+    description:
+      "Generic gateway to the Mutagen.ru API (api.mutagen.ru). Covers the full method surface: " +
+      "SERP reports (method='serp.report', params include region + report type + keyword/domain/page element), " +
+      "keyword competition (method='check_key', async with polling), parser jobs (method='parser.mass'), " +
+      "balance check (method='balance'), projects (method='progects'), and all 22+ serp.report types. " +
+      "Async methods (check_key, parser.mass) are automatically polled until completion — use poll_timeout_sec to control max wait. " +
+      "Results are cached for 30 days per unique method+params combination; pass force_refresh:true to bypass cache. " +
+      "IMPORTANT: SERP reports and paid methods consume Mutagen balance — check balance with method='balance' before running large reports. " +
+      "See skill 'mutagen' for full method catalog, report types, region codes, filter syntax, and pricing guidance.",
+    inputSchema: {
+      method: z.string().min(1).describe(
+        "Mutagen method name without 'mutagen.' prefix, e.g. 'balance', 'serp.report', 'check_key', 'progects', 'parser.mass'"
+      ),
+      params: z.record(z.string(), z.unknown()).optional().describe(
+        "Method parameters as key-value object. For serp.report: {region, report, keyword/domain/page, filter?, sort?, limit?, count?}"
+      ),
+      poll_timeout_sec: z.number().int().min(10).max(300).default(60).optional().describe(
+        "Max seconds to wait for async methods (check_key, parser.mass). Default 60."
+      ),
+      force_refresh: z.boolean().optional().default(false).describe(
+        "If true, bypass 30-day cache and re-fetch from Mutagen API, overwriting any cached entry."
+      ),
+    },
+    annotations: READ_ONLY,
+  },
+  async (args) =>
+    runMutagenApi({
+      method: args.method,
+      params: args.params,
+      poll_timeout_sec: args.poll_timeout_sec,
+      force_refresh: args.force_refresh,
+    }),
 );
 
 server.registerTool(
@@ -384,6 +424,7 @@ server.registerTool(
           "yandex_webmaster_api",
           "yandex_direct_api",
           "mutagen_competition",
+          "mutagen_api",
         ])
         .optional()
         .describe("Restrict invalidation to a specific cacheable tool (optional)"),
@@ -511,7 +552,7 @@ async function main(): Promise<void> {
   validateRequiredEnv();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("mcp-yandex-seo v0.5.0 running via stdio");
+  console.error("mcp-yandex-seo v0.6.0 running via stdio");
 }
 
 main().catch((err: Error) => {

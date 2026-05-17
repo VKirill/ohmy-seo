@@ -1,6 +1,6 @@
-# mcp-yandex-seo v0.5.0
+# mcp-yandex-seo v0.6.0
 
-MCP server for Claude Code providing 18 tools for Russian-language SEO via Yandex Webmaster,
+MCP server for Claude Code providing 19 tools for Russian-language SEO via Yandex Webmaster,
 Metrika, Direct, and Mutagen. Multi-account OAuth management: register one or more OAuth apps,
 connect Yandex accounts via Authorization Code flow, and all domain tools resolve the right token
 automatically. Secrets are encrypted in a local SQLite database using AES-256-GCM.
@@ -8,6 +8,10 @@ automatically. Secrets are encrypted in a local SQLite database using AES-256-GC
 v0.5 replaces six narrow domain tools with three generic API gateways (`yandex_metrika_api`,
 `yandex_webmaster_api`, `yandex_direct_api`) that accept any endpoint + method + params/body,
 covering ~100% of each Yandex API instead of the former ~10%. See migration table below.
+
+v0.6 adds `mutagen_api` — a generic gateway to the full Mutagen.ru API covering all 23 SERP
+report types, keyword analytics, balance checks, and projects. See
+`~/.claude/skills/mutagen/references/cookbook.md` for ready-to-run recipes.
 
 ## Prerequisites
 
@@ -83,7 +87,7 @@ yandex_webmaster_api({
 
 You can omit `account` if only one account exists or one is marked as default.
 
-## All 18 tools
+## All 19 tools
 
 ### OAuth management (8 tools)
 
@@ -143,6 +147,22 @@ files on this machine:
 - `~/.claude/skills/yandex-webmaster/` — Yandex Webmaster API (cookbook.md)
 - `~/.claude/skills/yandex-direct/` — Yandex Direct API v5 (cookbook.md, Reports lifecycle)
 
+### Mutagen API (1 tool)
+
+| Tool | What it does |
+|---|---|
+| `mutagen_api` | Generic gateway to the full Mutagen.ru API: all 23 SERP report types, keyword analytics, balance, projects. Handles async polling automatically. |
+
+`mutagen_api` accepts `method` (e.g. `'balance'`, `'serp.report'`, `'check_key'`), `params`
+(method-specific key-value object), `poll_timeout_sec` (default 60), and `force_refresh`.
+
+**Subscription note:** SERP reports (`method: 'serp.report'`) require a paid Mutagen
+subscription. Without it, calls return `error_id=111`. Free-tier methods: `balance`,
+`check_key`, `progects`.
+
+**Cookbook:** `~/.claude/skills/mutagen/references/cookbook.md` — ready-to-run recipes for
+all 23 report types, async polling patterns, and pitfalls.
+
 ## Smart routing
 
 Domain tools auto-resolve `account` when an explicit endpoint contains a `host_id` uniquely
@@ -169,8 +189,9 @@ complete endpoint examples.
 
 ## Query Result Cache
 
-The three generic API tools and `mutagen_competition` cache GET results in a local SQLite
-table (`query_cache`) keyed by a SHA-256 hash of normalized arguments + account_id.
+The generic API tools (`yandex_metrika_api`, `yandex_webmaster_api`, `yandex_direct_api`,
+`mutagen_api`) and `mutagen_competition` cache results in a local SQLite table (`query_cache`)
+keyed by a SHA-256 hash of normalized arguments + account_id.
 
 | Tool | TTL |
 |---|---|
@@ -178,6 +199,7 @@ table (`query_cache`) keyed by a SHA-256 hash of normalized arguments + account_
 | `yandex_webmaster_api` | 3600 s (1 hour) — same env var |
 | `yandex_direct_api` | 3600 s (1 hour) — same env var |
 | `mutagen_competition` | 30 days — override with `MCP_YANDEX_SEO_CACHE_TTL_MUTAGEN_COMPETITION` |
+| `mutagen_api` | 30 days (Mutagen data) — pass `force_refresh: true` to bypass |
 
 ## Troubleshooting
 
@@ -237,7 +259,7 @@ versions:
 - v0.3 — Inventory cache (list_sites, find_property, list_counters) ✓ done
 - v0.4 — Query result cache with TTL ✓ done
 - v0.5 — Generic API gateway (3 tools) ✓ done
-- v0.6 — OS keychain for master key, audit log, per-endpoint TTL patterns
+- v0.6 — mutagen_api generic gateway for SERP reports (Мега-инструмент) ✓ done
 
 ## License
 

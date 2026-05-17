@@ -6,6 +6,7 @@ export const CACHEABLE_TOOLS = [
   "yandex_webmaster_api",
   "yandex_direct_api",
   "mutagen_competition",
+  "mutagen_api",
 ] as const;
 export type CacheableTool = (typeof CACHEABLE_TOOLS)[number];
 
@@ -16,6 +17,7 @@ const TTL_DEFAULTS: Record<CacheableTool, number> = {
   yandex_webmaster_api: 3600,
   yandex_direct_api:    3600,
   mutagen_competition:  30 * 24 * 3600,
+  mutagen_api:          30 * 24 * 3600,
 };
 
 const ttlCache = new Map<CacheableTool, number>();

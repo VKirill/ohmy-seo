@@ -2,10 +2,75 @@ import { request } from "./http.js";
 
 const BASE_URL = "http://api.mutagen.ru/json";
 
+// Methods that require async polling: submit via .new, then poll via .get
+// All other methods (balance, progects, progect.keywords, parser.get, serp.report) are synchronous.
+const ASYNC_METHODS = new Set<string>(["check_key", "parser.mass"]);
+
 function getApiKey(): string {
   const k = process.env.MUTAGEN_API_KEY;
   if (!k) throw new Error("MUTAGEN_API_KEY is required for mutagen_competition tool");
   return k;
+}
+
+/**
+ * Generic Mutagen method executor.
+ * Sync methods: GET → return JSON data directly.
+ * Async methods (ASYNC_METHODS): POST to .new → poll .get until status=completed or timeout.
+ */
+export async function executeMutagenMethod(
+  method: string,
+  params: Record<string, unknown> = {},
+  pollTimeoutSec = 60,
+): Promise<unknown> {
+  const token = getApiKey();
+  const isAsync = ASYNC_METHODS.has(method);
+
+  if (!isAsync) {
+    // Synchronous: build GET URL with params
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      qs.set(k, String(v));
+    }
+    const qsPart = qs.toString() ? "?" + qs.toString() : "";
+    const url = `${BASE_URL}/${token}/mutagen.${method}/${qsPart}`;
+    const res = await request(url);
+    return res.data;
+  }
+
+  // Async: POST to .new, then poll .get
+  const startUrl = `${BASE_URL}/${token}/mutagen.${method}.new/`;
+  const startRes = await request(startUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json; charset=utf-8" },
+    body: JSON.stringify(params),
+  });
+  const startData = startRes.data as Record<string, unknown>;
+  const taskId = startData?.["task_id"];
+  if (!taskId) {
+    throw new Error(`Mutagen ${method}.new: missing task_id in response`);
+  }
+
+  const deadline = Date.now() + pollTimeoutSec * 1000;
+  let delay = 2000;
+  const maxDelay = 30_000;
+
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, delay));
+    delay = Math.min(delay * 1.5, maxDelay);
+
+    const getUrl = `${BASE_URL}/${token}/mutagen.${method}.get/?task_id=${taskId}`;
+    const pollRes = await request(getUrl);
+    const d = pollRes.data as Record<string, unknown>;
+    const status = d?.["status"] as string | undefined;
+
+    if (status === "completed") return d;
+    if (status === "rejected" || status === "error") {
+      throw new Error(`Mutagen ${method} task ${taskId} terminal status: ${status}`);
+    }
+    // created | processed → keep polling
+  }
+
+  throw new Error(`Mutagen ${method} task ${taskId} timed out after ${pollTimeoutSec}s`);
 }
 
 export async function getBalance(): Promise<number> {
