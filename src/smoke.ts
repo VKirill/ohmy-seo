@@ -49,6 +49,9 @@ import { runMetrikaSearchPhrases } from "./tools/metrika-search-phrases.js";
 import { runMetrikaTrafficSummary } from "./tools/metrika-traffic-summary.js";
 import { runWordstatKeywords } from "./tools/wordstat-keywords.js";
 import { runMutagenCompetition } from "./tools/mutagen-competition.js";
+import { runRefreshInventory } from "./tools/refresh-inventory.js";
+import { runListSites } from "./tools/list-sites.js";
+import { runFindProperty } from "./tools/find-property.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -249,13 +252,13 @@ async function runWebmaster(): Promise<void> {
   const date_to = isoToday();
 
   await run("webmaster:site-summary", () =>
-    runWebmasterSiteSummary({ host, account: SMOKE_ACC_LABEL }),
+    runWebmasterSiteSummary({ host_id: host, account: SMOKE_ACC_LABEL }),
   );
   await run("webmaster:top-queries", () =>
-    runWebmasterTopQueries({ host, date_from, date_to, limit: 10, account: SMOKE_ACC_LABEL }),
+    runWebmasterTopQueries({ host_id: host, date_from, date_to, limit: 10, account: SMOKE_ACC_LABEL }),
   );
   await run("webmaster:indexing-issues", () =>
-    runWebmasterIndexingIssues({ host, account: SMOKE_ACC_LABEL }),
+    runWebmasterIndexingIssues({ host_id: host, account: SMOKE_ACC_LABEL }),
   );
 }
 
@@ -278,6 +281,34 @@ async function runWordstat(): Promise<void> {
   await run("wordstat:keywords", () =>
     runWordstatKeywords({ phrases: ["seo тест"], poll_timeout_sec: 60, account: SMOKE_ACC_LABEL }),
   );
+}
+
+async function runInventory(): Promise<void> {
+  log("--- group: inventory ---");
+
+  await run("inventory:refresh_inventory (full)", async () => {
+    const result = await runRefreshInventory({});
+    const text = (result as { content?: Array<{ text?: string }> })?.content?.[0]?.text ?? "{}";
+    const parsed = JSON.parse(text) as { reports?: unknown[]; count?: number };
+    log(`  reports.count=${parsed.count ?? 0}`);
+    return result;
+  });
+
+  await run("inventory:list_sites", async () => {
+    const result = await runListSites({});
+    const text = (result as { content?: Array<{ text?: string }> })?.content?.[0]?.text ?? "{}";
+    const parsed = JSON.parse(text) as { count?: number };
+    log(`  sites.count=${parsed.count ?? 0}`);
+    return result;
+  });
+
+  await run("inventory:find_property (query=вечкасов)", async () => {
+    const result = await runFindProperty({ query: "вечкасов" });
+    const text = (result as { content?: Array<{ text?: string }> })?.content?.[0]?.text ?? "{}";
+    const parsed = JSON.parse(text) as { results?: unknown[] };
+    log(`  find.count=${parsed.results?.length ?? 0}`);
+    return result;
+  });
 }
 
 async function runMutagen(): Promise<void> {
@@ -303,7 +334,7 @@ async function main(): Promise<void> {
   const only =
     process.argv.find((a) => a.startsWith("--only="))?.split("=")[1] ?? "all";
 
-  const validValues = ["oauth-setup", "webmaster", "metrika", "wordstat", "mutagen", "all"];
+  const validValues = ["oauth-setup", "webmaster", "metrika", "wordstat", "mutagen", "inventory", "all"];
   if (!validValues.includes(only)) {
     log(`ERROR: unknown --only value "${only}". Valid: ${validValues.join(", ")}`);
     process.exit(1);
@@ -334,6 +365,7 @@ async function main(): Promise<void> {
     if (only === "metrika" || only === "all") await runMetrika();
     if (only === "wordstat" || only === "all") await runWordstat();
     if (only === "mutagen" || only === "all") await runMutagen();
+    if (only === "inventory" || only === "all") await runInventory();
   }
 
   log(`\n=== ${ok} OK, ${fail} FAIL ===`);

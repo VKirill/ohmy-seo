@@ -3,9 +3,12 @@ import { resolveAccount } from "../lib/account-resolver.js";
 import { getAccessToken } from "../lib/oauth/token-broker.js";
 import { SCOPES } from "../lib/scopes.js";
 import { errorToMcpContent } from "../lib/errors.js";
+import { pickUniqueCounterOrThrow } from "../lib/property-resolver.js";
+import { getCountersWithPolicy } from "../lib/inventory/cache-policy.js";
 
 export async function runMetrikaSearchPhrases(input: {
-  counter_id: string;
+  counter_id?: string;
+  site?: string;
   date_from: string;
   date_to: string;
   limit: number;
@@ -14,10 +17,16 @@ export async function runMetrikaSearchPhrases(input: {
 }) {
   try {
     const acc = resolveAccount(SCOPES.METRIKA_READ, input.account);
+    let counterId = input.counter_id;
+    if (!counterId) {
+      if (!input.site) throw new Error("Provide either counter_id or site.");
+      const counters = await getCountersWithPolicy(acc.id);
+      counterId = pickUniqueCounterOrThrow(input.site, counters, { accountLabel: acc.label });
+    }
     const accessToken = await getAccessToken(acc.id);
     const result = await getSearchPhrases({
       accessToken,
-      counterId: input.counter_id,
+      counterId,
       dateFrom: input.date_from,
       dateTo: input.date_to,
       limit: input.limit,

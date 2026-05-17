@@ -33,6 +33,27 @@ export class AccountNotFoundError extends Error {
   }
 }
 
+export class AmbiguousSiteError extends Error {
+  constructor(
+    query: string,
+    public candidates: Array<{
+      kind: string;
+      account_label: string;
+      host_id?: string;
+      counter_id?: string;
+      display: string;
+      score: number;
+    }>
+  ) {
+    super(
+      `Ambiguous match for '${query}'. ${candidates.length} candidates with equal score. ` +
+        `Specify account or use direct host_id/counter_id. Candidates: ` +
+        candidates.map((c) => c.display + "(" + c.account_label + ")").join(", ")
+    );
+    this.name = "AmbiguousSiteError";
+  }
+}
+
 export class NoMatchingAccountError extends Error {
   constructor(scope: string, candidates: string[]) {
     const hint =

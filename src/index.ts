@@ -23,6 +23,10 @@ import { runStartOauthFlow } from "./tools/oauth-start-flow.js";
 import { runCompleteOauthFlow } from "./tools/oauth-complete-flow.js";
 import { runDeleteAccount } from "./tools/oauth-delete-account.js";
 import { runSetDefaultAccount } from "./tools/oauth-set-default-account.js";
+import { runListSites } from "./tools/list-sites.js";
+import { runListCounters } from "./tools/list-counters.js";
+import { runFindProperty } from "./tools/find-property.js";
+import { runRefreshInventory } from "./tools/refresh-inventory.js";
 
 const READ_ONLY = { readOnlyHint: true, openWorldHint: true, idempotentHint: false };
 
@@ -59,12 +63,13 @@ server.registerTool(
       "timestamp of the last crawl. Use this tool to get a quick health-check of a site's " +
       "standing in Yandex before diving into specific issues or query data.",
     inputSchema: {
-      host_id: z.string().describe('Webmaster host ID, format "https:example.com:443"'),
+      host_id: z.string().optional().describe('Webmaster host ID, format "https:example.com:443"'),
+      site: z.string().min(1).optional().describe("Site domain or URL substring; alternative to host_id for fuzzy lookup"),
       account: z.string().min(1).optional().describe("Account label from list_accounts (optional if exactly one matching account or one is_default)"),
     },
     annotations: READ_ONLY,
   },
-  async (args) => runWebmasterSiteSummary({ host: args.host_id, account: args.account }),
+  async (args) => runWebmasterSiteSummary({ host_id: args.host_id, site: args.site, account: args.account }),
 );
 
 server.registerTool(
@@ -77,7 +82,8 @@ server.registerTool(
       "filtering by query text and limiting result count. Use this to analyse keyword performance " +
       "and identify queries that drive the most (or least) organic traffic.",
     inputSchema: {
-      host_id: z.string().describe('Webmaster host ID, format "https:example.com:443"'),
+      host_id: z.string().optional().describe('Webmaster host ID, format "https:example.com:443"'),
+      site: z.string().min(1).optional().describe("Site domain or URL substring; alternative to host_id for fuzzy lookup"),
       date_from: z.string().describe("Start date YYYY-MM-DD"),
       date_to: z.string().describe("End date YYYY-MM-DD"),
       limit: z.number().int().min(1).max(500).default(50).describe("Max rows to return (default 50, max 500)"),
@@ -86,7 +92,7 @@ server.registerTool(
     },
     annotations: READ_ONLY,
   },
-  async (args) => runWebmasterTopQueries({ host: args.host_id, date_from: args.date_from, date_to: args.date_to, limit: args.limit, query_filter: args.query_filter, account: args.account }),
+  async (args) => runWebmasterTopQueries({ host_id: args.host_id, site: args.site, date_from: args.date_from, date_to: args.date_to, limit: args.limit, query_filter: args.query_filter, account: args.account }),
 );
 
 server.registerTool(
@@ -99,12 +105,13 @@ server.registerTool(
       "Each item includes issue type, severity level, and affected URL count. Use this tool " +
       "to detect and prioritise technical SEO problems that may suppress rankings in Yandex.",
     inputSchema: {
-      host_id: z.string().describe('Webmaster host ID, format "https:example.com:443"'),
+      host_id: z.string().optional().describe('Webmaster host ID, format "https:example.com:443"'),
+      site: z.string().min(1).optional().describe("Site domain or URL substring; alternative to host_id for fuzzy lookup"),
       account: z.string().min(1).optional().describe("Account label from list_accounts (optional if exactly one matching account or one is_default)"),
     },
     annotations: READ_ONLY,
   },
-  async (args) => runWebmasterIndexingIssues({ host: args.host_id, account: args.account }),
+  async (args) => runWebmasterIndexingIssues({ host_id: args.host_id, site: args.site, account: args.account }),
 );
 
 server.registerTool(
@@ -117,7 +124,8 @@ server.registerTool(
       "bounce rate, and page depth. Use this tool to understand which search queries actually " +
       "drive engaged users to the site, complementing Webmaster impressions/click data.",
     inputSchema: {
-      counter_id: z.string().describe("Metrika counter ID (numeric string)"),
+      counter_id: z.string().optional().describe("Metrika counter ID (numeric string)"),
+      site: z.string().min(1).optional().describe("Counter name or site substring; alternative to counter_id for fuzzy lookup"),
       date_from: z.string().describe("Start date YYYY-MM-DD"),
       date_to: z.string().describe("End date YYYY-MM-DD"),
       limit: z.number().int().min(1).max(200).default(50).describe("Max rows to return (default 50, max 200)"),
@@ -126,7 +134,7 @@ server.registerTool(
     },
     annotations: READ_ONLY,
   },
-  async (args) => runMetrikaSearchPhrases({ counter_id: args.counter_id, date_from: args.date_from, date_to: args.date_to, limit: args.limit, search_engine: args.search_engine, account: args.account }),
+  async (args) => runMetrikaSearchPhrases({ counter_id: args.counter_id, site: args.site, date_from: args.date_from, date_to: args.date_to, limit: args.limit, search_engine: args.search_engine, account: args.account }),
 );
 
 server.registerTool(
@@ -139,7 +147,8 @@ server.registerTool(
       "visitors, and pageviews per source. Use this tool to assess the overall traffic mix and " +
       "measure how much Yandex organic contributes relative to other channels.",
     inputSchema: {
-      counter_id: z.string().describe("Metrika counter ID (numeric string)"),
+      counter_id: z.string().optional().describe("Metrika counter ID (numeric string)"),
+      site: z.string().min(1).optional().describe("Counter name or site substring; alternative to counter_id for fuzzy lookup"),
       date_from: z.string().describe("Start date YYYY-MM-DD"),
       date_to: z.string().describe("End date YYYY-MM-DD"),
       group_by: z.enum(["day", "week", "month", "none"]).default("none").describe("Group results by time period"),
@@ -147,7 +156,7 @@ server.registerTool(
     },
     annotations: READ_ONLY,
   },
-  async (args) => runMetrikaTrafficSummary({ counter_id: args.counter_id, date_from: args.date_from, date_to: args.date_to, group_by: args.group_by, account: args.account }),
+  async (args) => runMetrikaTrafficSummary({ counter_id: args.counter_id, site: args.site, date_from: args.date_from, date_to: args.date_to, group_by: args.group_by, account: args.account }),
 );
 
 server.registerTool(
@@ -383,6 +392,101 @@ server.registerTool(
     annotations: READ_ONLY,
   },
   async (args) => runSetDefaultAccount(args),
+);
+
+server.registerTool(
+  "list_sites",
+  {
+    title: "Inventory — List Webmaster Sites",
+    description:
+      "Returns all Yandex Webmaster sites cached in the local inventory for every connected account " +
+      "that has the webmaster:hostinfo scope. Each row includes host_id, ascii_host_url, unicode_host_url, " +
+      "verified flag, main_mirror flag, indexed_pages count, fetched_at timestamp, and cache_age_seconds " +
+      "(null if never refreshed). On a cold cache the tool triggers a live Yandex API fetch before returning. " +
+      "Optionally filter to a single account by label.",
+    inputSchema: {
+      account: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Account label from list_accounts (optional; omit to list sites across all eligible accounts)"),
+    },
+    annotations: READ_ONLY,
+  },
+  async (args) => runListSites({ account: args.account }),
+);
+
+server.registerTool(
+  "list_counters",
+  {
+    title: "Inventory — List Metrika Counters",
+    description:
+      "Returns all Yandex Metrika counters cached in the local inventory for every connected account " +
+      "that has the metrika:read scope. Each row includes counter_id, name, site, status, permission, " +
+      "fetched_at timestamp, and cache_age_seconds (null if the cache was never populated). On a cold " +
+      "cache the tool triggers a live Yandex API fetch before returning results. " +
+      "Optionally filter to a single account by label.",
+    inputSchema: {
+      account: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Account label from list_accounts (optional; omit to list counters across all eligible accounts)"),
+    },
+    annotations: READ_ONLY,
+  },
+  async (args) => runListCounters({ account: args.account }),
+);
+
+server.registerTool(
+  "find_property",
+  {
+    title: "Inventory — Find Property by Query",
+    description:
+      "Searches the local inventory for Webmaster sites and/or Metrika counters matching the query " +
+      "string using case-insensitive substring scoring: exact match = 100, starts-with = 80, contains = 50. " +
+      "Returns up to 25 results sorted by score descending. On a cold cache the tool fetches from Yandex " +
+      "before searching. Use kind='site' or kind='counter' to restrict the search. Ideal for resolving a " +
+      "domain name or counter name to its canonical id before calling domain tools.",
+    inputSchema: {
+      query: z
+        .string()
+        .min(1)
+        .describe("Search string; matched case-insensitively against site URLs, counter names, and counter IDs"),
+      kind: z
+        .enum(["site", "counter"])
+        .optional()
+        .describe("Restrict results to 'site' (Webmaster) or 'counter' (Metrika); omit to search both"),
+    },
+    annotations: READ_ONLY,
+  },
+  async (args) => runFindProperty({ query: args.query, kind: args.kind }),
+);
+
+server.registerTool(
+  "refresh_inventory",
+  {
+    title: "Inventory — Force Refresh",
+    description:
+      "Triggers an explicit refresh of the local inventory by fetching the latest sites or counters " +
+      "from Yandex APIs and upserting the results into the database. Returns a per-(account, kind) report " +
+      "with fetched, inserted, updated, removed counts, duration_ms, and any error message. Skips " +
+      "account/kind pairs that lack the required OAuth scope. Use without arguments to refresh everything, " +
+      "or pass account and/or kind to narrow the scope.",
+    inputSchema: {
+      account: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Account label from list_accounts (optional; omit to refresh all eligible accounts)"),
+      kind: z
+        .enum(["sites", "counters"])
+        .optional()
+        .describe("Which inventory kind to refresh: 'sites' (Webmaster) or 'counters' (Metrika); omit for both"),
+    },
+    annotations: READ_ONLY,
+  },
+  async (args) => runRefreshInventory({ account: args.account, kind: args.kind }),
 );
 
 async function main(): Promise<void> {

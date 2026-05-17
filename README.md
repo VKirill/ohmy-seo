@@ -1,10 +1,12 @@
-# mcp-yandex-seo v0.2.0
+# mcp-yandex-seo v0.3.0
 
-MCP server for Claude Code providing 15 tools for Russian-language SEO via Yandex Webmaster,
+MCP server for Claude Code providing 19 tools for Russian-language SEO via Yandex Webmaster,
 Metrika, Wordstat (Direct), and Mutagen. v0.2 adds multi-account OAuth management: you register
 one or more OAuth apps, connect Yandex accounts via Authorization Code flow, and all domain tools
 resolve the right token automatically. Secrets are encrypted in a local SQLite database using
-AES-256-GCM.
+AES-256-GCM. v0.3 adds an inventory cache (list_sites, list_counters, find_property,
+refresh_inventory) with 24h stale-while-revalidate TTL and a `site` shorthand for all domain
+tools.
 
 ## Prerequisites
 
@@ -81,7 +83,7 @@ webmaster_top_queries({
 
 You can omit `account` if only one account exists or one is marked as default.
 
-## All 15 tools
+## All 19 tools
 
 ### OAuth management (8 tools)
 
@@ -109,6 +111,36 @@ You can omit `account` if only one account exists or one is marked as default.
 | `mutagen_competition` | Competition score 1–25 + CPC estimate for phrases |
 
 All 7 domain tools accept an optional `account` parameter (account label).
+
+## Inventory
+
+The MCP keeps a local cache of all Webmaster sites and Metrika counters available to your
+connected accounts. Cache TTL is 24 hours by default (configurable via
+`MCP_YANDEX_SEO_CACHE_TTL_HOURS`). The behavior is **stale-while-revalidate**: if cached
+data is older than the TTL, the call returns immediately with the stale rows and
+triggers an async refresh in the background.
+
+### Inventory tools
+
+| Tool | What it does |
+|---|---|
+| `list_sites({account?})` | Webmaster hosts for one or all accounts (lazy refresh on cold cache) |
+| `list_counters({account?})` | Metrika counters for one or all accounts |
+| `find_property({query, kind?})` | Case-insensitive substring search; returns host_id/counter_id + account |
+| `refresh_inventory({account?, kind?})` | Force refresh; without args refreshes all accounts × kinds |
+
+### Using `site` instead of `host_id` / `counter_id`
+
+All five domain tools (`webmaster_*`, `metrika_*`) accept an optional `site` parameter as an
+alternative to `host_id` / `counter_id`. Example:
+
+```
+webmaster_top_queries({site: "treba.pro", date_from: "2026-05-01", date_to: "2026-05-15"})
+```
+
+The MCP resolves the site name via property-resolver. If the substring matches multiple
+candidates with equal score, the tool returns an `AmbiguousSiteError` with the candidate
+list — pass `account` filter or use direct `host_id` to disambiguate.
 
 ## Troubleshooting
 
@@ -167,7 +199,7 @@ Without `SMOKE_ACCESS_TOKEN` the runner prints the authorize URL and exits clean
 See [docs/plans/mcp-yandex-seo/ROADMAP.md](docs/plans/mcp-yandex-seo/ROADMAP.md) for upcoming
 versions:
 
-- v0.3 — Inventory cache (list_sites, find_property, list_counters)
+- v0.3 — Inventory cache (list_sites, find_property, list_counters) ✓ done
 - v0.4 — Query result cache with TTL (Wordstat/Mutagen)
 - v0.5 — OS keychain for master key (keytar)
 

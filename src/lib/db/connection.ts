@@ -13,7 +13,7 @@ export function getDb(): Database.Database {
     return db;
   }
 
-  const dbPath = process.env.MCP_YANDEX_SEO_DB_PATH ?? DEFAULT_DB_PATH;
+  const dbPath = process.env.MCP_YANDEX_SEO_DB_PATH || DEFAULT_DB_PATH;
 
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
