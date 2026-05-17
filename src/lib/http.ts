@@ -32,8 +32,13 @@ export async function request(url: string, init?: RequestInit): Promise<HttpResp
 
   const { status } = response;
 
-  if (status === 401 || status === 403) {
+  if (status === 401) {
     throw new AuthError(status);
+  }
+
+  if (status === 403) {
+    const body = await response.text();
+    throw new ApiError(status, body);
   }
 
   if (status === 429) {
