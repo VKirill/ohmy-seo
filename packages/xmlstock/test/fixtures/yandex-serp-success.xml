@@ -1,0 +1,278 @@
+<?xml version="1.0" encoding="utf-8"?>
+<yandexsearch version="1.0">
+<request>
+<query>seo</query>
+<page>0</page>
+<sortby order="descending" priority="no">rlv</sortby>
+<maxpassages>5</maxpassages>
+<groupings>
+<groupby attr="d" mode="deep" groups-on-page="10" docs-in-group="1" curcateg="-1"/>
+</groupings>
+</request>
+<response date="20260518T154003">
+<reqid>1779118802736640-7982389718513967645-balancer-l7leveler-kubr-yp-vla-82-BAL</reqid>
+<found priority="phrase">3317460</found>
+<found priority="strict">3317460</found>
+<found priority="all">3317460</found>
+<found-human>Нашлось 3 млн ответов</found-human>
+<is-local>no</is-local>
+<results>
+<grouping attr="d" mode="deep" groups-on-page="10" docs-in-group="1" curcateg="-1">
+<page first="1" last="11">0</page>
+<group>
+<categ attr="d" name="wikipedia.org"/>
+<doccount>11</doccount>
+<relevance priority="all"/>
+<doc touchdown="РКН: сайт нарушает закон РФ" id="Z466E1FC1727C2643">
+<relevance priority="all"/>
+<saved-copy-url>https://yandexwebcache.net/yandbtm?fmode=inject&amp;tm=1779118802&amp;tld=ru&amp;lang=ru&amp;la=1778148352&amp;text=seo&amp;url=https%3A//ru.wikipedia.org/wiki/%25D0%259F%25D0%25BE%25D0%25B8%25D1%2581%25D0%25BA%25D0%25BE%25D0%25B2%25D0%25B0%25D1%258F_%25D0%25BE%25D0%25BF%25D1%2582%25D0%25B8%25D0%25BC%25D0%25B8%25D0%25B7%25D0%25B0%25D1%2586%25D0%25B8%25D1%258F&amp;l10n=ru&amp;mime=html&amp;sign=aed0a1520bf4c9e1a69de919ffb8368d&amp;keyno=0</saved-copy-url>
+<url>https://ru.wikipedia.org/wiki/%D0%9F%D0%BE%D0%B8%D1%81%D0%BA%D0%BE%D0%B2%D0%B0%D1%8F_%D0%BE%D0%BF%D1%82%D0%B8%D0%BC%D0%B8%D0%B7%D0%B0%D1%86%D0%B8%D1%8F</url>
+<domain>ru.wikipedia.org</domain>
+<title>Поисковая оптимизация — Википедия</title>
+<modtime>20070816T050208</modtime>
+<size>7507</size>
+<charset>utf-8</charset>
+<mime-type>text/html</mime-type>
+<passages>
+<passage>Наряду с этой глобальной тенденцией, которой активно противостоят ведущие поисковые системы, имеют место и важные изменения внутри отдельных региональных рынков поисковой оптимизации и продвижения. Так, для Рунета последних лет характерен отток действительно стоящих специалистов на зарубежные рынки. Это объясняется тем, что отечественные рынки уже не могут наполнять ликвидностью полноценные <hlword>SEO</hlword> компании.</passage>
+</passages>
+<properties>
+<_PassagesType>0</_PassagesType>
+<lang>ru</lang>
+<extended-text>Поиско́вая оптимиза́ция (продвижение сайтов) (англ. search engine optimization, SEO) — комплекс мероприятий по внутренней и внешней оптимизации для поднятия позиций сайта в результатах выдачи поисковых систем по определённым запросам пользователей, с целью увеличения сетевого трафика (для информационных ресурсов), потенциальных клиентов (для коммерческих ресурсов) и последующей монетизации (получение дохода) этого трафика. SEO может быть ориентировано на различные виды поиска, включая поиск информации, товаров, услуг, изображений, видеороликов, новостей, адресов, контактов и специфические отраслевые поисковые системы. Обычно чем выше позиция сайта в результатах поиска, тем больше заинтересованных посетителей переходит на него с поисковых систем.</extended-text>
+</properties>
+</doc>
+</group>
+<group>
+<categ attr="d" name="seaccelerator.ru"/>
+<doccount>21</doccount>
+<relevance priority="all"/>
+<doc id="Z99FBD06246455F43">
+<relevance priority="all"/>
+<saved-copy-url>https://yandexwebcache.net/yandbtm?fmode=inject&amp;tm=1779118802&amp;tld=ru&amp;lang=ru&amp;la=1778287232&amp;text=seo&amp;url=https%3A//seaccelerator.ru/seo/optimization&amp;l10n=ru&amp;mime=html&amp;sign=542ad170fa97f1e4b5367ba8846febef&amp;keyno=0</saved-copy-url>
+<url>https://seaccelerator.ru/seo/optimization</url>
+<domain>seaccelerator.ru</domain>
+<title>Оптимизация сайта для продвижения в поисковых системах...</title>
+<modtime>20180809T141112</modtime>
+<size>792</size>
+<charset>utf-8</charset>
+<mime-type>text/html</mime-type>
+<passages>
+<passage><hlword>SEO</hlword> оптимизация сайта — быстро и результативно. Сервис SEOaccelerator предлагает вам услугу <hlword>SEO</hlword>-продвижения. Для раскрутки сайтов мы используем уникальную техническую методику, которая позволяет использовать максимальное возможное число заданных ключей. Наш алгоритм проводит мониторинг вашего сайта, проверяет, как его воспринимают поисковики, и увеличивает число запросов, по которым они его оценивают.</passage>
+</passages>
+<properties>
+<_PassagesType>0</_PassagesType>
+<lang>ru</lang>
+<extended-text>Сервис SEOaccelerator предлагает вам услугу SEO-продвижения. Для раскрутки сайтов мы используем уникальную техническую методику, которая позволяет использовать максимальное возможное число заданных ключей. Наш алгоритм проводит мониторинг вашего сайта, проверяет, как его воспринимают поисковики, и увеличивает число запросов, по которым они его оценивают.</extended-text>
+</properties>
+</doc>
+</group>
+<group>
+<categ attr="d" name="direct.yandex.ru"/>
+<doccount>76</doccount>
+<relevance priority="all"/>
+<doc id="ZBAB60C179662D14E">
+<relevance priority="all"/>
+<saved-copy-url>https://yandexwebcache.net/yandbtm?fmode=inject&amp;tm=1779118802&amp;tld=ru&amp;lang=ru&amp;la=1778382336&amp;text=seo&amp;url=https%3A//direct.yandex.ru/base/articles/seo-prodvizhenie-sajta-tovarov&amp;l10n=ru&amp;mime=html&amp;sign=bb8b176e98e3484453dd5f9886755ed6&amp;keyno=0</saved-copy-url>
+<url>https://direct.yandex.ru/base/articles/seo-prodvizhenie-sajta-tovarov</url>
+<domain>direct.yandex.ru</domain>
+<title><hlword>SEO</hlword>-продвижение интернет-магазина: как правильно настроить...</title>
+<modtime>20250617T124559</modtime>
+<size>3135</size>
+<charset>utf-8</charset>
+<mime-type>text/html</mime-type>
+<passages>
+<passage>Что такое <hlword>SEO</hlword>-продвижение и почему это важно. <hlword>SEO</hlword>-продвижение — это процесс, который делает интернет-магазин заметнее в поисковых системах. Чем лучше оптимизирован сайт, тем выше вероятность, что он появится в первых строчках выдачи после того, как потенциальный клиент введёт свой запрос. Вот почему важно продвигать ресурс, если продаёте товары онлайн</passage>
+</passages>
+<properties>
+<_PassagesType>0</_PassagesType>
+<lang>ru</lang>
+<extended-text>SEO-продвижение — это процесс, который делает интернет-магазин заметнее в поисковых системах. Чем лучше оптимизирован сайт, тем выше вероятность, что он появится в первых строчках выдачи после того, как потенциальный клиент введёт свой запрос. Вот почему важно продвигать ресурс, если продаёте товары онлайн:</extended-text>
+</properties>
+</doc>
+</group>
+<group>
+<categ attr="d" name="mosseo.ru"/>
+<doccount>64</doccount>
+<relevance priority="all"/>
+<doc id="ZD398A5EECDBA3326">
+<relevance priority="all"/>
+<saved-copy-url>https://yandexwebcache.net/yandbtm?fmode=inject&amp;tm=1779118802&amp;tld=ru&amp;lang=ru&amp;la=1778446080&amp;text=seo&amp;url=https%3A//mosseo.ru/&amp;l10n=ru&amp;mime=html&amp;sign=f23426e1872b33dd39d98a3b6056abde&amp;keyno=0</saved-copy-url>
+<url>https://mosseo.ru/</url>
+<domain>mosseo.ru</domain>
+<title>Заказать <hlword>SEO</hlword> продвижение сайтов | <hlword>СЕО</hlword> компания в <hlword>Москве</hlword>...</title>
+<modtime>20130710T224212</modtime>
+<size>8811</size>
+<charset>utf-8</charset>
+<mime-type>text/html</mime-type>
+<passages>
+<passage><hlword>SEO</hlword> продвижение и раскрутка сайта в ТОП 10 под ключ. Поисковая оптимизация сайтов от агентства в <hlword>Москве</hlword>.</passage>
+<passage>Всегда находимся в ТОП поиска. Знаем, как достичь такого результата. Бесплатный <hlword>СЕО</hlword> аудит Бесплатный <hlword>СЕО</hlword> аудит. Руководитель отдела <hlword>SEO</hlword>. Начать чат с <hlword>SEO</hlword> экспертом по WhatsApp или Telegram. Продвижение и <hlword>SEO</hlword> раскрутка сайта в поиске. Поисковая оптимизация в интернете по <hlword>Москве</hlword> и России.</passage>
+</passages>
+<properties>
+<_PassagesType>0</_PassagesType>
+<lang>ru</lang>
+<extended-text>SEO продвижение и раскрутка сайта в ТОП 10 под ключ. Поисковая оптимизация сайтов от агентства в Москве. Заказать услуги СЕО раскрутки сайтов. SEO компания для успешного продвижения сайта в топ 10.</extended-text>
+</properties>
+</doc>
+</group>
+<group>
+<categ attr="d" name="yandex.ru"/>
+<doccount>276</doccount>
+<relevance priority="all"/>
+<doc id="Z8D0CFB68C2952186">
+<relevance priority="all"/>
+<saved-copy-url>https://yandexwebcache.net/yandbtm?fmode=inject&amp;tm=1779118802&amp;tld=ru&amp;lang=ru&amp;la=1778450688&amp;text=seo&amp;url=https%3A//yandex.ru/adv/edu/materials/poiskovaya-optimizaciya&amp;l10n=ru&amp;mime=html&amp;sign=d0cd679ca8fafc69aa266ad303e004a1&amp;keyno=0</saved-copy-url>
+<url>https://yandex.ru/adv/edu/materials/poiskovaya-optimizaciya</url>
+<domain>yandex.ru</domain>
+<title><hlword>SEO</hlword>-продвижение сайта — что такое поисковая оптимизация...</title>
+<modtime>20161018T135546</modtime>
+<size>5396</size>
+<charset>utf-8</charset>
+<mime-type>text/html</mime-type>
+<passages>
+<passage><hlword>SEO</hlword> (<hlword>search</hlword> <hlword>engine</hlword> <hlword>optimization</hlword>) — что это такое. <hlword>SEO</hlword> (<hlword>search</hlword> <hlword>engine</hlword> <hlword>optimization</hlword>) переводится как «поисковая оптимизация». Это комплекс работ по улучшению качества сайта для повышения видимости ресурса в поисковой выдаче. За счёт <hlword>SEO</hlword>-работ больше заинтересованных пользователей заходит на площадку, и выше вероятность, что они выполнят целевые действия. Кратко о том, как работает поиск Яндекса</passage>
+</passages>
+<properties>
+<_PassagesType>0</_PassagesType>
+<lang>ru</lang>
+<extended-text>SEO (search engine optimization) переводится как «поисковая оптимизация». Это комплекс работ по улучшению качества сайта для повышения видимости ресурса в поисковой выдаче. За счёт SEO-работ больше заинтересованных пользователей заходит на площадку, и выше вероятность, что они выполнят целевые действия.</extended-text>
+</properties>
+</doc>
+</group>
+<group>
+<categ attr="d" name="en.wikipedia.org"/>
+<doccount>31</doccount>
+<relevance priority="all"/>
+<doc touchdown="РКН: сайт нарушает закон РФ" id="Z2D62CAE28AE333C4">
+<relevance priority="all"/>
+<saved-copy-url>https://yandexwebcache.net/yandbtm?fmode=inject&amp;tm=1779118802&amp;tld=ru&amp;lang=en&amp;la=1778114560&amp;text=seo&amp;url=https%3A//en.wikipedia.org/wiki/Search_engine_optimization&amp;l10n=ru&amp;mime=html&amp;sign=a8dc3cbf63a54aa8fc7754f4cb95454c&amp;keyno=0</saved-copy-url>
+<url>https://en.wikipedia.org/wiki/Search_engine_optimization</url>
+<domain>en.wikipedia.org</domain>
+<title><hlword>Search</hlword> <hlword>engine</hlword> <hlword>optimization</hlword> - Wikipedia</title>
+<modtime>20120223T070059</modtime>
+<size>8400</size>
+<charset>utf-8</charset>
+<mime-type>text/html</mime-type>
+<passages>
+<passage><hlword>Search</hlword> <hlword>engine</hlword> marketing (SEM) is the practice of designing, running, and optimizing <hlword>search</hlword> <hlword>engine</hlword> ad campaigns. Its difference from <hlword>SEO</hlword> is most simply depicted as the difference between paid and unpaid priority ranking in search results.</passage>
+</passages>
+<properties>
+<_PassagesType>0</_PassagesType>
+<lang>en</lang>
+<extended-text>Search engine optimization (SEO) is the practice of improving the visibility and overall performance of websites and web pages in search engine results pages (SERPs). It focuses on increasing the quantity and quality of traffic from unpaid (organic) search results rather than paid advertising. SEO applies to multiple search formats, including web, image, video, news, academic, and vertical search engines, as.</extended-text>
+</properties>
+</doc>
+</group>
+<group>
+<categ attr="d" name="vk.com"/>
+<doccount>6</doccount>
+<relevance priority="all"/>
+<doc id="Z22DD9C829DD98512">
+<relevance priority="all"/>
+<saved-copy-url>https://yandexwebcache.net/yandbtm?fmode=inject&amp;tm=1779118802&amp;tld=ru&amp;lang=ru&amp;la=1778444544&amp;text=seo&amp;url=https%3A//ads.vk.com/insights/chto-takoe-seo&amp;l10n=ru&amp;mime=html&amp;sign=dd217a244212145d7b64af1cdb8671f2&amp;keyno=0</saved-copy-url>
+<url>https://ads.vk.com/insights/chto-takoe-seo</url>
+<domain>ads.vk.com</domain>
+<title><hlword>SEO</hlword>: что это, методы продвижения сайтов, внутренняя и внешняя...</title>
+<modtime>20251014T122302</modtime>
+<size>3135</size>
+<charset>utf-8</charset>
+<mime-type>text/html</mime-type>
+<passages>
+<passage><hlword>Search</hlword> <hlword>Engine</hlword> <hlword>Optimization</hlword> или сокращенно <hlword>SEO</hlword> — это поисковая оптимизация. Она предполагает комплекс мероприятий, нацеленных на то, чтобы повысить позиции сайта в органической выдаче по релевантным запросам пользователей, увеличить посещаемость и конверсии.</passage>
+</passages>
+<properties>
+<_PassagesType>0</_PassagesType>
+<lang>ru</lang>
+<extended-text>Search Engine Optimization или сокращенно SEO — это поисковая оптимизация. Она предполагает комплекс мероприятий, нацеленных на то, чтобы повысить позиции сайта в органической выдаче по релевантным запросам пользователей, увеличить посещаемость и конверсии. Иными словами, площадка попадает в топ-10 Яндекса или Google. SEO выводит страницу на первые позиции в поисковой выдаче и позволяет владельцу сайта привлечь больше пользователей. За счет того, что люди приходят с определенных поисковых запросов, порой их уже не нужно прогревать на покупку, что увеличивает конверсию в продажу. Среди других преимуществ инструмента:</extended-text>
+</properties>
+</doc>
+</group>
+<group>
+<categ attr="d" name="habr.com"/>
+<doccount>984</doccount>
+<relevance priority="all"/>
+<doc id="Z00E865ED27581375">
+<relevance priority="all"/>
+<saved-copy-url>https://yandexwebcache.net/yandbtm?fmode=inject&amp;tm=1779118802&amp;tld=ru&amp;lang=ru&amp;la=1778330752&amp;text=seo&amp;url=https%3A//habr.com/ru/articles/840724/&amp;l10n=ru&amp;mime=html&amp;sign=6d9894638a721eb283e58cf31ae5c18d&amp;keyno=0</saved-copy-url>
+<url>https://habr.com/ru/articles/840724/</url>
+<domain>habr.com</domain>
+<title><hlword>SEO</hlword> продвижение сайта: Инструкция / Хабр</title>
+<modtime>20240904T094818</modtime>
+<size>3676</size>
+<charset>utf-8</charset>
+<mime-type>text/html</mime-type>
+<passages>
+<passage>Что такое <hlword>SEO</hlword>. <hlword>SEO</hlword> (<hlword>Search</hlword> <hlword>Engine</hlword> <hlword>Optimization</hlword>) — это процесс оптимизации веб-страниц для улучшения их позиций в результатах поисковых систем. В основе <hlword>SEO</hlword> лежит целый ряд стратегий и техник, которые помогают сделать сайт более привлекательным для поисковых алгоритмов.</passage>
+</passages>
+<properties>
+<_PassagesType>0</_PassagesType>
+<lang>ru</lang>
+<extended-text>SEO (Search Engine Optimization) — это процесс оптимизации веб-страниц для улучшения их позиций в результатах поисковых систем. В основе SEO лежит целый ряд стратегий и техник, которые помогают сделать сайт более привлекательным для поисковых алгоритмов. Ключевые задачи статьи: Понимание основ SEO и их значимости для вас. Рассмотрение ключевых элементов и метрик успешного продвижения. Практические рекомендации и шаги для оптимизации сайта. Инструкция по раскрутке сайта. Раздел начнем с основ продвижения сайта, где рассмотрим, как работает SEO оптимизация и зачем нужна аналитика. Основы продвижения сайта. SEO оптимизация — это процесс, который подразумевает множество аспектов: от правильной структуры страницы до использования правильных ключевых слов. Все элементы должны взаимодействовать для создания гармоничной стратегии. Как работает SEO оптимизация: Чтобы успешно продвинуть сайт, важно понимать принципы работы поисковых систем: Алгоритмы поисковиков.</extended-text>
+</properties>
+</doc>
+</group>
+<group>
+<categ attr="d" name="unisender.com"/>
+<doccount>87</doccount>
+<relevance priority="all"/>
+<doc id="Z139D9580844C4398">
+<relevance priority="all"/>
+<saved-copy-url>https://yandexwebcache.net/yandbtm?fmode=inject&amp;tm=1779118802&amp;tld=ru&amp;lang=ru&amp;la=1778404608&amp;text=seo&amp;url=https%3A//www.unisender.com/ru/blog/guide-seo/&amp;l10n=ru&amp;mime=html&amp;sign=708e9ff23b8a015a9fd52c804ed97c96&amp;keyno=0</saved-copy-url>
+<url>https://www.unisender.com/ru/blog/guide-seo/</url>
+<domain>www.unisender.com</domain>
+<title>Гид по <hlword>SEO</hlword>. Как оптимизировать сайт и сколько это стоит</title>
+<modtime>20170602T154642</modtime>
+<size>7936</size>
+<charset>utf-8</charset>
+<mime-type>text/html</mime-type>
+<passages>
+<passage>Все, что относится к оптимизации сайта под поисковые запросы называется <hlword>SEO</hlword> (<hlword>search</hlword> <hlword>engine</hlword> <hlword>optimization</hlword>).</passage>
+<passage>Со статьей помогли специалисты из <hlword>SEO</hlword>-команды Unisender. Они поделились кейсами, инсайтами и рассказали о <hlword>SEO</hlword>-проблемах, с которыми приходилось сталкиваться при работе в Unisender. Что такое <hlword>SEO</hlword>. <hlword>SEO</hlword> (поисковая оптимизация) — это действия, которые поднимают сайт в поисковой выдаче по определенным запросам.</passage>
+</passages>
+<properties>
+<_PassagesType>0</_PassagesType>
+<lang>ru</lang>
+<extended-text>SEO (поисковая оптимизация) — это действия, которые поднимают сайт в поисковой выдаче по определенным запросам. Чем качественнее SEO, тем выше позиции сайта. Ну а чем выше позиции сайта, тем больше на него органического трафика — больше оплат и регистраций. Выдача гугла по запросу «что такое SEO». Выдача гугла по запросу «что такое SEO». Кто выше — у того лучше оптимизирован сайт под поисковые алгоритмы. Работа с SEO — это работа с алгоритмами поисковых систем. Чтобы выдать пользователю самые релевантные результаты, алгоритмы сравнивают сайты по многим параметрам. Например, оценивают скорость загрузки сайта и поведение пользователя на странице, смотрят на контент статей.</extended-text>
+</properties>
+</doc>
+</group>
+<group>
+<categ attr="d" name="mts.ru"/>
+<doccount>3</doccount>
+<relevance priority="all"/>
+<doc id="Z0D198D46EAD71688">
+<relevance priority="all"/>
+<saved-copy-url>https://yandexwebcache.net/yandbtm?fmode=inject&amp;tm=1779118802&amp;tld=ru&amp;lang=ru&amp;la=1778357504&amp;text=seo&amp;url=https%3A//media.mts.ru/business/198381-chto-takoe-seo-optimizatsiya&amp;l10n=ru&amp;mime=html&amp;sign=6d9c388fe515f7b190dad5e54d2f0fa8&amp;keyno=0</saved-copy-url>
+<url>https://media.mts.ru/business/198381-chto-takoe-seo-optimizatsiya</url>
+<domain>media.mts.ru</domain>
+<title><hlword>SEO</hlword> — что это такое простыми словами и как работает поисковая...</title>
+<modtime>20210810T192409</modtime>
+<size>2382</size>
+<charset>utf-8</charset>
+<mime-type>text/html</mime-type>
+<passages>
+<passage><hlword>SEO</hlword> (<hlword>Search</hlword> <hlword>Engine</hlword> <hlword>Optimization</hlword>, поисковая оптимизация) — это процесс улучшения сайта, чтобы он чаще попадал на первые строки поисковой выдачи. Главная цель — увеличить видимость ресурса и привлечь больше посетителей. Поисковики ранжируют сайты по множеству критериев, среди которых</passage>
+</passages>
+<properties>
+<_PassagesType>0</_PassagesType>
+<lang>ru</lang>
+<extended-text>SEO (Search Engine Optimization, поисковая оптимизация) — это процесс улучшения сайта, чтобы он чаще попадал на первые строки поисковой выдачи. Главная цель — увеличить видимость ресурса и привлечь больше посетителей. Поисковики ранжируют сайты по множеству критериев, среди которых:</extended-text>
+</properties>
+</doc>
+</group>
+<found priority="phrase">1908</found>
+<found priority="strict">1908</found>
+<found priority="all">1908</found>
+<found-docs priority="phrase">3317442</found-docs>
+<found-docs priority="strict">3317442</found-docs>
+<found-docs priority="all">3317442</found-docs>
+<found-docs-human>нашёл 3 млн ответов</found-docs-human>
+</grouping>
+</results>
+</response>
+<resource-usage>
+<cpu-time-sum>3188083</cpu-time-sum>
+<cpu-time-max>19797</cpu-time-max>
+</resource-usage>
+</yandexsearch>

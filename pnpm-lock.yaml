@@ -30,6 +30,50 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  packages/mutagen:
+    dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@4.4.3)
+      '@ohmy-seo/mcp-core':
+        specifier: workspace:*
+        version: link:../core
+      dotenv:
+        specifier: ^16.4.5
+        version: 16.6.1
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.19
+      tsx:
+        specifier: ^4.19.3
+        version: 4.22.1
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  packages/xmlstock:
+    dependencies:
+      '@ohmy-seo/mcp-core':
+        specifier: workspace:*
+        version: link:../core
+      fast-xml-parser:
+        specifier: ^4.5.0
+        version: 4.5.6
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.19
+      tsx:
+        specifier: ^4.19.3
+        version: 4.22.1
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   packages/yandex-seo:
     dependencies:
       '@modelcontextprotocol/sdk':
@@ -416,6 +460,10 @@ packages:
   fast-uri@3.1.2:
     resolution: {integrity: sha512-rVjf7ArG3LTk+FS6Yw81V1DLuZl1bRbNrev6Tmd/9RaroeeRRJhAt7jg/6YFxbvAQXUCavSoZhPPj6oOx+5KjQ==}
 
+  fast-xml-parser@4.5.6:
+    resolution: {integrity: sha512-Yd4vkROfJf8AuJrDIVMVmYfULKmIJszVsMv7Vo71aocsKgFxpdlpSHXSaInvyYfgw2PRuObQSW2GFpVMUjxu9A==}
+    hasBin: true
+
   file-uri-to-path@1.0.0:
     resolution: {integrity: sha512-0Zt+s3L7Vf1biwWZ29aARiVYLx7iMGnEUl9x33fbB/j3jR81u/O2LbqK+Bm1CDSNDKVtJ/YjwY7TUd5SkeLQLw==}
 
@@ -686,6 +734,9 @@ packages:
   strip-json-comments@2.0.1:
     resolution: {integrity: sha512-4gB8na07fecVVkOI6Rs4e7T6NOTki5EmL7TUduTs6bu3EdnSycntVJ4re8kgZA+wx9IueI2Y11bfbgwtzuE0KQ==}
     engines: {node: '>=0.10.0'}
+
+  strnum@1.1.2:
+    resolution: {integrity: sha512-vrN+B7DBIoTTZjnPNewwhx6cBA/H+IS7rfW68n7XxC1y7uoiGQBxaKzqucGUgavX15dJgiGztLJ8vxuEzwqBdA==}
 
   tar-fs@2.1.4:
     resolution: {integrity: sha512-mDAjwmZdh7LTT6pNleZ05Yt65HC3E+NiQzl672vQG38jIrehtJk/J3mNwIg+vShQPcLF/LV7CMnDW6vjj6sfYQ==}
@@ -1071,6 +1122,10 @@ snapshots:
 
   fast-uri@3.1.2: {}
 
+  fast-xml-parser@4.5.6:
+    dependencies:
+      strnum: 1.1.2
+
   file-uri-to-path@1.0.0: {}
 
   finalhandler@2.1.1:
@@ -1350,6 +1405,8 @@ snapshots:
       safe-buffer: 5.2.1
 
   strip-json-comments@2.0.1: {}
+
+  strnum@1.1.2: {}
 
   tar-fs@2.1.4:
     dependencies:
