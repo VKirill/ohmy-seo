@@ -30,6 +30,57 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  packages/ga4:
+    dependencies:
+      '@ohmy-seo/mcp-core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.19
+      tsx:
+        specifier: ^4.19.3
+        version: 4.22.1
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  packages/google-search-console:
+    dependencies:
+      '@ohmy-seo/mcp-core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.19
+      tsx:
+        specifier: ^4.19.3
+        version: 4.22.1
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  packages/gtm:
+    dependencies:
+      '@ohmy-seo/mcp-core':
+        specifier: workspace:*
+        version: link:../core
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.19
+      tsx:
+        specifier: ^4.19.3
+        version: 4.22.1
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   packages/mutagen:
     dependencies:
       '@modelcontextprotocol/sdk':
