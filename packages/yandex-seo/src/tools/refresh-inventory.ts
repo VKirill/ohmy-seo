@@ -2,7 +2,7 @@ import { getAccountByLabel, listAccounts } from "../lib/db/accounts-repo.js";
 import { acquireAndRun } from "../lib/inventory/cache-policy.js";
 import { refreshSitesForAccount, refreshCountersForAccount } from "../lib/inventory/refresher.js";
 import { hasScope, SCOPES } from "../lib/scopes.js";
-import { errorToMcpContent } from "../lib/errors.js";
+import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
 
 export async function runRefreshInventory(args: {
   account?: string;

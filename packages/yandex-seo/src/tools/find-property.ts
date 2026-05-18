@@ -2,7 +2,7 @@ import { listAccounts } from "../lib/db/accounts-repo.js";
 import { getSitesWithPolicy, getCountersWithPolicy } from "../lib/inventory/cache-policy.js";
 import { hasScope, SCOPES } from "../lib/scopes.js";
 import { findProperty } from "../lib/property-resolver.js";
-import { errorToMcpContent } from "../lib/errors.js";
+import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
 
 export async function runFindProperty(args: {
   query: string;

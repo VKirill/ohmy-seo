@@ -1,4 +1,4 @@
-import { request } from "./http.js";
+import { request } from "@ohmy-seo/mcp-core/http";
 
 const MANAGEMENT_BASE_URL = "https://api-metrika.yandex.net/management/v1";
 

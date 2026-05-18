@@ -7,7 +7,7 @@ dotenvConfig({ path: resolve(dirname(fileURLToPath(import.meta.url)), "..", ".en
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { getMasterKey } from "./lib/crypto/master-key.js";
+import { getMasterKey } from "@ohmy-seo/mcp-core/crypto";
 import { runMutagenCompetition } from "./tools/mutagen-competition.js";
 import { runListOauthApps } from "./tools/oauth-list-apps.js";
 import { runRegisterOauthApp } from "./tools/oauth-register-app.js";

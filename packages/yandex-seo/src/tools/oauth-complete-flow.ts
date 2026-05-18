@@ -3,7 +3,7 @@ import { getAccountByLabel, insertAccount } from "../lib/db/accounts-repo.js";
 import { exchangeCode } from "../lib/oauth/yandex-flow.js";
 import { probeLogin, probeWebmasterUserId } from "../lib/oauth/login-probe.js";
 import { hasScope, SCOPES } from "../lib/scopes.js";
-import { errorToMcpContent } from "../lib/errors.js";
+import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
 
 export async function runCompleteOauthFlow(input: {
   app_label: string;

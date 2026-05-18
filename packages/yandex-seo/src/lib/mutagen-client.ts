@@ -1,4 +1,4 @@
-import { request } from "./http.js";
+import { request } from "@ohmy-seo/mcp-core/http";
 
 const BASE_URL = "http://api.mutagen.ru/json";
 

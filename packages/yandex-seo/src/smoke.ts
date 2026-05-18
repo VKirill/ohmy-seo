@@ -50,8 +50,8 @@ import { runInvalidateCache } from "./tools/invalidate-cache.js";
 import { runCacheStats } from "./tools/cache-stats.js";
 import { runYandexWebmasterApi } from "./tools/yandex-webmaster-api.js";
 import { runYandexMetrikaApi } from "./tools/yandex-metrika-api.js";
-import { withCache } from "./lib/cache/cache-policy.js";
-import * as cacheRepo from "./lib/cache/query-cache-repo.js";
+import { withCache } from "@ohmy-seo/mcp-core/cache";
+import * as cacheRepo from "@ohmy-seo/mcp-core/cache";
 
 // ---------------------------------------------------------------------------
 // Helpers

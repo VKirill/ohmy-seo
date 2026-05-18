@@ -1,4 +1,4 @@
-import { AmbiguousSiteError } from "./errors.js";
+import { AmbiguousSiteError } from "@ohmy-seo/mcp-core/errors";
 import { listAllSites } from "./db/inventory-repo.js";
 
 type SiteCandidate = {

@@ -1,5 +1,5 @@
 import { listAccounts } from "../lib/db/accounts-repo.js";
-import { errorToMcpContent } from "../lib/errors.js";
+import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
 
 export async function runListAccounts() {
   try {

@@ -1,5 +1,5 @@
-import { deleteByEndpointPrefix } from "../cache/query-cache-repo.js";
-import type { CacheableTool } from "../cache/cache-policy.js";
+import { deleteByEndpointPrefix } from "@ohmy-seo/mcp-core/cache";
+import type { CacheableTool } from "@ohmy-seo/mcp-core/cache";
 import type { ApiName } from "./endpoints-spec.js";
 
 export function invalidateOnWrite(

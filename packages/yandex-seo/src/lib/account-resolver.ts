@@ -1,6 +1,6 @@
 import { listAccounts, getAccountByLabel } from "./db/accounts-repo.js";
 import { hasScope, type Scope } from "./scopes.js";
-import { AccountNotFoundError, NoMatchingAccountError } from "./errors.js";
+import { AccountNotFoundError, NoMatchingAccountError } from "@ohmy-seo/mcp-core/errors";
 import type { AccountRow } from "./db/accounts-repo.js";
 
 export function resolveAccount(scope: Scope, explicitLabel?: string): AccountRow {

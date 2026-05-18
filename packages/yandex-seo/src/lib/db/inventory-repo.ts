@@ -1,4 +1,4 @@
-import { getDb } from "./connection.js";
+import { getDb } from "@ohmy-seo/mcp-core/db";
 
 export type InvSiteRow = {
   id: number;

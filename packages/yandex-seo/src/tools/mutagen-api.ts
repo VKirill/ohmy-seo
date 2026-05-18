@@ -1,6 +1,6 @@
 import { executeMutagenMethod } from "../lib/mutagen-client.js";
-import { errorToMcpContent } from "../lib/errors.js";
-import { withCache } from "../lib/cache/cache-policy.js";
+import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
+import { withCache } from "@ohmy-seo/mcp-core/cache";
 
 export async function runMutagenApi(input: {
   method: string;

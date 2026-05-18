@@ -1,7 +1,7 @@
 import { getAppByLabel } from "../lib/db/oauth-apps-repo.js";
 import { getAccountByLabel } from "../lib/db/accounts-repo.js";
 import { buildAuthorizeUrl } from "../lib/oauth/yandex-flow.js";
-import { errorToMcpContent } from "../lib/errors.js";
+import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
 
 export async function runStartOauthFlow(input: {
   app_label: string;

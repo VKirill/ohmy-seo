@@ -1,5 +1,5 @@
-import { request } from "../http.js";
-import { OAuthFlowError } from "../errors.js";
+import { request } from "@ohmy-seo/mcp-core/http";
+import { OAuthFlowError } from "@ohmy-seo/mcp-core/errors";
 
 export type TokenSet = {
   access_token: string;

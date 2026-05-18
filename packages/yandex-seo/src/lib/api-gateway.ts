@@ -2,9 +2,9 @@ import { getApiSpec, type ApiName } from "./api/endpoints-spec.js";
 import { buildUrl } from "./api/url-builder.js";
 import { resolveAccount } from "./account-resolver.js";
 import { getAccessToken } from "./oauth/token-broker.js";
-import { request } from "./http.js";
-import { AuthError, RateLimitError, ApiError } from "./errors.js";
-import { withCache, type CacheableTool } from "./cache/cache-policy.js";
+import { request } from "@ohmy-seo/mcp-core/http";
+import { AuthError, RateLimitError, ApiError } from "@ohmy-seo/mcp-core/errors";
+import { withCache, type CacheableTool } from "@ohmy-seo/mcp-core/cache";
 import { invalidateOnWrite } from "./api/invalidation.js";
 
 export interface ExecuteOpts {

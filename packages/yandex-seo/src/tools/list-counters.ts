@@ -2,7 +2,7 @@ import { getAccountByLabel, listAccounts } from "../lib/db/accounts-repo.js";
 import { getCountersWithPolicy } from "../lib/inventory/cache-policy.js";
 import * as repo from "../lib/db/inventory-repo.js";
 import { hasScope, SCOPES } from "../lib/scopes.js";
-import { errorToMcpContent } from "../lib/errors.js";
+import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
 
 export async function runListCounters(args: { account?: string }) {
   try {

@@ -2,7 +2,7 @@ import { refreshAccessToken } from "./yandex-flow.js";
 import { getAccountById, updateAccountTokens } from "../db/accounts-repo.js";
 import type { AccountRow } from "../db/accounts-repo.js";
 import { getAppById } from "../db/oauth-apps-repo.js";
-import { OAuthFlowError } from "../errors.js";
+import { OAuthFlowError } from "@ohmy-seo/mcp-core/errors";
 
 const REFRESH_THRESHOLD_SEC = 300; // refresh if <5 min remaining
 

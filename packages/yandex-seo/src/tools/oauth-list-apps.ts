@@ -1,5 +1,5 @@
 import { listApps } from "../lib/db/oauth-apps-repo.js";
-import { errorToMcpContent } from "../lib/errors.js";
+import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
 
 export async function runListOauthApps() {
   try {

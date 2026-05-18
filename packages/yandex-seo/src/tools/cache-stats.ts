@@ -1,5 +1,5 @@
-import { computeCacheStats } from "../lib/cache/cache-stats.js";
-import { errorToMcpContent } from "../lib/errors.js";
+import { computeCacheStats } from "@ohmy-seo/mcp-core/cache";
+import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
 
 export async function runCacheStats() {
   try {

@@ -1,5 +1,5 @@
-import { getDb } from "./connection.js";
-import { encryptSecret, decryptSecret } from "../crypto/secret-cipher.js";
+import { getDb } from "@ohmy-seo/mcp-core/db";
+import { encryptSecret, decryptSecret } from "@ohmy-seo/mcp-core/crypto";
 
 export type AccountRow = {
   id: number;
