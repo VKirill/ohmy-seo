@@ -6,13 +6,11 @@
  *   npm run smoke                       # all groups
  *   npm run smoke -- --only=oauth-setup
  *   npm run smoke -- --only=generic
- *   npm run smoke -- --only=mutagen     # also requires SMOKE_MUTAGEN=1
  *   npm run smoke -- --only=inventory
  *   npm run smoke -- --only=cache
  *
  * Env vars (smoke-only): MCP_YANDEX_SEO_MASTER_KEY (required), SMOKE_OAUTH_CLIENT_ID/SECRET,
- * SMOKE_OAUTH_SCOPES, SMOKE_ACCESS_TOKEN, SMOKE_REFRESH_TOKEN, SMOKE_CODE,
- * MUTAGEN_API_KEY, SMOKE_MUTAGEN.
+ * SMOKE_OAUTH_SCOPES, SMOKE_ACCESS_TOKEN, SMOKE_REFRESH_TOKEN, SMOKE_CODE.
  */
 
 import { config as dotenvConfig } from "dotenv";
@@ -42,7 +40,6 @@ import { insertAccount, deleteAccount, listAccounts } from "./lib/db/accounts-re
 import { buildAuthorizeUrl, exchangeCode } from "./lib/oauth/yandex-flow.js";
 import { probeLogin, probeWebmasterUserId } from "./lib/oauth/login-probe.js";
 
-import { runMutagenCompetition } from "./tools/mutagen-competition.js";
 import { runRefreshInventory } from "./tools/refresh-inventory.js";
 import { runListSites } from "./tools/list-sites.js";
 import { runFindProperty } from "./tools/find-property.js";
@@ -348,21 +345,6 @@ async function runInventory(): Promise<void> {
   });
 }
 
-async function runMutagen(): Promise<void> {
-  log("--- group: mutagen ---");
-  if (process.env.SMOKE_MUTAGEN !== "1") {
-    log("  SKIP: set SMOKE_MUTAGEN=1 to enable (costs balance)");
-    return;
-  }
-  if (!process.env.MUTAGEN_API_KEY) {
-    log("  SKIP: MUTAGEN_API_KEY not set");
-    return;
-  }
-  await run("mutagen:competition", () =>
-    runMutagenCompetition({ phrases: ["seo тест"] }),
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Cache group (offline — uses DB repo directly, no real OAuth required)
 // ---------------------------------------------------------------------------
@@ -439,7 +421,7 @@ async function main(): Promise<void> {
   const only =
     process.argv.find((a) => a.startsWith("--only="))?.split("=")[1] ?? "all";
 
-  const validValues = ["oauth-setup", "generic", "mutagen", "inventory", "cache", "all"];
+  const validValues = ["oauth-setup", "generic", "inventory", "cache", "all"];
   if (!validValues.includes(only)) {
     log(`ERROR: unknown --only value "${only}". Valid: ${validValues.join(", ")}`);
     process.exit(1);
@@ -476,7 +458,6 @@ async function main(): Promise<void> {
 
   if (accountReady || !runSetup) {
     if (only === "generic" || only === "all") await runGeneric(accountReady);
-    if (only === "mutagen" || only === "all") await runMutagen();
     if (only === "inventory" || only === "all") await runInventory();
     if (only === "cache" || only === "all") await runCache();
   }

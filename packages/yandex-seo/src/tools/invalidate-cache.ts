@@ -2,7 +2,7 @@ import { getAccountByLabel } from "../lib/db/accounts-repo.js";
 import { deleteWhere } from "@ohmy-seo/mcp-core/cache";
 import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
 import { CACHEABLE_TOOLS } from "@ohmy-seo/mcp-core/cache";
-// Valid tool values: yandex_metrika_api | yandex_webmaster_api | yandex_direct_api | mutagen_competition
+// Valid tool values: yandex_metrika_api | yandex_webmaster_api | yandex_direct_api
 
 export async function runInvalidateCache(input: {
   tool?: string;

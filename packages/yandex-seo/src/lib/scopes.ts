@@ -14,6 +14,4 @@ export function hasScope(grantedScopes: string, required: Scope): boolean {
   return grantedScopes.split(/\s+/).some((s) => s === required);
 }
 
-export const REQUIRED_SCOPE_BY_TOOL: Record<string, Scope> = {
-  mutagen_competition: SCOPES.DIRECT_API,
-};
+export const REQUIRED_SCOPE_BY_TOOL: Record<string, Scope> = {};

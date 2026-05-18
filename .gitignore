@@ -10,3 +10,5 @@ npm-debug.log*
 data/
 data/*
 .worktrees/
+**/.claude/orchestrator-*.jsonl
+**/.claude/memory/
