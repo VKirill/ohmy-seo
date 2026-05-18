@@ -1,6 +1,10 @@
 import { computeArgsHash, canonicalStringify } from "./cache-keys.js";
 import * as repo from "./query-cache-repo.js";
 
+// ---------------------------------------------------------------------------
+// Legacy closed-set (backward compat — yandex-seo still imports CacheableTool)
+// ---------------------------------------------------------------------------
+
 export const CACHEABLE_TOOLS = [
   "yandex_metrika_api",
   "yandex_webmaster_api",
@@ -9,6 +13,35 @@ export const CACHEABLE_TOOLS = [
   "mutagen_api",
 ] as const;
 export type CacheableTool = (typeof CACHEABLE_TOOLS)[number];
+
+// ---------------------------------------------------------------------------
+// Open registry API (Phase 2+)
+// ---------------------------------------------------------------------------
+
+export interface CacheableToolConfig {
+  ttlSeconds?: number;
+  ttlEnvKey?: string;          // e.g. 'MCP_XMLSTOCK_CACHE_TTL_SERP'
+  ttlDefaultSeconds: number;
+}
+
+const registry = new Map<string, CacheableToolConfig>();
+
+export function registerCacheableTool(toolName: string, cfg: CacheableToolConfig): void {
+  registry.set(toolName, cfg);
+}
+
+export function getToolCacheConfig(toolName: string): CacheableToolConfig | undefined {
+  return registry.get(toolName);
+}
+
+export function isCacheable(toolName: string): boolean {
+  return registry.has(toolName);
+}
+
+// ---------------------------------------------------------------------------
+// Backward-compat migration: auto-register legacy CACHEABLE_TOOLS on module load
+// Maps the old MCP_YANDEX_SEO_CACHE_TTL_* env names into the registry.
+// ---------------------------------------------------------------------------
 
 const GENERIC_API_TOOLS = new Set<CacheableTool>(["yandex_metrika_api", "yandex_webmaster_api", "yandex_direct_api"]);
 
@@ -20,22 +53,52 @@ const TTL_DEFAULTS: Record<CacheableTool, number> = {
   mutagen_api:          30 * 24 * 3600,
 };
 
-const ttlCache = new Map<CacheableTool, number>();
-
-export function getTtlForTool(name: CacheableTool): number {
-  if (ttlCache.has(name)) return ttlCache.get(name)!;
-  const envKey = GENERIC_API_TOOLS.has(name)
+for (const tool of CACHEABLE_TOOLS) {
+  const envKey = GENERIC_API_TOOLS.has(tool)
     ? "MCP_YANDEX_SEO_CACHE_TTL_API"
-    : "MCP_YANDEX_SEO_CACHE_TTL_" + name.toUpperCase();
-  const raw = process.env[envKey];
-  const def = TTL_DEFAULTS[name];
+    : "MCP_YANDEX_SEO_CACHE_TTL_" + tool.toUpperCase();
+  registerCacheableTool(tool, {
+    ttlEnvKey: envKey,
+    ttlDefaultSeconds: TTL_DEFAULTS[tool],
+  });
+}
+
+// ---------------------------------------------------------------------------
+// TTL resolution (registry-based)
+// ---------------------------------------------------------------------------
+
+const ttlCache = new Map<string, number>();
+
+export function getTtlForTool(name: string): number {
+  if (ttlCache.has(name)) return ttlCache.get(name)!;
+
+  const cfg = registry.get(name);
+  if (!cfg) {
+    // Unknown tool: return 0 (no caching)
+    return 0;
+  }
+
+  // Explicit ttlSeconds wins
+  if (cfg.ttlSeconds !== undefined) {
+    ttlCache.set(name, cfg.ttlSeconds);
+    return cfg.ttlSeconds;
+  }
+
+  const def = cfg.ttlDefaultSeconds;
+
+  if (!cfg.ttlEnvKey) {
+    ttlCache.set(name, def);
+    return def;
+  }
+
+  const raw = process.env[cfg.ttlEnvKey];
   if (raw === undefined || raw === "") {
     ttlCache.set(name, def);
     return def;
   }
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) {
-    console.error(`[warn] Invalid ${envKey}='${raw}', falling back to default ${def}s`);
+    console.error(`[warn] Invalid ${cfg.ttlEnvKey}='${raw}', falling back to default ${def}s`);
     ttlCache.set(name, def);
     return def;
   }
@@ -44,9 +107,13 @@ export function getTtlForTool(name: CacheableTool): number {
   return result;
 }
 
+// ---------------------------------------------------------------------------
+// withCache — toolName widened to string for Phase 2+ packages
+// ---------------------------------------------------------------------------
+
 export async function withCache<T>(
   opts: {
-    toolName: CacheableTool;
+    toolName: string;
     accountId: number | null;
     args: Record<string, unknown>;
     forceRefresh: boolean;
