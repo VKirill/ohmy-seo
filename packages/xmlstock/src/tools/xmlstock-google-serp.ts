@@ -7,6 +7,7 @@ import { withCache, registerCacheableTool } from "@ohmy-seo/mcp-core/cache";
 import { fetchGoogleSerp } from "../lib/xmlstock-client.js";
 import { parseGoogleSerpXml } from "../lib/xmlstock-parse.js";
 import { incrementUsage } from "../lib/usage-counter.js";
+import { archiveRawXml } from "../lib/xmlstock-archive.js";
 
 // ---------------------------------------------------------------------------
 // Cache registration
@@ -88,6 +89,10 @@ export async function runXmlstockGoogleSerp(args: XmlstockGoogleSerpInput) {
           content: [{ type: "text" as const, text: JSON.stringify(r.error) }],
         };
       }
+
+      archiveRawXml("google", canonical, r.xml, 200).catch((err: Error) => {
+        console.warn(`[xmlstock-archive] write failed: ${err.message}`);
+      });
 
       const parsed = parseGoogleSerpXml(r.xml);
       incrementUsage("xmlstock_google_serp", "google");

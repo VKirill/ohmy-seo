@@ -8,6 +8,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { resolvePackageConfig } from "@ohmy-seo/mcp-core/config";
 import { registerCacheableTool } from "@ohmy-seo/mcp-core/cache";
+import { z } from "zod";
 import {
   runXmlstockYandexSerp,
   xmlstockYandexSerpInputSchema,
@@ -19,8 +20,9 @@ import {
   xmlstockGoogleSerpDescription,
 } from "./tools/xmlstock-google-serp.js";
 import { runXmlstockUsageStats, xmlstockUsageStatsDescription } from "./tools/xmlstock-usage-stats.js";
+import { searchArchive, getArchivedXml } from "./lib/xmlstock-archive.js";
 
-const PKG_VERSION = "0.1.0";
+const PKG_VERSION = "0.2.0";
 
 const READ_ONLY = { readOnlyHint: true, openWorldHint: true, idempotentHint: false };
 
@@ -28,10 +30,12 @@ const server = new McpServer(
   { name: "mcp-xmlstock", version: PKG_VERSION },
   {
     instructions:
-      "You have access to mcp-xmlstock: 3 tools for SERP data via XMLStock API. " +
+      "You have access to mcp-xmlstock: 5 tools for SERP data via XMLStock API. " +
       "xmlstock_yandex_serp — fetch Yandex SERP for a query (cached 24 h). " +
       "xmlstock_google_serp — fetch Google SERP for a query (cached 24 h). " +
       "xmlstock_usage_stats — show cumulative XMLStock API call counts. " +
+      "xmlstock_archive_search — search metadata of archived raw XML responses. " +
+      "xmlstock_archive_get — retrieve full archived raw XML by id. " +
       "Requires XMLSTOCK_USER + XMLSTOCK_KEY in .env for live calls.",
   },
 );
@@ -123,6 +127,63 @@ server.registerTool(
     annotations: READ_ONLY,
   },
   async () => runXmlstockUsageStats(),
+);
+
+const archiveSearchSchema = z.object({
+  query:     z.string().optional(),
+  engine:    z.enum(["yandex", "google"]).optional(),
+  date_from: z.string().optional(),
+  date_to:   z.string().optional(),
+  limit:     z.number().int().min(1).max(500).default(50),
+});
+
+server.registerTool(
+  "xmlstock_archive_search",
+  {
+    title: "XMLStock — Archive Search",
+    description:
+      "Search metadata of previously archived raw XMLStock SERP responses. " +
+      "Returns id, engine, query, fetched_at, raw_size_bytes, http_status. " +
+      "Use xmlstock_archive_get to retrieve the full XML by id.",
+    inputSchema: archiveSearchSchema.shape,
+    annotations: READ_ONLY,
+  },
+  async (args): Promise<AnyResult> => {
+    const rows = await searchArchive({
+      query:     args.query     as string | undefined,
+      engine:    args.engine    as "yandex" | "google" | undefined,
+      date_from: args.date_from as string | undefined,
+      date_to:   args.date_to   as string | undefined,
+      limit:     args.limit     as number | undefined,
+    });
+    return { content: [{ type: "text" as const, text: JSON.stringify(rows, null, 2) }] };
+  },
+);
+
+const archiveGetSchema = z.object({
+  id: z.number().int().positive(),
+});
+
+server.registerTool(
+  "xmlstock_archive_get",
+  {
+    title: "XMLStock — Archive Get",
+    description:
+      "Retrieve a full archived XMLStock SERP response by id (from xmlstock_archive_search). " +
+      "Returns decompressed raw_xml plus metadata. No credentials are stored.",
+    inputSchema: archiveGetSchema.shape,
+    annotations: READ_ONLY,
+  },
+  async (args): Promise<AnyResult> => {
+    const row = await getArchivedXml(args.id as number);
+    if (!row) {
+      return {
+        isError: true,
+        content: [{ type: "text" as const, text: JSON.stringify({ error: `Archive entry ${args.id} not found` }) }],
+      };
+    }
+    return { content: [{ type: "text" as const, text: JSON.stringify(row, null, 2) }] };
+  },
 );
 
 // ---------------------------------------------------------------------------

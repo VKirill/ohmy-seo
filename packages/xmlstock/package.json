@@ -1,6 +1,6 @@
 {
   "name": "@ohmy-seo/xmlstock",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
@@ -12,6 +12,7 @@
     "dev": "tsx src/index.ts",
     "smoke": "tsx src/smoke.ts",
     "test:parse": "tsx test/parse.test.ts",
+    "test:archive": "tsx test/archive.test.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {

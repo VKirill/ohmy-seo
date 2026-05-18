@@ -7,6 +7,7 @@ import { withCache, registerCacheableTool } from "@ohmy-seo/mcp-core/cache";
 import { fetchYandexSerp } from "../lib/xmlstock-client.js";
 import { parseYandexSerpXml } from "../lib/xmlstock-parse.js";
 import { incrementUsage } from "../lib/usage-counter.js";
+import { archiveRawXml } from "../lib/xmlstock-archive.js";
 
 // ---------------------------------------------------------------------------
 // Cache registration
@@ -85,6 +86,10 @@ export async function runXmlstockYandexSerp(args: XmlstockYandexSerpInput) {
           content: [{ type: "text" as const, text: JSON.stringify(r.error) }],
         };
       }
+
+      archiveRawXml("yandex", canonical, r.xml, 200).catch((err: Error) => {
+        console.warn(`[xmlstock-archive] write failed: ${err.message}`);
+      });
 
       const parsed = parseYandexSerpXml(r.xml);
       incrementUsage("xmlstock_yandex_serp", "yandex");
