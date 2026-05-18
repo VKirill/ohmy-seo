@@ -1,0 +1,31 @@
+{
+  "name": "@ohmy-seo/yandex-seo",
+  "version": "0.6.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": { "mcp-yandex-seo": "./dist/index.js" },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "smoke": "tsx src/smoke.ts",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@ohmy-seo/mcp-core": "workspace:*",
+    "better-sqlite3": "^11.7.0",
+    "dotenv": "^16.4.5",
+    "undici": "^6.21.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3"
+  },
+  "author": "Kirill Vechkasov",
+  "license": "MIT"
+}
