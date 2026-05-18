@@ -118,16 +118,19 @@ export async function withCache<T>(
     args: Record<string, unknown>;
     forceRefresh: boolean;
     skipCacheIf?: (result: T) => boolean;
+    packageName?: string;
+    accountNamespace?: string | null;
   },
   fn: () => Promise<T>,
 ): Promise<T> {
+  const packageName = opts.packageName;
   const hash = computeArgsHash(opts.toolName, opts.accountId, opts.args);
   const now = Math.floor(Date.now() / 1000);
 
   if (!opts.forceRefresh) {
-    const entry = repo.getEntry(hash);
+    const entry = repo.getEntry(hash, packageName);
     if (entry && entry.expires_at > now) {
-      repo.incrementHit(hash, now);
+      repo.incrementHit(hash, now, packageName);
       return JSON.parse(entry.response_json) as T;
     }
   }
@@ -140,6 +143,7 @@ export async function withCache<T>(
   repo.putEntry({
     args_hash: hash,
     tool_name: opts.toolName,
+    account_namespace: opts.accountNamespace ?? null,
     account_id: opts.accountId,
     args_json: argsJson,
     response_json: JSON.stringify(result),
@@ -147,7 +151,7 @@ export async function withCache<T>(
     expires_at: now + ttl,
     hit_count: 0,
     last_hit_at: null,
-  });
+  }, packageName);
   return result;
 }
 

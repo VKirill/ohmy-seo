@@ -6,9 +6,12 @@ import path from "node:path";
 // ---------------------------------------------------------------------------
 
 const ENV_PREFIX_MAP: Record<string, string> = {
-  "yandex-seo": "MCP_YANDEX_SEO",
-  "mutagen":    "MCP_MUTAGEN",
-  "xmlstock":   "MCP_XMLSTOCK",
+  "yandex-seo":            "MCP_YANDEX_SEO",
+  "mutagen":               "MCP_MUTAGEN",
+  "xmlstock":              "MCP_XMLSTOCK",
+  "google-search-console": "MCP_GSC",
+  "ga4":                   "MCP_GA4",
+  "gtm":                   "MCP_GTM",
 };
 
 export interface PackageConfig {
@@ -30,8 +33,13 @@ export interface PackageConfig {
  * Throws if the master key env var is absent or not a 64-hex-char string.
  */
 export function resolvePackageConfig(packageName: string): PackageConfig {
-  const envPrefix = ENV_PREFIX_MAP[packageName]
-    ?? "MCP_" + packageName.toUpperCase().replace(/-/g, "_");
+  // Accept both scoped (@ohmy-seo/google-search-console) and unscoped (google-search-console).
+  const pkg = packageName.startsWith("@ohmy-seo/")
+    ? packageName.slice("@ohmy-seo/".length)
+    : packageName;
+
+  const envPrefix = ENV_PREFIX_MAP[pkg]
+    ?? "MCP_" + pkg.toUpperCase().replace(/-/g, "_");
 
   const masterKeyEnv = `${envPrefix}_MASTER_KEY`;
   const dbPathEnv    = `${envPrefix}_DB_PATH`;

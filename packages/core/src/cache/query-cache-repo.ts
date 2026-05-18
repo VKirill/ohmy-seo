@@ -3,6 +3,7 @@ import { getDb } from "../db/connection.js";
 export type QueryCacheEntry = {
   args_hash: string;
   tool_name: string;
+  account_namespace: string | null;
   account_id: number | null;
   args_json: string;
   response_json: string;
@@ -12,11 +13,11 @@ export type QueryCacheEntry = {
   last_hit_at: number | null;
 };
 
-export function getEntry(argsHash: string): QueryCacheEntry | null {
+export function getEntry(argsHash: string, packageName?: string): QueryCacheEntry | null {
   return (
-    getDb()
+    getDb(packageName)
       .prepare<[string], QueryCacheEntry>(
-        `SELECT args_hash, tool_name, account_id, args_json, response_json,
+        `SELECT args_hash, tool_name, account_namespace, account_id, args_json, response_json,
                 fetched_at, expires_at, hit_count, last_hit_at
          FROM query_cache WHERE args_hash = ?`
       )
@@ -24,17 +25,18 @@ export function getEntry(argsHash: string): QueryCacheEntry | null {
   );
 }
 
-export function putEntry(entry: QueryCacheEntry): void {
-  getDb()
+export function putEntry(entry: QueryCacheEntry, packageName?: string): void {
+  getDb(packageName)
     .prepare(
       `INSERT OR REPLACE INTO query_cache
-         (args_hash, tool_name, account_id, args_json, response_json,
+         (args_hash, tool_name, account_namespace, account_id, args_json, response_json,
           fetched_at, expires_at, hit_count, last_hit_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL)`
     )
     .run(
       entry.args_hash,
       entry.tool_name,
+      entry.account_namespace ?? null,
       entry.account_id ?? null,
       entry.args_json,
       entry.response_json,
@@ -43,8 +45,8 @@ export function putEntry(entry: QueryCacheEntry): void {
     );
 }
 
-export function incrementHit(argsHash: string, now: number): void {
-  getDb()
+export function incrementHit(argsHash: string, now: number, packageName?: string): void {
+  getDb(packageName)
     .prepare(
       `UPDATE query_cache
        SET hit_count = hit_count + 1, last_hit_at = ?
@@ -55,17 +57,26 @@ export function incrementHit(argsHash: string, now: number): void {
 
 type DeleteFilter = {
   tool?: string;
+  account_namespace?: string | null;
   account_id?: number | null;
   fetched_at_before?: number;
 };
 
-export function deleteWhere(filter: DeleteFilter): number {
+export function deleteWhere(filter: DeleteFilter, packageName?: string): number {
   const parts: string[] = [];
   const params: unknown[] = [];
 
   if (filter.tool !== undefined) {
     parts.push("tool_name = ?");
     params.push(filter.tool);
+  }
+  if (filter.account_namespace !== undefined) {
+    if (filter.account_namespace === null) {
+      parts.push("account_namespace IS NULL");
+    } else {
+      parts.push("account_namespace = ?");
+      params.push(filter.account_namespace);
+    }
   }
   if (filter.account_id !== undefined) {
     if (filter.account_id === null) {
@@ -81,23 +92,23 @@ export function deleteWhere(filter: DeleteFilter): number {
   }
 
   const where = parts.length > 0 ? ` WHERE ${parts.join(" AND ")}` : "";
-  const result = getDb()
+  const result = getDb(packageName)
     .prepare(`DELETE FROM query_cache${where}`)
     .run(...params);
   return result.changes;
 }
 
-export function deleteByEndpointPrefix(toolName: string, endpoint: string): number {
+export function deleteByEndpointPrefix(toolName: string, endpoint: string, packageName?: string): number {
   const exactPattern = `%"endpoint":${JSON.stringify(endpoint)}%`;
   const subPattern   = `%"endpoint":"${endpoint}/%`;
-  const stmt = getDb().prepare(
+  const stmt = getDb(packageName).prepare(
     `DELETE FROM query_cache WHERE tool_name = ? AND (args_json LIKE ? OR args_json LIKE ?)`
   );
   return stmt.run(toolName, exactPattern, subPattern).changes;
 }
 
-export function countEntries(): number {
-  const row = getDb()
+export function countEntries(packageName?: string): number {
+  const row = getDb(packageName)
     .prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM query_cache")
     .get();
   return row?.n ?? 0;
@@ -109,8 +120,8 @@ export type ToolHitSummary = {
   total_hits: number;
 };
 
-export function topByHits(limit = 10): ToolHitSummary[] {
-  return getDb()
+export function topByHits(limit = 10, packageName?: string): ToolHitSummary[] {
+  return getDb(packageName)
     .prepare<[number], ToolHitSummary>(
       `SELECT tool_name,
               COUNT(*) AS entries,
@@ -128,13 +139,13 @@ export type RecentStats = {
   hits_served: number;
 };
 
-export function recentStats(since: number): RecentStats {
-  const created = getDb()
+export function recentStats(since: number, packageName?: string): RecentStats {
+  const created = getDb(packageName)
     .prepare<[number], { n: number }>(
       "SELECT COUNT(*) AS n FROM query_cache WHERE fetched_at >= ?"
     )
     .get(since);
-  const hits = getDb()
+  const hits = getDb(packageName)
     .prepare<[number], { s: number | null }>(
       "SELECT SUM(hit_count) AS s FROM query_cache WHERE last_hit_at >= ?"
     )
