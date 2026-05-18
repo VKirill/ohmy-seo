@@ -38,7 +38,7 @@ if (!/^[0-9a-fA-F]{64}$/.test(masterKey)) {
 }
 
 import { registerApp, getAppByLabel } from "./lib/db/oauth-apps-repo.js";
-import { insertAccount, deleteAccount } from "./lib/db/accounts-repo.js";
+import { insertAccount, deleteAccount, listAccounts } from "./lib/db/accounts-repo.js";
 import { buildAuthorizeUrl, exchangeCode } from "./lib/oauth/yandex-flow.js";
 import { probeLogin, probeWebmasterUserId } from "./lib/oauth/login-probe.js";
 
@@ -446,6 +446,14 @@ async function main(): Promise<void> {
   }
 
   log(`start only=${only}`);
+
+  // Connection check: list all accounts from DB
+  const allAccounts = listAccounts();
+  log("Connection OK");
+  log(`accounts (${allAccounts.length}):`);
+  for (const a of allAccounts) {
+    log(`  label=${a.label} yandex_login=${a.yandex_login ?? "null"}`);
+  }
 
   const runSetup = only === "oauth-setup" || only === "all";
   const runDomain = only !== "oauth-setup";
