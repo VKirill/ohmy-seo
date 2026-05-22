@@ -6,6 +6,7 @@ import { uploadCampaignBundle, type AdTemplate, type CampaignStrategy } from "..
 import { runDirectUploadImage } from "./direct-upload-image.js";
 import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
 import type { AdSchema } from "../lib/yaml-schema.js";
+import { validateLiveAck } from "../lib/api/confirm-gate.js";
 
 /** Narrow the first ad in a group to extract Href for site_url fallback. */
 function extractFirstHref(ad: z.infer<typeof AdSchema> | undefined): string | undefined {
@@ -257,7 +258,52 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
       };
     }
 
-    // confirm=true and plan_hash are present — safe to create dependencies.
+    // confirm=true and plan_hash are present. Now validate acknowledge_live
+    // BEFORE creating any dependencies — a bad/missing ack must be rejected here
+    // so no orphaned sitelinks/callouts/images are created on the live account.
+    if (!validateLiveAck(parsed.acknowledge_live, parsed.plan_hash)) {
+      const ad_templates = extractAdTemplates(bundle);
+      const campaignStrategy = resolveCampaignStrategy(bundle);
+      const campaignType = resolveCampaignType(bundle);
+      const planResult2 = await uploadCampaignBundle({
+        csv_path: csvPath,
+        campaign_strategy: campaignStrategy,
+        campaign_type: campaignType,
+        site_url: siteUrl,
+        daily_budget_amount: camp.DailyBudget.Amount,
+        region_ids: regionIds,
+        bidding_strategy_type: biddingStrategyType,
+        metrika_counter_ids: counterIds,
+        metrika_goal_ids: goalIds,
+        ads_per_group: adsPerGroup,
+        ad_template_strategy: "agent-provided",
+        ad_templates,
+        dry_run: true,
+        canary_percent: 50,
+        max_clusters: bundle.groups.length,
+        abort_on_error_rate: 0.3,
+        account: parsed.account,
+        dedupe_by_name: bundle.campaign.dedupe_by_name,
+        tracking_params: tc?.TrackingParams,
+        sitelinks_set: bundle.campaign.sitelinks_set,
+        promo_extension: bundle.campaign.promo_extension,
+        bidding_strategy: tc?.BiddingStrategy as Record<string, unknown> | undefined,
+      } as Parameters<typeof uploadCampaignBundle>[0]); // guardian: allow — Phase 3.5.D optional fields not in base type
+
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            stage: "plan_needed",
+            reason: "acknowledge_live is missing or invalid — must be exactly I-UNDERSTAND-BUNDLE-LIVE:<login>:<plan_hash_prefix12>. Obtain the expected value from the dry_run pipeline_result.expected_ack_live.",
+            yaml_validation: "OK",
+            pipeline_result: planResult2,
+          }, null, 2),
+        }],
+      };
+    }
+
+    // acknowledge_live validated — safe to create dependencies.
 
     const context: {
       sitelinks_set_id?: number;
@@ -384,6 +430,23 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
           context.dep_errors.push(`image upload failed for "${name}": unexpected response shape`);
         }
       }
+    }
+
+    // 3e. Abort on dep errors before campaign creation.
+    // The bundle declared these dependencies intentionally; creating a partial campaign
+    // (e.g. RSYA text-only if an image failed, or missing sitelinks) is worse than
+    // aborting cleanly and letting the caller fix the issue.
+    if (context.dep_errors.length > 0) {
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            stage: "dep_creation_failed",
+            reason: "One or more required dependencies failed to create. Campaign creation aborted to prevent a partial/incomplete campaign on the live account.",
+            dep_errors: context.dep_errors,
+          }, null, 2),
+        }],
+      };
     }
 
     // 4. Resolve template refs in bundle with created IDs/hashes

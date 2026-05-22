@@ -15,6 +15,23 @@ export class ConfirmGateError extends Error {
   }
 }
 
+/**
+ * Validate that `ack` structurally matches the live-ack format for the given plan_hash.
+ * Expected format: `I-UNDERSTAND-BUNDLE-LIVE:<login>:<planHash.slice(0,12)>`
+ * We cannot verify the login here (account not resolved yet), so we verify:
+ *   - string present
+ *   - starts with "I-UNDERSTAND-BUNDLE-LIVE:"
+ *   - ends with ":<planHash.slice(0,12)>" (last segment matches plan_hash prefix)
+ * Returns true if valid, false otherwise.
+ */
+export function validateLiveAck(ack: string | undefined, planHash: string): boolean {
+  if (!ack || !planHash) return false;
+  const prefix = "I-UNDERSTAND-BUNDLE-LIVE:";
+  if (!ack.startsWith(prefix)) return false;
+  const suffix = `:${planHash.slice(0, 12)}`;
+  return ack.endsWith(suffix);
+}
+
 export function requireConfirmGate(
   input: ConfirmGateInput,
   options: ConfirmGateOptions

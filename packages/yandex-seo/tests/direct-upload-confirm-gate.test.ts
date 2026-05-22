@@ -2,8 +2,12 @@
  * Tests for the confirm-gate invariant in runDirectUploadFromYaml:
  *   - When dry_run=true OR confirm is missing/false OR plan_hash is absent,
  *     NO dependency-creation API calls (sitelinks/promo/callouts/images) are made.
- *   - When confirm=true AND plan_hash is present, deps ARE created.
- *   - Dep creation failures are surfaced in the result, not swallowed.
+ *   - When confirm=true AND plan_hash present but acknowledge_live wrong/missing:
+ *     ZERO dep API calls, returns plan_needed error.
+ *   - When confirm=true AND plan_hash AND valid acknowledge_live AND dep failure:
+ *     uploadCampaignBundle NOT called, dep_errors in response.
+ *   - When confirm=true AND plan_hash AND valid acknowledge_live AND clean deps:
+ *     uploadCampaignBundle IS called.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -60,6 +64,11 @@ import { runDirectUploadFromYaml } from "../src/tools/direct-upload-from-yaml.js
 // ---------------------------------------------------------------------------
 // Shared fixtures
 // ---------------------------------------------------------------------------
+
+// plan_hash is 14 chars; .slice(0,12) = "abc123planHa"
+const TEST_PLAN_HASH = "abc123planHash";
+const TEST_ACK_VALID = "I-UNDERSTAND-BUNDLE-LIVE:testlogin:abc123planHa";
+const TEST_ACK_WRONG = "I-UNDERSTAND-BUNDLE-LIVE:testlogin:WRONGPREFIX";
 
 /** Minimal valid bundle returned by loadCampaignFolder */
 function makeBundle(opts: {
@@ -140,8 +149,8 @@ function sitelinksItemErrorResponse() {
 /** Minimal plan result returned by uploadCampaignBundle for dry_run=true */
 const planResult = {
   dry_run: true,
-  plan_hash: "abc123planHash",
-  expected_ack_live: "I-UNDERSTAND-BUNDLE-LIVE:test:abc123plan",
+  plan_hash: TEST_PLAN_HASH,
+  expected_ack_live: TEST_ACK_VALID,
   next_actions: ["Re-call with dry_run=false, confirm=true, ..."],
   total_clusters: 1,
   clusters_processed: 0,
@@ -189,7 +198,7 @@ describe("runDirectUploadFromYaml — confirm gate invariant", () => {
     const result = await runDirectUploadFromYaml({
       folder: "/fake/folder",
       dry_run: false,
-      plan_hash: "abc123planHash",
+      plan_hash: TEST_PLAN_HASH,
       // confirm NOT provided
     });
 
@@ -205,7 +214,7 @@ describe("runDirectUploadFromYaml — confirm gate invariant", () => {
     const result = await runDirectUploadFromYaml({
       folder: "/fake/folder",
       dry_run: false,
-      plan_hash: "abc123planHash",
+      plan_hash: TEST_PLAN_HASH,
       confirm: false,
     });
 
@@ -232,11 +241,47 @@ describe("runDirectUploadFromYaml — confirm gate invariant", () => {
     expect(text.reason).toMatch(/plan_hash/i);
   });
 
-  it("confirm=true + plan_hash present: dependency API calls ARE made", async () => {
+  // Critical #1: wrong acknowledge_live must be rejected BEFORE any dep creation
+  it("confirm=true + plan_hash + WRONG acknowledge_live: ZERO dep API calls, returns plan_needed", async () => {
+    const result = await runDirectUploadFromYaml({
+      folder: "/fake/folder",
+      dry_run: false,
+      confirm: true,
+      plan_hash: TEST_PLAN_HASH,
+      acknowledge_live: TEST_ACK_WRONG,
+    });
+
+    // Must NOT call any dep-creation side effects
+    expect(mockExecuteApiCall).not.toHaveBeenCalled();
+    expect(mockRunDirectUploadImage).not.toHaveBeenCalled();
+
+    const text = JSON.parse((result as { content: { text: string }[] }).content[0].text);
+    expect(text.stage).toBe("plan_needed");
+    expect(text.reason).toMatch(/acknowledge_live/i);
+  });
+
+  it("confirm=true + plan_hash + MISSING acknowledge_live: ZERO dep API calls, returns plan_needed", async () => {
+    const result = await runDirectUploadFromYaml({
+      folder: "/fake/folder",
+      dry_run: false,
+      confirm: true,
+      plan_hash: TEST_PLAN_HASH,
+      // acknowledge_live not provided
+    });
+
+    expect(mockExecuteApiCall).not.toHaveBeenCalled();
+    expect(mockRunDirectUploadImage).not.toHaveBeenCalled();
+
+    const text = JSON.parse((result as { content: { text: string }[] }).content[0].text);
+    expect(text.stage).toBe("plan_needed");
+    expect(text.reason).toMatch(/acknowledge_live/i);
+  });
+
+  it("confirm=true + plan_hash + valid acknowledge_live: dependency API calls ARE made", async () => {
     // For live path, uploadCampaignBundle resolves to a live result
     const liveResult = {
       dry_run: false,
-      plan_hash: "abc123planHash",
+      plan_hash: TEST_PLAN_HASH,
       campaigns_created: [12345],
       ad_groups_created: [],
       keywords_added: 5,
@@ -261,8 +306,8 @@ describe("runDirectUploadFromYaml — confirm gate invariant", () => {
       folder: "/fake/folder",
       dry_run: false,
       confirm: true,
-      plan_hash: "abc123planHash",
-      acknowledge_live: "I-UNDERSTAND-BUNDLE-LIVE:test:abc123plan",
+      plan_hash: TEST_PLAN_HASH,
+      acknowledge_live: TEST_ACK_VALID,
     });
 
     // At least sitelinks + promo + callouts endpoints should have been called
@@ -271,17 +316,17 @@ describe("runDirectUploadFromYaml — confirm gate invariant", () => {
   });
 });
 
-describe("runDirectUploadFromYaml — dep creation failure surfacing", () => {
+describe("runDirectUploadFromYaml — dep creation failure aborts campaign", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockResolveRefs.mockImplementation((bundle: unknown) => bundle);
     mockBuildSitelinksSetPayload.mockReturnValue({});
     mockBuildPromoExtensionPayload.mockReturnValue({});
     mockBuildCalloutPayload.mockReturnValue({});
-    // Default uploadCampaignBundle for live path
+    // Default uploadCampaignBundle for live path — should NOT be called when deps fail
     mockUploadCampaignBundle.mockResolvedValue({
       dry_run: false,
-      plan_hash: "abc123planHash",
+      plan_hash: TEST_PLAN_HASH,
       campaigns_created: [],
       ad_groups_created: [],
       keywords_added: 0,
@@ -298,7 +343,8 @@ describe("runDirectUploadFromYaml — dep creation failure surfacing", () => {
     });
   });
 
-  it("HTTP error on sitelinks: dep_errors appears in result, does not throw", async () => {
+  // Critical #3: dep failure must abort before uploadCampaignBundle
+  it("HTTP error on sitelinks: uploadCampaignBundle NOT called, dep_errors in response", async () => {
     mockLoadCampaignFolder.mockReturnValue(makeBundle({ hasSitelinks: true }));
     mockExecuteApiCall.mockResolvedValue(sitelinksHttpErrorResponse);
 
@@ -306,18 +352,23 @@ describe("runDirectUploadFromYaml — dep creation failure surfacing", () => {
       folder: "/fake/folder",
       dry_run: false,
       confirm: true,
-      plan_hash: "abc123planHash",
-      acknowledge_live: "I-UNDERSTAND-BUNDLE-LIVE:test:abc123plan",
+      plan_hash: TEST_PLAN_HASH,
+      acknowledge_live: TEST_ACK_VALID,
     });
 
+    // Campaign bundle must NOT be called — deps failed
+    expect(mockUploadCampaignBundle).not.toHaveBeenCalledWith(
+      expect.objectContaining({ dry_run: false })
+    );
+
     const text = JSON.parse((result as { content: { text: string }[] }).content[0].text);
-    expect(text.stage).toBe("live_orchestration");
+    expect(text.stage).toBe("dep_creation_failed");
     expect(text.dep_errors).toBeDefined();
     expect(text.dep_errors).toHaveLength(1);
     expect(text.dep_errors[0]).toMatch(/sitelinks.*failed/i);
   });
 
-  it("item-level Errors in AddResults: dep_errors appears in result", async () => {
+  it("item-level Errors in AddResults: uploadCampaignBundle NOT called, dep_errors in response", async () => {
     mockLoadCampaignFolder.mockReturnValue(makeBundle({ hasSitelinks: true }));
     mockExecuteApiCall.mockResolvedValue(sitelinksItemErrorResponse());
 
@@ -325,17 +376,21 @@ describe("runDirectUploadFromYaml — dep creation failure surfacing", () => {
       folder: "/fake/folder",
       dry_run: false,
       confirm: true,
-      plan_hash: "abc123planHash",
-      acknowledge_live: "I-UNDERSTAND-BUNDLE-LIVE:test:abc123plan",
+      plan_hash: TEST_PLAN_HASH,
+      acknowledge_live: TEST_ACK_VALID,
     });
 
+    expect(mockUploadCampaignBundle).not.toHaveBeenCalledWith(
+      expect.objectContaining({ dry_run: false })
+    );
+
     const text = JSON.parse((result as { content: { text: string }[] }).content[0].text);
-    expect(text.stage).toBe("live_orchestration");
+    expect(text.stage).toBe("dep_creation_failed");
     expect(text.dep_errors).toBeDefined();
     expect(text.dep_errors[0]).toMatch(/Invalid sitelink/);
   });
 
-  it("image upload failure: dep_errors captures the failed image name", async () => {
+  it("image upload failure: uploadCampaignBundle NOT called, dep_errors captures the failed image name", async () => {
     mockLoadCampaignFolder.mockReturnValue(makeBundle({ hasImages: true }));
     mockRunDirectUploadImage.mockResolvedValue({
       content: [{ type: "text", text: JSON.stringify({ error: "upload failed" }) }],
@@ -345,27 +400,55 @@ describe("runDirectUploadFromYaml — dep creation failure surfacing", () => {
       folder: "/fake/folder",
       dry_run: false,
       confirm: true,
-      plan_hash: "abc123planHash",
-      acknowledge_live: "I-UNDERSTAND-BUNDLE-LIVE:test:abc123plan",
+      plan_hash: TEST_PLAN_HASH,
+      acknowledge_live: TEST_ACK_VALID,
     });
 
+    expect(mockUploadCampaignBundle).not.toHaveBeenCalledWith(
+      expect.objectContaining({ dry_run: false })
+    );
+
     const text = JSON.parse((result as { content: { text: string }[] }).content[0].text);
-    expect(text.stage).toBe("live_orchestration");
+    expect(text.stage).toBe("dep_creation_failed");
     expect(text.dep_errors).toBeDefined();
     expect(text.dep_errors[0]).toMatch(/hero/);
   });
 
-  it("successful deps: dep_errors is absent (not set in result)", async () => {
+  it("successful deps: uploadCampaignBundle IS called and dep_errors absent in response", async () => {
     mockLoadCampaignFolder.mockReturnValue(makeBundle({ hasSitelinks: true }));
     mockExecuteApiCall.mockResolvedValue(sitelinksOkResponse(42));
+
+    const liveResult = {
+      dry_run: false,
+      plan_hash: TEST_PLAN_HASH,
+      campaigns_created: [99],
+      ad_groups_created: [],
+      keywords_added: 1,
+      ads_created: [],
+      images_uploaded: [],
+      metrika_linked: false,
+      canary_passed: false,
+      total_clusters: 1,
+      clusters_processed: 1,
+      ledger_path: "",
+      errors: [],
+      recovery_command: "",
+      next_actions: [],
+    };
+    mockUploadCampaignBundle.mockResolvedValue(liveResult);
 
     const result = await runDirectUploadFromYaml({
       folder: "/fake/folder",
       dry_run: false,
       confirm: true,
-      plan_hash: "abc123planHash",
-      acknowledge_live: "I-UNDERSTAND-BUNDLE-LIVE:test:abc123plan",
+      plan_hash: TEST_PLAN_HASH,
+      acknowledge_live: TEST_ACK_VALID,
     });
+
+    // uploadCampaignBundle must have been called (live run)
+    expect(mockUploadCampaignBundle).toHaveBeenCalledWith(
+      expect.objectContaining({ dry_run: false })
+    );
 
     const text = JSON.parse((result as { content: { text: string }[] }).content[0].text);
     expect(text.stage).toBe("live_orchestration");
