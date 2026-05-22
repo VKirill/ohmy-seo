@@ -1,0 +1,1159 @@
+/**
+ * upload-pipeline.ts — CSV → Direct bundle upload orchestrator.
+ *
+ * Three stages:
+ *   Stage 0 (dry_run=true or undefined): plan generation, returns PLAN_HASH + expected_ack_live.
+ *   Stage 1 (dry_run=false, plan_hash set, canary_passed undefined): gate + canary run.
+ *   Stage 2 (dry_run=false, plan_hash set, canary_passed=true, continuation_ack set): bulk continuation.
+ *
+ * No Ads.moderate calls — all ads remain DRAFT. User reviews in Direct UI.
+ */
+
+import * as crypto from "crypto";
+import * as fs from "fs";
+import * as path from "path";
+
+import { parseKeyCollectorCsv, type ClusterRow } from "./csv-parser.js";
+import { openLedger, type Ledger } from "./bundle-ledger.js";
+import {
+  buildCampaignPayload,
+  buildAdGroupPayload,
+  buildKeywordPayload,
+  buildAdTgoPayload,
+  buildAdRsyaPayload,
+  buildImageUploadPayload,
+  buildMetrikaUpdatePayload,
+} from "./payload-builder.js";
+import { executeApiCall } from "./api-gateway.js";
+import { requireConfirmGate } from "./api/confirm-gate.js";
+import { resolveAccount } from "./account-resolver.js";
+import { SCOPES } from "./scopes.js";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface AdTemplate {
+  cluster_filter?: { intent?: string; cluster_id_pattern?: string };
+  variant_label: string;
+  title: string;
+  title2?: string;
+  text: string;
+  sitelinks?: Array<{ title: string; description?: string; href: string }>;
+  callouts?: string[];
+}
+
+export type CampaignStrategy =
+  | { mode: "one-per-cluster" }
+  | {
+      mode: "one-per-intent";
+      intent_to_campaign: Record<
+        "informational" | "transactional" | "branded" | "navigational",
+        string
+      >;
+    }
+  | { mode: "single-campaign"; campaign_name: string };
+
+export interface UploadCampaignBundleInput {
+  csv_path: string;
+  campaign_strategy: CampaignStrategy;
+  campaign_type: "search" | "rsya" | "rsya-only";
+  site_url: string;
+  daily_budget_rub: number;
+  region_ids: number[];
+  bidding_strategy_type: "WB_DAILY_BUDGET" | "HIGHEST_POSITION" | "AVERAGE_CPC";
+  metrika_counter_ids?: number[];
+  metrika_goal_ids?: number[];
+  rsya_image_urls?: string[];
+  ads_per_group?: number;
+  ad_template_strategy: "agent-provided" | "fallback-template";
+  ad_templates?: AdTemplate[];
+  dry_run?: boolean;
+  canary_percent?: number;
+  max_clusters?: number;
+  abort_on_error_rate?: number;
+  confirm?: boolean;
+  acknowledge_live?: string;
+  account?: string;
+  // Stage binding
+  plan_hash?: string;
+  // Stage 2 continuation
+  canary_passed?: boolean;
+  continuation_ack?: string;
+
+  // Phase 3.5.D extensions — all optional, backwards-compatible
+  sitelinks_set?: {
+    Sitelinks: Array<{ Title: string; Description?: string; Href: string }>;
+  };
+  promo_extension?: {
+    AdExtension: {
+      PromoExtension: {
+        PromotionType: string;
+        Discount?: number;
+        DiscountUnit?: string;
+        StartDate?: string;
+        EndDate: string;
+        PromoCode?: string;
+        Href?: string;
+      };
+    };
+  };
+  tracking_params?: string;
+  autotargeting_per_group?: Record<string, Array<{ Category: string; Value: "YES" | "NO" }>>;
+  ad_format_mix?: Array<"TEXT_AD" | "TEXT_IMAGE_AD" | "RESPONSIVE_AD">;
+  campaign_types?: Array<"TEXT_CAMPAIGN" | "UNIFIED_PERFORMANCE_CAMPAIGN">;
+}
+
+export interface UploadError {
+  cluster_id: string;
+  step: string;
+  error: string;
+}
+
+export interface UploadCampaignBundleOutput {
+  dry_run: boolean;
+  total_clusters: number;
+  clusters_processed: number;
+  campaigns_created: number[];
+  ad_groups_created: number[];
+  keywords_added: number;
+  ads_created: number[];
+  images_uploaded: string[];
+  metrika_linked: boolean;
+  canary_passed: boolean;
+  ledger_path: string;
+  errors: UploadError[];
+  plan_hash?: string;
+  expected_ack_live?: string;
+  expected_continuation_ack?: string;
+  stage?: string;
+  recovery_command: string;
+  next_actions: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/** Deterministic campaign name for a cluster given the strategy. */
+function computeCampaignName(
+  cluster_id: string,
+  intent: string,
+  strategy: CampaignStrategy
+): string {
+  if (strategy.mode === "single-campaign") {
+    return strategy.campaign_name;
+  }
+  if (strategy.mode === "one-per-intent") {
+    const key = intent as keyof typeof strategy.intent_to_campaign;
+    return strategy.intent_to_campaign[key] ?? `${intent}-campaign`;
+  }
+  // one-per-cluster
+  return `cluster-${cluster_id}`;
+}
+
+/** Get representative intent for a cluster (from first row). */
+function clusterIntent(rows: ClusterRow[]): string {
+  return rows[0]?.intent ?? "informational";
+}
+
+/** Compute the plan hash over all deterministic inputs. */
+function computePlanHash(input: {
+  csv_hash: string;
+  account_login: string;
+  campaign_strategy: CampaignStrategy;
+  campaign_type: string;
+  site_url: string;
+  daily_budget_rub: number;
+  region_ids: number[];
+  bidding_strategy_type: string;
+  metrika_counter_ids?: number[] | null;
+  metrika_goal_ids?: number[] | null;
+  rsya_image_urls: string[];
+  ads_per_group: number;
+  canary_percent: number;
+  max_clusters: number;
+  cluster_count: number;
+  campaign_names: string[];
+}): string {
+  const planInput = {
+    csv_hash: input.csv_hash,
+    account_login: input.account_login,
+    campaign_strategy: input.campaign_strategy,
+    campaign_type: input.campaign_type,
+    site_url: input.site_url,
+    daily_budget_rub: input.daily_budget_rub,
+    region_ids: [...input.region_ids].sort((a, b) => a - b),
+    bidding_strategy_type: input.bidding_strategy_type,
+    metrika_counter_ids: input.metrika_counter_ids ?? null,
+    metrika_goal_ids: input.metrika_goal_ids ?? null,
+    rsya_image_urls: [...input.rsya_image_urls].sort(),
+    ads_per_group: input.ads_per_group,
+    canary_percent: input.canary_percent,
+    max_clusters: input.max_clusters,
+    cluster_count: input.cluster_count,
+    campaign_names: [...input.campaign_names].sort(),
+  };
+  return crypto.createHash("sha256").update(JSON.stringify(planInput)).digest("hex");
+}
+
+/** Fetch image bytes from URL and return base64 + format. Throws if unusable. */
+async function fetchImageAsBase64(url: string): Promise<{ base64: string; format: "JPEG" | "PNG" }> {
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    throw new Error(`Image URL returned ${resp.status}: ${url}`);
+  }
+  const contentType = resp.headers.get("content-type") ?? "";
+  const format: "JPEG" | "PNG" = contentType.includes("png") ? "PNG" : "JPEG";
+  const buffer = Buffer.from(await resp.arrayBuffer());
+  if (buffer.length > 10 * 1024 * 1024) {
+    throw new Error(`Image exceeds 10 MB: ${url}`);
+  }
+  return { base64: buffer.toString("base64"), format };
+}
+
+/** Extract numeric ID from a Direct API successful response. */
+function extractId(data: unknown): number {
+  const result = (data as { result?: { AddResults?: Array<{ Id?: number }> } })?.result
+    ?.AddResults?.[0]?.Id;
+  if (typeof result !== "number") {
+    throw new Error(`Unexpected API response shape: ${JSON.stringify(data)}`);
+  }
+  return result;
+}
+
+/** Extract image hash from a Direct API AdImages.add response. */
+function extractImageHash(data: unknown): string {
+  const hash = (data as { result?: { AddResults?: Array<{ AdImageHash?: string }> } })?.result
+    ?.AddResults?.[0]?.AdImageHash;
+  if (typeof hash !== "string") {
+    throw new Error(`Unexpected image API response shape: ${JSON.stringify(data)}`);
+  }
+  return hash;
+}
+
+/** Pick an ad template for a given cluster intent + cluster_id. Falls back to first template or generates generic one. */
+function pickAdTemplate(
+  cluster_id: string,
+  intent: string,
+  templates: AdTemplate[] | undefined,
+  strategy: "agent-provided" | "fallback-template",
+  site_url: string
+): Pick<AdTemplate, "title" | "title2" | "text"> {
+  if (strategy === "agent-provided" && templates && templates.length > 0) {
+    // Find best match by cluster_id pattern then intent
+    const byId = templates.find(
+      (t) =>
+        t.cluster_filter?.cluster_id_pattern &&
+        new RegExp(t.cluster_filter.cluster_id_pattern).test(cluster_id)
+    );
+    if (byId) return byId;
+    const byIntent = templates.find((t) => t.cluster_filter?.intent === intent);
+    if (byIntent) return byIntent;
+    return templates[0];
+  }
+  // Fallback template — generic placeholder
+  return {
+    title: cluster_id.slice(0, 56),
+    title2: undefined,
+    text: `${cluster_id.slice(0, 75)}. ${site_url}`,
+  };
+}
+
+/** Ensure directory exists. */
+function ensureDir(dirPath: string): void {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Stage 0 — dry-run plan
+// ---------------------------------------------------------------------------
+
+async function stage0DryRun(
+  input: UploadCampaignBundleInput,
+  clusters: Map<string, ClusterRow[]>,
+  csvSha256: string,
+  totalClusters: number
+): Promise<UploadCampaignBundleOutput> {
+  const maxClusters = input.max_clusters ?? 50;
+  const canaryPercent = input.canary_percent ?? 10;
+  const adsPerGroup = input.ads_per_group ?? 3;
+  const rsyaImageUrls = input.rsya_image_urls ?? [];
+
+  // Apply intent filter if one-per-intent strategy
+  let filteredEntries = [...clusters.entries()];
+  if (input.campaign_strategy.mode === "one-per-intent" && input.campaign_strategy.intent_to_campaign) {
+    const allowedIntents = Object.keys(input.campaign_strategy.intent_to_campaign);
+    filteredEntries = filteredEntries.filter(([, rows]) =>
+      allowedIntents.includes(clusterIntent(rows))
+    );
+  }
+  // Apply max_clusters cap
+  filteredEntries = filteredEntries.slice(0, maxClusters);
+
+  const acc = resolveAccount(SCOPES.DIRECT_API, input.account);
+  const yandexLogin = acc.yandex_login ?? acc.label;
+
+  // Compute planned campaign names (deduplicated)
+  const plannedNamesSet = new Set<string>();
+  for (const [cluster_id, rows] of filteredEntries) {
+    plannedNamesSet.add(computeCampaignName(cluster_id, clusterIntent(rows), input.campaign_strategy));
+  }
+  const plannedNames = [...plannedNamesSet].sort();
+
+  const planHash = computePlanHash({
+    csv_hash: csvSha256,
+    account_login: yandexLogin,
+    campaign_strategy: input.campaign_strategy,
+    campaign_type: input.campaign_type,
+    site_url: input.site_url,
+    daily_budget_rub: input.daily_budget_rub,
+    region_ids: input.region_ids,
+    bidding_strategy_type: input.bidding_strategy_type,
+    metrika_counter_ids: input.metrika_counter_ids,
+    metrika_goal_ids: input.metrika_goal_ids,
+    rsya_image_urls: rsyaImageUrls,
+    ads_per_group: adsPerGroup,
+    canary_percent: canaryPercent,
+    max_clusters: maxClusters,
+    cluster_count: filteredEntries.length,
+    campaign_names: plannedNames,
+  });
+
+  const expectedAckLive = `I-UNDERSTAND-BUNDLE-LIVE:${yandexLogin}:${planHash.slice(0, 12)}`;
+
+  console.log("\n=== UPLOAD PLAN (dry_run=true) ==="); // guardian: allow
+  console.log(`Account:         ${yandexLogin}`); // guardian: allow
+  console.log(`CSV clusters:    ${totalClusters} total, ${filteredEntries.length} after caps`); // guardian: allow
+  console.log(`Campaign type:   ${input.campaign_type}`); // guardian: allow
+  console.log(`Strategy:        ${input.campaign_strategy.mode}`); // guardian: allow
+  console.log(`Planned campaigns: ${plannedNames.join(", ")}`); // guardian: allow
+  console.log(`Canary percent:  ${canaryPercent}% (${Math.max(1, Math.ceil(filteredEntries.length * canaryPercent / 100))} clusters)`); // guardian: allow
+  console.log(`PLAN_HASH:       ${planHash}`); // guardian: allow
+  console.log(`\nTo run live:`); // guardian: allow
+  console.log(`  dry_run: false`); // guardian: allow
+  console.log(`  confirm: true`); // guardian: allow
+  console.log(`  acknowledge_live: "${expectedAckLive}"`); // guardian: allow
+  console.log(`  plan_hash: "${planHash}"`); // guardian: allow
+  console.log("===================================\n"); // guardian: allow
+
+  return {
+    dry_run: true,
+    total_clusters: totalClusters,
+    clusters_processed: 0,
+    campaigns_created: [],
+    ad_groups_created: [],
+    keywords_added: 0,
+    ads_created: [],
+    images_uploaded: [],
+    metrika_linked: false,
+    canary_passed: false,
+    ledger_path: "",
+    errors: [],
+    plan_hash: planHash,
+    expected_ack_live: expectedAckLive,
+    recovery_command: "",
+    next_actions: [
+      `Re-call with dry_run=false, confirm=true, acknowledge_live="${expectedAckLive}", plan_hash="${planHash}"`,
+    ],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Core cluster processing — shared by Stage 1 (canary) and Stage 2 (bulk)
+// ---------------------------------------------------------------------------
+
+interface ProcessState {
+  campaigns_created: number[];
+  ad_groups_created: number[];
+  keywords_added: number;
+  ads_created: number[];
+  images_uploaded: string[];
+  errors: UploadError[];
+  attempted: number;
+  failed_count: number;
+  // Campaign name → campaign_id map (for strategy modes that reuse campaigns)
+  campaign_id_by_name: Map<string, number>;
+  // Image URL → hash map (upload once, reuse)
+  image_hash_by_url: Map<string, string>;
+}
+
+interface ClusterProcessInput {
+  cluster_id: string;
+  rows: ClusterRow[];
+  state: ProcessState;
+  ledger: Ledger;
+  input: UploadCampaignBundleInput;
+  rsya_image_urls: string[];
+  account_label: string | undefined;
+  client_login: string | undefined;
+}
+
+async function processCluster(opts: ClusterProcessInput): Promise<void> {
+  const {
+    cluster_id,
+    rows,
+    state,
+    ledger,
+    input,
+    rsya_image_urls,
+    account_label,
+    client_login,
+  } = opts;
+
+  const intent = clusterIntent(rows);
+  const campaignName = computeCampaignName(cluster_id, intent, input.campaign_strategy);
+
+  // Skip empty clusters
+  if (rows.length === 0) {
+    console.warn(`[SKIP] Cluster ${cluster_id}: 0 keywords`);
+    state.errors.push({ cluster_id, step: "keyword_check", error: "0 keywords in cluster" });
+    return;
+  }
+
+  // Validate keyword lengths
+  const validKeywords = rows.filter((r) => {
+    if (r.query.length > 4096) {
+      state.errors.push({
+        cluster_id,
+        step: "keyword_check",
+        error: `Keyword too long (${r.query.length} chars): ${r.query.slice(0, 80)}`,
+      });
+      return false;
+    }
+    return true;
+  });
+
+  if (validKeywords.length === 0) {
+    state.errors.push({ cluster_id, step: "keyword_check", error: "No valid keywords after length filter" });
+    return;
+  }
+
+  // ---- Campaign create (or reuse) ----
+  let campaign_id: number;
+
+  if (state.campaign_id_by_name.has(campaignName)) {
+    campaign_id = state.campaign_id_by_name.get(campaignName)!;
+  } else {
+    const campaignSig = `campaign:${campaignName}`;
+    const campaignPayload = buildCampaignPayload({
+      type: input.campaign_type,
+      name: campaignName,
+      daily_budget_rub: input.daily_budget_rub,
+      bidding_strategy_type: input.bidding_strategy_type,
+      counter_ids: input.metrika_counter_ids,
+    });
+
+    await ledger.writePending({ op: "campaign", signature: campaignSig, cluster_id });
+    state.attempted++;
+
+    const campResult = await executeApiCall({
+      apiName: "direct",
+      endpoint: "/json/v5/campaigns",
+      body: campaignPayload,
+      account: account_label,
+      client_login,
+    });
+
+    if (!campResult.ok) {
+      const errMsg = JSON.stringify(campResult.body);
+      await ledger.writeFailed(campaignSig, errMsg);
+      state.failed_count++;
+      state.errors.push({ cluster_id, step: "campaign_create", error: errMsg });
+      // Check for campaign limit (error_code 5004)
+      const body = campResult.body as { error?: { error_code?: number } };
+      if (body?.error?.error_code === 5004) {
+        throw new Error("Campaign limit reached (error_code 5004). Stopping pipeline.");
+      }
+      return;
+    }
+
+    try {
+      campaign_id = extractId(campResult.data);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      await ledger.writeFailed(campaignSig, errMsg);
+      state.failed_count++;
+      state.errors.push({ cluster_id, step: "campaign_create", error: errMsg });
+      return;
+    }
+
+    await ledger.writeCommitted(campaignSig, campaign_id);
+    state.campaigns_created.push(campaign_id);
+    state.campaign_id_by_name.set(campaignName, campaign_id);
+  }
+
+  // ---- AdGroup create ----
+  const adGroupName = `adgroup-${cluster_id}`;
+  const adGroupSig = `adgroup:${cluster_id}`;
+  const adGroupPayload = buildAdGroupPayload({
+    campaign_id,
+    name: adGroupName,
+    region_ids: input.region_ids,
+  });
+
+  await ledger.writePending({ op: "ad_group", signature: adGroupSig, cluster_id, parent_id: campaign_id });
+  state.attempted++;
+
+  let adGroupResult = await executeApiCall({
+    apiName: "direct",
+    endpoint: "/json/v5/adgroups",
+    body: adGroupPayload,
+    account: account_label,
+    client_login,
+  });
+
+  // Retry once on timeout
+  if (!adGroupResult.ok && adGroupResult.status === 504) {
+    adGroupResult = await executeApiCall({
+      apiName: "direct",
+      endpoint: "/json/v5/adgroups",
+      body: adGroupPayload,
+      account: account_label,
+      client_login,
+    });
+  }
+
+  if (!adGroupResult.ok) {
+    const errMsg = JSON.stringify(adGroupResult.body);
+    await ledger.writeFailed(adGroupSig, errMsg);
+    state.failed_count++;
+    state.errors.push({ cluster_id, step: "adgroup_create", error: errMsg });
+    return;
+  }
+
+  let ad_group_id: number;
+  try {
+    ad_group_id = extractId(adGroupResult.data);
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    await ledger.writeFailed(adGroupSig, errMsg);
+    state.failed_count++;
+    state.errors.push({ cluster_id, step: "adgroup_create", error: errMsg });
+    return;
+  }
+
+  await ledger.writeCommitted(adGroupSig, ad_group_id, campaign_id);
+  state.ad_groups_created.push(ad_group_id);
+
+  // ---- Keywords ----
+  for (const kw of validKeywords) {
+    const kwSig = `keyword:${cluster_id}:${kw.query.slice(0, 80)}`;
+    const kwPayload = buildKeywordPayload({ ad_group_id, keyword_text: kw.query });
+
+    await ledger.writePending({ op: "keyword", signature: kwSig, cluster_id, parent_id: ad_group_id });
+    state.attempted++;
+
+    const kwResult = await executeApiCall({
+      apiName: "direct",
+      endpoint: "/json/v5/keywords",
+      body: kwPayload,
+      account: account_label,
+      client_login,
+    });
+
+    if (!kwResult.ok) {
+      const errMsg = JSON.stringify(kwResult.body);
+      await ledger.writeFailed(kwSig, errMsg);
+      state.failed_count++;
+      state.errors.push({ cluster_id, step: "keyword_add", error: `keyword="${kw.query.slice(0, 40)}": ${errMsg}` });
+      // Continue with remaining keywords per error matrix
+    } else {
+      try {
+        const kw_id = extractId(kwResult.data);
+        await ledger.writeCommitted(kwSig, kw_id, ad_group_id);
+        state.keywords_added++;
+      } catch {
+        await ledger.writeFailed(kwSig, "id_extraction_failed");
+        state.failed_count++;
+      }
+    }
+  }
+
+  // ---- Ads ----
+  const adsPerGroup = input.ads_per_group ?? 3;
+  const tmpl = pickAdTemplate(
+    cluster_id,
+    intent,
+    input.ad_templates,
+    input.ad_template_strategy,
+    input.site_url
+  );
+
+  const isRsya = input.campaign_type === "rsya" || input.campaign_type === "rsya-only";
+
+  // TGO ads (search or rsya with text)
+  const adCount = Math.min(adsPerGroup, isRsya ? 1 : adsPerGroup);
+  for (let i = 0; i < adCount; i++) {
+    const adSig = `ad_tgo:${cluster_id}:v${i}`;
+    const adPayload = buildAdTgoPayload({
+      ad_group_id,
+      title: tmpl.title,
+      title2: tmpl.title2,
+      text: tmpl.text,
+      href: input.site_url,
+    });
+
+    await ledger.writePending({ op: "ad_tgo", signature: adSig, cluster_id, parent_id: ad_group_id });
+    state.attempted++;
+
+    const adResult = await executeApiCall({
+      apiName: "direct",
+      endpoint: "/json/v5/ads",
+      body: adPayload,
+      account: account_label,
+      client_login,
+    });
+
+    if (!adResult.ok) {
+      const body = adResult.body as { error?: { error_code?: number } };
+      const errMsg = JSON.stringify(adResult.body);
+      await ledger.writeFailed(adSig, errMsg);
+      state.failed_count++;
+      // Skip variant on validation error (8000), continue per error matrix
+      if (body?.error?.error_code !== 8000) {
+        state.errors.push({ cluster_id, step: "ad_create", error: errMsg });
+      }
+    } else {
+      try {
+        const ad_id = extractId(adResult.data);
+        await ledger.writeCommitted(adSig, ad_id, ad_group_id);
+        state.ads_created.push(ad_id);
+      } catch {
+        await ledger.writeFailed(adSig, "id_extraction_failed");
+        state.failed_count++;
+      }
+    }
+  }
+
+  // RSYA image ads
+  if (isRsya && rsya_image_urls.length > 0) {
+    // Round-robin image selection
+    const imageUrl = rsya_image_urls[state.ad_groups_created.length % rsya_image_urls.length];
+
+    // Upload image once per URL (cache)
+    let imageHash = state.image_hash_by_url.get(imageUrl);
+    if (!imageHash) {
+      try {
+        const { base64, format } = await fetchImageAsBase64(imageUrl);
+        const imgSig = `image:${imageUrl.slice(0, 80)}`;
+        const imgPayload = buildImageUploadPayload({ base64, format });
+
+        await ledger.writePending({ op: "image", signature: imgSig, cluster_id });
+        state.attempted++;
+
+        const imgResult = await executeApiCall({
+          apiName: "direct",
+          endpoint: "/json/v5/adimages",
+          body: imgPayload,
+          account: account_label,
+          client_login,
+        });
+
+        if (!imgResult.ok) {
+          const errMsg = JSON.stringify(imgResult.body);
+          await ledger.writeFailed(imgSig, errMsg);
+          state.failed_count++;
+          // Continue with text-only ads per error matrix
+        } else {
+          imageHash = extractImageHash(imgResult.data);
+          await ledger.writeCommitted(imgSig, imageHash);
+          state.image_hash_by_url.set(imageUrl, imageHash);
+          state.images_uploaded.push(imageHash);
+        }
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        state.errors.push({ cluster_id, step: "image_upload", error: errMsg });
+        // Fall through to text-only ads
+      }
+    }
+
+    // RSYA ad with image (if hash available)
+    if (imageHash) {
+      for (let i = 0; i < (adsPerGroup - 1); i++) {
+        const rsyaSig = `ad_rsya:${cluster_id}:v${i}`;
+        const rsyaPayload = buildAdRsyaPayload({
+          ad_group_id,
+          ad_image_hash: imageHash,
+          title: tmpl.title,
+          title2: tmpl.title2,
+          text: tmpl.text,
+          href: input.site_url,
+        });
+
+        await ledger.writePending({ op: "ad_rsya", signature: rsyaSig, cluster_id, parent_id: ad_group_id });
+        state.attempted++;
+
+        const rsyaResult = await executeApiCall({
+          apiName: "direct",
+          endpoint: "/json/v5/ads",
+          body: rsyaPayload,
+          account: account_label,
+          client_login,
+        });
+
+        if (!rsyaResult.ok) {
+          const errMsg = JSON.stringify(rsyaResult.body);
+          await ledger.writeFailed(rsyaSig, errMsg);
+          state.failed_count++;
+        } else {
+          try {
+            const ad_id = extractId(rsyaResult.data);
+            await ledger.writeCommitted(rsyaSig, ad_id, ad_group_id);
+            state.ads_created.push(ad_id);
+          } catch {
+            await ledger.writeFailed(rsyaSig, "id_extraction_failed");
+            state.failed_count++;
+          }
+        }
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Stage 1 — gate + canary
+// ---------------------------------------------------------------------------
+
+async function stage1Canary(
+  input: UploadCampaignBundleInput,
+  filteredEntries: [string, ClusterRow[]][],
+  totalClusters: number,
+  planHash: string,
+  expectedAckLive: string,
+  acc: { label: string; id: number; yandex_login: string | null }
+): Promise<UploadCampaignBundleOutput> {
+  const canaryPercent = input.canary_percent ?? 10;
+  const abortOnErrorRate = input.abort_on_error_rate ?? 0.3;
+
+  // Validate plan_hash binding
+  if (!input.plan_hash) {
+    throw new Error("plan_hash is required for live execution. Re-run with dry_run=true to get plan_hash.");
+  }
+  if (input.plan_hash !== planHash) {
+    throw new Error(
+      `plan_hash mismatch — inputs changed since dry-run. ` +
+      `Expected: ${planHash}. Got: ${input.plan_hash}. Re-run dry_run=true to get a fresh plan_hash.`
+    );
+  }
+
+  // Confirm gate
+  requireConfirmGate(
+    { confirm: input.confirm, acknowledge_live: input.acknowledge_live },
+    { expectedAck: expectedAckLive }
+  );
+
+  // Open ledger
+  const yandexLogin = acc.yandex_login ?? acc.label;
+  const ts = Date.now();
+  const ledgerDir = path.resolve(
+    path.join(process.cwd(), "packages/yandex-seo/data")
+  );
+  ensureDir(ledgerDir);
+  const ledgerPath = path.join(ledgerDir, `bundle-ledger-${planHash.slice(0, 12)}-${ts}.jsonl`);
+  const ledger = await openLedger(ledgerPath);
+
+  const state: ProcessState = {
+    campaigns_created: [],
+    ad_groups_created: [],
+    keywords_added: 0,
+    ads_created: [],
+    images_uploaded: [],
+    errors: [],
+    attempted: 0,
+    failed_count: 0,
+    campaign_id_by_name: new Map(),
+    image_hash_by_url: new Map(),
+  };
+
+  const rsyaImageUrls = input.rsya_image_urls ?? [];
+  const canaryCount = Math.max(1, Math.ceil(filteredEntries.length * canaryPercent / 100));
+  const canarySlice = filteredEntries.slice(0, canaryCount);
+
+  try {
+    for (const [cluster_id, rows] of canarySlice) {
+      try {
+        await processCluster({
+          cluster_id,
+          rows,
+          state,
+          ledger,
+          input,
+          rsya_image_urls: rsyaImageUrls,
+          account_label: input.account,
+          client_login: undefined,
+        });
+      } catch (err) {
+        // Campaign limit or hard stop
+        const errMsg = err instanceof Error ? err.message : String(err);
+        state.errors.push({ cluster_id, step: "cluster_loop", error: errMsg });
+        break;
+      }
+    }
+  } finally {
+    await ledger.close();
+  }
+
+  // Error rate check
+  const errorRate = state.attempted > 0 ? state.failed_count / state.attempted : 0;
+
+  if (errorRate >= abortOnErrorRate) {
+    return {
+      dry_run: false,
+      total_clusters: totalClusters,
+      clusters_processed: canaryCount,
+      campaigns_created: state.campaigns_created,
+      ad_groups_created: state.ad_groups_created,
+      keywords_added: state.keywords_added,
+      ads_created: state.ads_created,
+      images_uploaded: state.images_uploaded,
+      metrika_linked: false,
+      canary_passed: false,
+      ledger_path: ledgerPath,
+      errors: state.errors,
+      stage: "canary_aborted",
+      recovery_command: `npx tsx scripts/bundle-recovery.ts --ledger "${ledgerPath}"`,
+      next_actions: [
+        `Canary error rate ${(errorRate * 100).toFixed(1)}% >= threshold ${(abortOnErrorRate * 100).toFixed(1)}%. Review errors above.`,
+        `To clean up: npx tsx scripts/bundle-recovery.ts --ledger "${ledgerPath}"`,
+      ],
+    };
+  }
+
+  // Count must match what stage2Continuation will read from ledger (all committed entries including keywords + images).
+  const committedCount =
+    state.campaigns_created.length +
+    state.ad_groups_created.length +
+    state.keywords_added +
+    state.ads_created.length +
+    state.images_uploaded.length;
+  const expectedContinuationAck = `I-UNDERSTAND-CONTINUE-LIVE:${yandexLogin}:${planHash.slice(0, 12)}:${committedCount}`;
+
+  console.log("\n=== CANARY PASSED ==="); // guardian: allow
+  console.log(`Clusters processed: ${canaryCount} / ${filteredEntries.length}`); // guardian: allow
+  console.log(`Campaigns created:  ${state.campaigns_created.join(", ") || "(none)"}`); // guardian: allow
+  console.log(`Error rate:         ${(errorRate * 100).toFixed(1)}%`); // guardian: allow
+  console.log(`Ledger:             ${ledgerPath}`); // guardian: allow
+  console.log(`\nTo continue:`); // guardian: allow
+  console.log(`  canary_passed: true`); // guardian: allow
+  console.log(`  continuation_ack: "${expectedContinuationAck}"`); // guardian: allow
+  console.log("====================\n"); // guardian: allow
+
+  return {
+    dry_run: false,
+    total_clusters: totalClusters,
+    clusters_processed: canaryCount,
+    campaigns_created: state.campaigns_created,
+    ad_groups_created: state.ad_groups_created,
+    keywords_added: state.keywords_added,
+    ads_created: state.ads_created,
+    images_uploaded: state.images_uploaded,
+    metrika_linked: false,
+    canary_passed: true,
+    ledger_path: ledgerPath,
+    errors: state.errors,
+    stage: "canary_passed",
+    expected_continuation_ack: expectedContinuationAck,
+    recovery_command: `npx tsx scripts/bundle-recovery.ts --ledger "${ledgerPath}"`,
+    next_actions: [
+      `Canary passed (${canaryCount} clusters, ${state.campaigns_created.length} campaigns created).`,
+      `Check campaigns in Direct UI, then re-call with canary_passed=true, continuation_ack="${expectedContinuationAck}"`,
+    ],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Stage 2 — bulk continuation
+// ---------------------------------------------------------------------------
+
+async function stage2Continuation(
+  input: UploadCampaignBundleInput,
+  filteredEntries: [string, ClusterRow[]][],
+  totalClusters: number,
+  planHash: string,
+  acc: { label: string; id: number; yandex_login: string | null }
+): Promise<UploadCampaignBundleOutput> {
+  const canaryPercent = input.canary_percent ?? 10;
+  const canaryCount = Math.max(1, Math.ceil(filteredEntries.length * canaryPercent / 100));
+  const yandexLogin = acc.yandex_login ?? acc.label;
+
+  // Find the canary ledger — look for matching plan_hash prefix file
+  const dataDir = path.resolve(path.join(process.cwd(), "packages/yandex-seo/data"));
+  const prefix = `bundle-ledger-${planHash.slice(0, 12)}-`;
+  let ledgerPath: string;
+
+  if (fs.existsSync(dataDir)) {
+    const existing = fs.readdirSync(dataDir)
+      .filter((f) => f.startsWith(prefix))
+      .sort()
+      .reverse(); // most recent first
+    if (existing.length > 0) {
+      ledgerPath = path.join(dataDir, existing[0]);
+    } else {
+      ledgerPath = path.join(dataDir, `bundle-ledger-${planHash.slice(0, 12)}-${Date.now()}.jsonl`);
+    }
+  } else {
+    ensureDir(dataDir);
+    ledgerPath = path.join(dataDir, `bundle-ledger-${planHash.slice(0, 12)}-${Date.now()}.jsonl`);
+  }
+
+  const ledger = await openLedger(ledgerPath);
+
+  // Read committed entries from canary to rebuild state
+  const priorEntries = await ledger.readAll();
+  const committedPrior = priorEntries.filter((e) => e.state === "committed");
+  const priorCommittedCount = committedPrior.length;
+
+  // Validate continuation_ack
+  const expectedContinuationAck = `I-UNDERSTAND-CONTINUE-LIVE:${yandexLogin}:${planHash.slice(0, 12)}:${priorCommittedCount}`;
+  if (input.continuation_ack !== expectedContinuationAck) {
+    await ledger.close();
+    throw new Error(
+      `continuation_ack mismatch. Expected: "${expectedContinuationAck}". ` +
+      `Got: "${input.continuation_ack}". The committed count (${priorCommittedCount}) must match canary results.`
+    );
+  }
+
+  // Restore state from prior ledger entries
+  const state: ProcessState = {
+    campaigns_created: [],
+    ad_groups_created: [],
+    keywords_added: 0,
+    ads_created: [],
+    images_uploaded: [],
+    errors: [],
+    attempted: 0,
+    failed_count: 0,
+    campaign_id_by_name: new Map(),
+    image_hash_by_url: new Map(),
+  };
+
+  // Rebuild campaign_id_by_name from prior committed entries
+  for (const entry of committedPrior) {
+    if (entry.op === "campaign" && typeof entry.returned_id === "number") {
+      const sig = entry.signature; // "campaign:<name>"
+      const nameFromSig = sig.replace(/^campaign:/, "");
+      state.campaign_id_by_name.set(nameFromSig, entry.returned_id);
+      state.campaigns_created.push(entry.returned_id);
+    } else if (entry.op === "ad_group" && typeof entry.returned_id === "number") {
+      state.ad_groups_created.push(entry.returned_id);
+    } else if (entry.op === "keyword") {
+      state.keywords_added++;
+    } else if ((entry.op === "ad_tgo" || entry.op === "ad_rsya") && typeof entry.returned_id === "number") {
+      state.ads_created.push(entry.returned_id);
+    } else if (entry.op === "image" && typeof entry.returned_id === "string") {
+      state.images_uploaded.push(entry.returned_id);
+    }
+  }
+
+  const rsyaImageUrls = input.rsya_image_urls ?? [];
+  const bulkSlice = filteredEntries.slice(canaryCount);
+
+  try {
+    for (const [cluster_id, rows] of bulkSlice) {
+      try {
+        await processCluster({
+          cluster_id,
+          rows,
+          state,
+          ledger,
+          input,
+          rsya_image_urls: rsyaImageUrls,
+          account_label: input.account,
+          client_login: undefined,
+        });
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        state.errors.push({ cluster_id, step: "cluster_loop", error: errMsg });
+        break;
+      }
+    }
+
+    // Metrika linking
+    let metrikaLinked = false;
+    if (input.metrika_counter_ids && input.metrika_goal_ids && input.metrika_counter_ids.length > 0 && input.metrika_goal_ids.length > 0) {
+      const strategyType = input.bidding_strategy_type === "WB_DAILY_BUDGET"
+        ? "WB_DAILY_BUDGET"
+        : input.bidding_strategy_type === "AVERAGE_CPC"
+        ? "WB_DAILY_BUDGET"  // fallback to WB for metrika linking
+        : "WB_DAILY_BUDGET";
+
+      for (const campaign_id of state.campaigns_created) {
+        try {
+          const metrikaPayload = buildMetrikaUpdatePayload({
+            campaign_id,
+            counter_ids: input.metrika_counter_ids,
+            goal_ids: input.metrika_goal_ids,
+            strategy_type: strategyType,
+          });
+          const metrikaResult = await executeApiCall({
+            apiName: "direct",
+            endpoint: "/json/v5/campaigns",
+            method: "POST",
+            body: metrikaPayload,
+            account: input.account,
+          });
+          if (!metrikaResult.ok) {
+            const errMsg = JSON.stringify(metrikaResult.body);
+            state.errors.push({ cluster_id: `campaign:${campaign_id}`, step: "metrika_link", error: errMsg });
+          } else {
+            metrikaLinked = true;
+          }
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          state.errors.push({ cluster_id: `campaign:${campaign_id}`, step: "metrika_link", error: errMsg });
+          // Continue per error matrix — drafts created without goals
+        }
+      }
+    }
+
+    // Generate report
+    const runsDir = path.resolve(
+      path.join(process.cwd(), "docs/plans/phase-3-5-c-csv-upload-pipeline/runs")
+    );
+    ensureDir(runsDir);
+    const reportTs = new Date().toISOString().replace(/[:.]/g, "-");
+    const reportPath = path.join(runsDir, `${planHash.slice(0, 12)}-${reportTs}.md`);
+    const reportContent = [
+      `# Upload Report`,
+      ``,
+      `- **Plan hash:** ${planHash}`,
+      `- **Account:** ${yandexLogin}`,
+      `- **Timestamp:** ${new Date().toISOString()}`,
+      `- **Total clusters:** ${totalClusters}`,
+      `- **Clusters processed:** ${canaryCount + bulkSlice.length}`,
+      `- **Campaigns created:** ${state.campaigns_created.length} (IDs: ${state.campaigns_created.join(", ")})`,
+      `- **Ad groups created:** ${state.ad_groups_created.length}`,
+      `- **Keywords added:** ${state.keywords_added}`,
+      `- **Ads created:** ${state.ads_created.length}`,
+      `- **Images uploaded:** ${state.images_uploaded.join(", ") || "none"}`,
+      `- **Metrika linked:** ${metrikaLinked}`,
+      `- **Errors:** ${state.errors.length}`,
+      ``,
+      `## Error Details`,
+      ``,
+      state.errors.length === 0
+        ? "_No errors._"
+        : state.errors.map((e) => `- **${e.step}** (cluster ${e.cluster_id}): ${e.error}`).join("\n"),
+      ``,
+      `## Ledger`,
+      ``,
+      `\`${ledgerPath}\``,
+      ``,
+      `## Recovery`,
+      ``,
+      `\`npx tsx scripts/bundle-recovery.ts --ledger "${ledgerPath}"\``,
+    ].join("\n");
+
+    fs.writeFileSync(reportPath, reportContent, "utf-8");
+    console.log(`\nReport written: ${reportPath}`); // guardian: allow
+
+    return {
+      dry_run: false,
+      total_clusters: totalClusters,
+      clusters_processed: canaryCount + bulkSlice.length,
+      campaigns_created: state.campaigns_created,
+      ad_groups_created: state.ad_groups_created,
+      keywords_added: state.keywords_added,
+      ads_created: state.ads_created,
+      images_uploaded: state.images_uploaded,
+      metrika_linked: metrikaLinked,
+      canary_passed: true,
+      ledger_path: ledgerPath,
+      errors: state.errors,
+      stage: "completed",
+      recovery_command: `npx tsx scripts/bundle-recovery.ts --ledger "${ledgerPath}"`,
+      next_actions: [
+        `Bundle upload complete. Review campaigns in Yandex Direct UI.`,
+        `All ads are in DRAFT state — review and send for moderation manually.`,
+        ...(metrikaLinked ? [] : [`Metrika linking failed or not configured — link goals manually.`]),
+      ],
+    };
+  } finally {
+    await ledger.close();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Main exported function
+// ---------------------------------------------------------------------------
+
+export async function uploadCampaignBundle(
+  input: UploadCampaignBundleInput
+): Promise<UploadCampaignBundleOutput> {
+  // Parse CSV
+  const csv = parseKeyCollectorCsv(input.csv_path);
+  const { clusters, sha256: csvSha256, total_clusters: totalClusters } = csv;
+
+  const maxClusters = input.max_clusters ?? 50;
+  const canaryPercent = input.canary_percent ?? 10;
+  const adsPerGroup = input.ads_per_group ?? 3;
+  const rsyaImageUrls = input.rsya_image_urls ?? [];
+
+  // Apply intent filter if one-per-intent strategy
+  let filteredEntries = [...clusters.entries()];
+  if (
+    input.campaign_strategy.mode === "one-per-intent" &&
+    input.campaign_strategy.intent_to_campaign
+  ) {
+    const allowedIntents = Object.keys(input.campaign_strategy.intent_to_campaign);
+    filteredEntries = filteredEntries.filter(([, rows]) =>
+      allowedIntents.includes(clusterIntent(rows))
+    );
+  }
+  // Apply max_clusters cap
+  filteredEntries = filteredEntries.slice(0, maxClusters);
+
+  // Resolve account
+  const acc = resolveAccount(SCOPES.DIRECT_API, input.account);
+  const yandexLogin = acc.yandex_login ?? acc.label;
+
+  // Compute planned campaign names
+  const plannedNamesSet = new Set<string>();
+  for (const [cluster_id, rows] of filteredEntries) {
+    plannedNamesSet.add(
+      computeCampaignName(cluster_id, clusterIntent(rows), input.campaign_strategy)
+    );
+  }
+  const plannedNames = [...plannedNamesSet];
+
+  // Compute PLAN_HASH
+  const planHash = computePlanHash({
+    csv_hash: csvSha256,
+    account_login: yandexLogin,
+    campaign_strategy: input.campaign_strategy,
+    campaign_type: input.campaign_type,
+    site_url: input.site_url,
+    daily_budget_rub: input.daily_budget_rub,
+    region_ids: input.region_ids,
+    bidding_strategy_type: input.bidding_strategy_type,
+    metrika_counter_ids: input.metrika_counter_ids,
+    metrika_goal_ids: input.metrika_goal_ids,
+    rsya_image_urls: rsyaImageUrls,
+    ads_per_group: adsPerGroup,
+    canary_percent: canaryPercent,
+    max_clusters: maxClusters,
+    cluster_count: filteredEntries.length,
+    campaign_names: plannedNames,
+  });
+
+  const expectedAckLive = `I-UNDERSTAND-BUNDLE-LIVE:${yandexLogin}:${planHash.slice(0, 12)}`;
+
+  // Stage detection
+  const isDryRun = input.dry_run !== false; // default true
+  const isContinuation =
+    input.dry_run === false && input.plan_hash !== undefined && input.canary_passed === true;
+
+  if (isDryRun) {
+    return stage0DryRun(input, clusters, csvSha256, totalClusters);
+  }
+
+  if (isContinuation) {
+    return stage2Continuation(input, filteredEntries, totalClusters, planHash, acc);
+  }
+
+  // Stage 1 — canary
+  return stage1Canary(input, filteredEntries, totalClusters, planHash, expectedAckLive, acc);
+}
