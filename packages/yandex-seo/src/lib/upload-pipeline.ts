@@ -331,26 +331,55 @@ export function resolveDailyBudgetMicros(input: Pick<UploadCampaignBundleInput, 
 
 /**
  * Find an existing campaign by name in a list of campaigns returned by the API.
- * Returns the Id if found, undefined otherwise.
- * Pure function — no side effects, easy to unit test.
+ * Returns the Id if found and the campaign is in a reusable state, undefined otherwise.
+ * Pushes a warning to `warnings` (if provided) when a matched campaign is in a suspicious state.
+ * Pure function aside from the optional warnings push.
  */
 export function findExistingCampaignId(
-  existingCampaigns: Array<{ Id: number; Name: string }>,
-  name: string
+  existingCampaigns: Array<{ Id: number; Name: string; Status?: string }>,
+  name: string,
+  warnings?: Array<{ cluster_id: string; step: string; error: string }>,
+  cluster_id?: string
 ): number | undefined {
-  return existingCampaigns.find((c) => c.Name === name)?.Id;
+  const match = existingCampaigns.find((c) => c.Name === name);
+  if (!match) return undefined;
+
+  // ARCHIVED campaigns must not be reused — they are logically deleted
+  if (match.Status === "ARCHIVED") {
+    return undefined;
+  }
+
+  // Warn on unexpected states (anything other than the normal active/draft states)
+  const NORMAL_STATES = new Set(["DRAFT", "ACTIVE", "SUSPENDED", "ENDED", "OFF", "CONVERTED"]);
+  if (match.Status !== undefined && !NORMAL_STATES.has(match.Status)) {
+    warnings?.push({
+      cluster_id: cluster_id ?? "unknown",
+      step: "dedupe",
+      error: `reusing campaign Id=${match.Id} Name="${name}" in unexpected state "${match.Status}" — verify it is not a stale/failed campaign`,
+    });
+  }
+
+  return match.Id;
 }
 
 /**
- * Fetch all campaigns for the account (Id + Name only).
+ * Fetch all campaigns for the account (Id + Name + Status).
  * Called once before processing clusters when dedupe_by_name=true.
- * Returns empty array on any error (non-fatal — dedupe silently falls back to create).
+ * Paginates using Page.Limit + Page.Offset until all campaigns are fetched.
+ * THROWS on any API error (fail-closed) — a lookup failure must not silently
+ * fall back to create (that would produce duplicates).
+ *
+ * Exported for unit testing only.
  */
-async function fetchExistingCampaigns(
+export async function fetchExistingCampaigns(
   account_label: string | undefined,
   client_login: string | undefined
-): Promise<Array<{ Id: number; Name: string }>> {
-  try {
+): Promise<Array<{ Id: number; Name: string; Status?: string }>> {
+  const PAGE_LIMIT = 10000;
+  const allCampaigns: Array<{ Id: number; Name: string; Status?: string }> = [];
+  let offset = 0;
+
+  for (;;) {
     const result = await executeApiCall({
       apiName: "direct",
       endpoint: "/json/v5/campaigns",
@@ -359,21 +388,43 @@ async function fetchExistingCampaigns(
         method: "get",
         params: {
           SelectionCriteria: {},
-          FieldNames: ["Id", "Name"],
+          FieldNames: ["Id", "Name", "Status"],
+          Page: { Limit: PAGE_LIMIT, Offset: offset },
         },
       },
       account: account_label,
       client_login,
     });
-    if (!result.ok) return [];
-    const data = result.data as { result?: { Campaigns?: Array<{ Id?: number; Name?: string }> } };
-    return (data?.result?.Campaigns ?? [])
-      .filter((c): c is { Id: number; Name: string } =>
-        typeof c.Id === "number" && typeof c.Name === "string"
+
+    if (!result.ok) {
+      throw new Error(
+        `fetchExistingCampaigns failed (HTTP ${result.status}): ${JSON.stringify(result.body)}`
       );
-  } catch {
-    return [];
+    }
+
+    const data = result.data as {
+      result?: {
+        Campaigns?: Array<{ Id?: number; Name?: string; Status?: string }>;
+        LimitedBy?: number;
+      };
+    };
+
+    const page = (data?.result?.Campaigns ?? []).filter(
+      (c): c is { Id: number; Name: string; Status?: string } =>
+        typeof c.Id === "number" && typeof c.Name === "string"
+    );
+
+    allCampaigns.push(...page);
+
+    const limitedBy = data?.result?.LimitedBy;
+    if (limitedBy === undefined || page.length < PAGE_LIMIT) {
+      // No more pages
+      break;
+    }
+    offset = limitedBy;
   }
+
+  return allCampaigns;
 }
 
 // ---------------------------------------------------------------------------
@@ -488,7 +539,7 @@ interface ProcessState {
   // Image URL → hash map (upload once, reuse)
   image_hash_by_url: Map<string, string>;
   // Pre-fetched existing campaigns for deduplication (populated once when dedupe_by_name=true)
-  existing_campaigns: Array<{ Id: number; Name: string }>;
+  existing_campaigns: Array<{ Id: number; Name: string; Status?: string }>;
 }
 
 interface ClusterProcessInput {
@@ -615,7 +666,7 @@ async function processCluster(opts: ClusterProcessInput): Promise<void> {
     campaign_id = state.campaign_id_by_name.get(campaignName)!;
   } else if (input.dedupe_by_name === true) {
     // dedupe_by_name: existing campaigns fetched once before first cluster; reuse if name matches
-    const existingId = findExistingCampaignId(state.existing_campaigns, campaignName);
+    const existingId = findExistingCampaignId(state.existing_campaigns, campaignName, state.errors, cluster_id);
     if (existingId !== undefined) {
       console.log(`[DEDUPE] deduped: skip create, reuse Id=${existingId} for "${campaignName}"`); // guardian: allow
       state.campaign_id_by_name.set(campaignName, existingId);
@@ -761,14 +812,11 @@ async function processCluster(opts: ClusterProcessInput): Promise<void> {
     });
 
     if (!adResult.ok) {
-      const body = adResult.body as { error?: { error_code?: number } };
       const errMsg = JSON.stringify(adResult.body);
       await ledger.writeFailed(adSig, errMsg);
       state.failed_count++;
-      // Skip variant on validation error (8000), continue per error matrix
-      if (body?.error?.error_code !== 8000) {
-        state.errors.push({ cluster_id, step: "ad_create", error: errMsg });
-      }
+      // All ad errors are surfaced in state.errors (including code 8000 validation errors)
+      state.errors.push({ cluster_id, step: "ad_create", error: errMsg });
     } else {
       const addResults = (adResult.data as { result?: { AddResults?: Array<{ Id?: number; Errors?: Array<{ Code: number; Message: string }> }> } })
         ?.result?.AddResults;
@@ -906,6 +954,8 @@ async function processCluster(opts: ClusterProcessInput): Promise<void> {
           const errMsg = JSON.stringify(rsyaResult.body);
           await ledger.writeFailed(rsyaSig, errMsg);
           state.failed_count++;
+          // Surface HTTP-level errors in state.errors (mirroring TGO path)
+          state.errors.push({ cluster_id, step: "ad_rsya_create", error: errMsg });
         } else {
           const rsyaAddResults = (rsyaResult.data as { result?: { AddResults?: Array<{ Id?: number; Errors?: Array<{ Code: number; Message: string }> }> } })
             ?.result?.AddResults;
@@ -1198,6 +1248,32 @@ async function stage2Continuation(
         state.errors.push({ cluster_id, step: "cluster_loop", error: errMsg });
         break;
       }
+    }
+
+    // Stage 2 error rate check — mirrors Stage 1 canary abort logic
+    const abortOnErrorRate = input.abort_on_error_rate ?? 0.3;
+    const bulkErrorRate = state.attempted > 0 ? state.failed_count / state.attempted : 0;
+    if (bulkErrorRate >= abortOnErrorRate) {
+      return {
+        dry_run: false,
+        total_clusters: totalClusters,
+        clusters_processed: canaryCount + bulkSlice.length,
+        campaigns_created: state.campaigns_created,
+        ad_groups_created: state.ad_groups_created,
+        keywords_added: state.keywords_added,
+        ads_created: state.ads_created,
+        images_uploaded: state.images_uploaded,
+        metrika_linked: false,
+        canary_passed: true,
+        ledger_path: ledgerPath,
+        errors: state.errors,
+        stage: "bulk_aborted",
+        recovery_command: `npx tsx scripts/bundle-recovery.ts --ledger "${ledgerPath}"`,
+        next_actions: [
+          `Bulk error rate ${(bulkErrorRate * 100).toFixed(1)}% >= threshold ${(abortOnErrorRate * 100).toFixed(1)}%. Campaign bundle is INCOMPLETE.`,
+          `Review errors above, then run recovery: npx tsx scripts/bundle-recovery.ts --ledger "${ledgerPath}"`,
+        ],
+      };
     }
 
     // Metrika linking
