@@ -61,13 +61,25 @@ export function buildCampaignPayload(input: {
   counter_ids?: number[];
   start_date?: string;
   tracking_params?: string;
+  /**
+   * When provided, the BiddingStrategy is set VERBATIM from this value and the
+   * search/rsya/rsya-only reconstruction block is skipped entirely.
+   * Used by YAML-driven uploads (direct-upload-from-yaml.ts) to pass the
+   * bundle's already-correct strategy through without re-constructing it.
+   * CSV callers (upload-pipeline.ts without bidding_strategy) still use the
+   * existing reconstruction path — fully backwards-compatible.
+   */
+  bidding_strategy?: Record<string, unknown>;
 }): { method: "add"; params: { Campaigns: [unknown] } } {
   const startDate = input.start_date ?? getMoscowDate();
   const dailyBudgetMicros = input.daily_budget_rub * 1_000_000;
 
   let biddingStrategy: Record<string, unknown>;
 
-  if (input.type === "search") {
+  // Passthrough path: use the caller-supplied strategy verbatim.
+  if (input.bidding_strategy !== undefined) {
+    biddingStrategy = input.bidding_strategy;
+  } else if (input.type === "search") {
     // Quirk 2: Search campaigns use HIGHEST_POSITION (manual CPC); WB_DAILY_BUDGET
     // is only valid for network placement. Network must be SERVING_OFF.
     const searchType = input.bidding_strategy_type === "WB_DAILY_BUDGET"

@@ -129,6 +129,14 @@ export interface UploadCampaignBundleInput {
    */
   callout_ids?: number[];
 
+  /**
+   * When provided, the BiddingStrategy is forwarded VERBATIM to buildCampaignPayload,
+   * bypassing the search/rsya/rsya-only reconstruction logic.
+   * Set by direct-upload-from-yaml.ts from bundle.campaign.campaign.TextCampaign.BiddingStrategy.
+   * When absent, the existing reconstruction path is used (backwards-compatible for CSV callers).
+   */
+  bidding_strategy?: Record<string, unknown>;
+
   // Phase 3.5.D extensions — all optional, backwards-compatible
   sitelinks_set?: {
     Sitelinks: Array<{ Title: string; Description?: string; Href: string }>;
@@ -577,6 +585,7 @@ async function doCreateCampaign(args: CreateCampaignArgs): Promise<number | unde
     daily_budget_rub: resolveDailyBudgetMicros(input) / 1_000_000,
     bidding_strategy_type: input.bidding_strategy_type,
     counter_ids: input.metrika_counter_ids,
+    bidding_strategy: input.bidding_strategy,
   });
 
   await ledger.writePending({ op: "campaign", signature: campaignSig, cluster_id });

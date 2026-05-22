@@ -5,7 +5,6 @@ vi.mock("../src/lib/api-gateway.js", () => ({}));
 vi.mock("../src/lib/account-resolver.js", () => ({}));
 vi.mock("../src/lib/csv-parser.js", () => ({}));
 vi.mock("../src/lib/bundle-ledger.js", () => ({}));
-vi.mock("../src/lib/payload-builder.js", () => ({}));
 vi.mock("../src/lib/yaml-loader.js", () => ({}));
 vi.mock("../src/lib/scopes.js", () => ({ SCOPES: {} }));
 vi.mock("../src/lib/api/confirm-gate.js", () => ({ requireConfirmGate: () => {} }));
@@ -14,6 +13,8 @@ vi.mock("@ohmy-seo/mcp-core/errors", () => ({
   errorToMcpContent: (e: unknown) => ({ content: [{ type: "text", text: String(e) }] }),
 }));
 
+// payload-builder is NOT mocked — we test its real buildCampaignPayload
+import { buildCampaignPayload } from "../src/lib/payload-builder.js";
 import { resolveCampaignStrategy, resolveCampaignType } from "../src/tools/direct-upload-from-yaml.js";
 import { pickAdTemplate } from "../src/lib/upload-pipeline.js";
 
@@ -144,5 +145,99 @@ describe("resolveCampaignStrategy", () => {
     const bundle = makeBundle({ upload_strategy: "one-per-cluster" });
     const strategy = resolveCampaignStrategy(bundle);
     expect(strategy).toEqual({ mode: "one-per-cluster" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildCampaignPayload — bidding_strategy passthrough
+// ---------------------------------------------------------------------------
+
+/** The rsya bundle's BiddingStrategy as it appears in _campaign.yaml after YAML parse. */
+const rsyaBiddingStrategy = {
+  Search: { BiddingStrategyType: "SERVING_OFF" },
+  Network: {
+    BiddingStrategyType: "WB_MAXIMUM_CLICKS",
+    WbMaximumClicks: { WeeklySpendLimit: 59500000 },
+  },
+};
+
+const searchBiddingStrategy = {
+  Search: { BiddingStrategyType: "HIGHEST_POSITION" },
+  Network: { BiddingStrategyType: "SERVING_OFF" },
+};
+
+function extractTextCampaign(payload: ReturnType<typeof buildCampaignPayload>) {
+  const campaign = payload.params.Campaigns[0] as Record<string, unknown>;
+  return campaign["TextCampaign"] as Record<string, unknown>;
+}
+
+describe("buildCampaignPayload — bidding_strategy passthrough", () => {
+  it("rsya bundle: passes WB_MAXIMUM_CLICKS and WeeklySpendLimit=59500000 verbatim", () => {
+    const payload = buildCampaignPayload({
+      type: "rsya",
+      name: "test-rsya-campaign",
+      daily_budget_rub: 300,
+      bidding_strategy_type: "WB_DAILY_BUDGET",
+      bidding_strategy: rsyaBiddingStrategy,
+    });
+
+    const tc = extractTextCampaign(payload);
+    const bs = tc["BiddingStrategy"] as typeof rsyaBiddingStrategy;
+
+    // Network must use WB_MAXIMUM_CLICKS — not WB_DAILY_BUDGET
+    expect(bs.Network.BiddingStrategyType).toBe("WB_MAXIMUM_CLICKS");
+    // WeeklySpendLimit (not WeeklySpendingLimit)
+    expect(bs.Network.WbMaximumClicks.WeeklySpendLimit).toBe(59500000);
+    // Search must be SERVING_OFF
+    expect(bs.Search.BiddingStrategyType).toBe("SERVING_OFF");
+  });
+
+  it("search bundle: passes Search.HIGHEST_POSITION and Network.SERVING_OFF verbatim", () => {
+    const payload = buildCampaignPayload({
+      type: "search",
+      name: "test-search-campaign",
+      daily_budget_rub: 300,
+      bidding_strategy_type: "HIGHEST_POSITION",
+      bidding_strategy: searchBiddingStrategy,
+    });
+
+    const tc = extractTextCampaign(payload);
+    const bs = tc["BiddingStrategy"] as typeof searchBiddingStrategy;
+
+    expect(bs.Search.BiddingStrategyType).toBe("HIGHEST_POSITION");
+    expect(bs.Network.BiddingStrategyType).toBe("SERVING_OFF");
+  });
+
+  it("bidding_strategy omitted → rsya reconstruction produces WB_DAILY_BUDGET (fallback preserved)", () => {
+    const payload = buildCampaignPayload({
+      type: "rsya",
+      name: "test-rsya-fallback",
+      daily_budget_rub: 300,
+      bidding_strategy_type: "WB_DAILY_BUDGET",
+      // bidding_strategy intentionally omitted
+    });
+
+    const tc = extractTextCampaign(payload);
+    const bs = tc["BiddingStrategy"] as Record<string, Record<string, unknown>>;
+
+    // Old reconstruction path: WB_DAILY_BUDGET on Network
+    expect(bs["Network"]["BiddingStrategyType"]).toBe("WB_DAILY_BUDGET");
+    expect(bs["Search"]["BiddingStrategyType"]).toBe("SERVING_OFF");
+  });
+
+  it("bidding_strategy omitted → search reconstruction produces HIGHEST_POSITION (fallback preserved)", () => {
+    const payload = buildCampaignPayload({
+      type: "search",
+      name: "test-search-fallback",
+      daily_budget_rub: 300,
+      bidding_strategy_type: "HIGHEST_POSITION",
+      // bidding_strategy intentionally omitted
+    });
+
+    const tc = extractTextCampaign(payload);
+    const bs = tc["BiddingStrategy"] as Record<string, Record<string, unknown>>;
+
+    expect(bs["Search"]["BiddingStrategyType"]).toBe("HIGHEST_POSITION");
+    expect(bs["Network"]["BiddingStrategyType"]).toBe("SERVING_OFF");
   });
 });

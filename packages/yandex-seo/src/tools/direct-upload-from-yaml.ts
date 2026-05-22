@@ -181,6 +181,7 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
         tracking_params: tc?.TrackingParams,
         sitelinks_set: bundle.campaign.sitelinks_set,
         promo_extension: bundle.campaign.promo_extension,
+        bidding_strategy: tc?.BiddingStrategy as Record<string, unknown> | undefined,
       } as Parameters<typeof uploadCampaignBundle>[0]); // guardian: allow — Phase 3.5.D optional fields not in base type
 
       return {
@@ -238,6 +239,7 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
         tracking_params: tc?.TrackingParams,
         sitelinks_set: bundle.campaign.sitelinks_set,
         promo_extension: bundle.campaign.promo_extension,
+        bidding_strategy: tc?.BiddingStrategy as Record<string, unknown> | undefined,
       } as Parameters<typeof uploadCampaignBundle>[0]); // guardian: allow — Phase 3.5.D optional fields not in base type
 
       return {
@@ -431,6 +433,9 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
       image_hashes: context.image_hashes,
       sitelinks_set_id: context.sitelinks_set_id,
       callout_ids: context.callout_ids.length > 0 ? context.callout_ids : undefined,
+      // Pass the resolved bundle's BiddingStrategy verbatim to bypass reconstruction.
+      // Path: resolved.campaign.campaign.TextCampaign?.BiddingStrategy
+      bidding_strategy: resolvedTc?.BiddingStrategy as Record<string, unknown> | undefined,
     } as Parameters<typeof uploadCampaignBundle>[0]); // guardian: allow — Phase 3.5.D optional fields not in base type
 
     return {
