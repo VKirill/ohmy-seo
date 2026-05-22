@@ -233,7 +233,7 @@ function extractImageHash(data: unknown): string {
 }
 
 /** Pick an ad template for a given cluster intent + cluster_id. Falls back to first template or generates generic one. */
-function pickAdTemplate(
+export function pickAdTemplate(
   cluster_id: string,
   intent: string,
   templates: AdTemplate[] | undefined,
