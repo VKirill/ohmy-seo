@@ -98,6 +98,13 @@ export interface UploadCampaignBundleInput {
   canary_passed?: boolean;
   continuation_ack?: string;
 
+  /**
+   * When true, skip Campaigns.add if a campaign with the same Name already exists
+   * for this account; return the existing Id instead. Makes re-runs idempotent.
+   * Default: false (create unconditionally — existing behaviour).
+   */
+  dedupe_by_name?: boolean;
+
   // Phase 3.5.D extensions — all optional, backwards-compatible
   sitelinks_set?: {
     Sitelinks: Array<{ Title: string; Description?: string; Href: string }>;
@@ -298,6 +305,53 @@ export function resolveDailyBudgetMicros(input: Pick<UploadCampaignBundleInput, 
   return (input.daily_budget_rub ?? 0) * 1_000_000;
 }
 
+/**
+ * Find an existing campaign by name in a list of campaigns returned by the API.
+ * Returns the Id if found, undefined otherwise.
+ * Pure function — no side effects, easy to unit test.
+ */
+export function findExistingCampaignId(
+  existingCampaigns: Array<{ Id: number; Name: string }>,
+  name: string
+): number | undefined {
+  return existingCampaigns.find((c) => c.Name === name)?.Id;
+}
+
+/**
+ * Fetch all campaigns for the account (Id + Name only).
+ * Called once before processing clusters when dedupe_by_name=true.
+ * Returns empty array on any error (non-fatal — dedupe silently falls back to create).
+ */
+async function fetchExistingCampaigns(
+  account_label: string | undefined,
+  client_login: string | undefined
+): Promise<Array<{ Id: number; Name: string }>> {
+  try {
+    const result = await executeApiCall({
+      apiName: "direct",
+      endpoint: "/json/v5/campaigns",
+      method: "POST",
+      body: {
+        method: "get",
+        params: {
+          SelectionCriteria: {},
+          FieldNames: ["Id", "Name"],
+        },
+      },
+      account: account_label,
+      client_login,
+    });
+    if (!result.ok) return [];
+    const data = result.data as { result?: { Campaigns?: Array<{ Id?: number; Name?: string }> } };
+    return (data?.result?.Campaigns ?? [])
+      .filter((c): c is { Id: number; Name: string } =>
+        typeof c.Id === "number" && typeof c.Name === "string"
+      );
+  } catch {
+    return [];
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Stage 0 — dry-run plan
 // ---------------------------------------------------------------------------
@@ -409,6 +463,8 @@ interface ProcessState {
   campaign_id_by_name: Map<string, number>;
   // Image URL → hash map (upload once, reuse)
   image_hash_by_url: Map<string, string>;
+  // Pre-fetched existing campaigns for deduplication (populated once when dedupe_by_name=true)
+  existing_campaigns: Array<{ Id: number; Name: string }>;
 }
 
 interface ClusterProcessInput {
@@ -420,6 +476,72 @@ interface ClusterProcessInput {
   rsya_image_urls: string[];
   account_label: string | undefined;
   client_login: string | undefined;
+}
+
+interface CreateCampaignArgs {
+  cluster_id: string;
+  campaignName: string;
+  state: ProcessState;
+  ledger: Ledger;
+  input: UploadCampaignBundleInput;
+  account_label: string | undefined;
+  client_login: string | undefined;
+}
+
+/**
+ * Call Campaigns.add for a single campaign.
+ * Returns the new campaign Id on success, or undefined on error (error is pushed to state).
+ */
+async function doCreateCampaign(args: CreateCampaignArgs): Promise<number | undefined> {
+  const { cluster_id, campaignName, state, ledger, input, account_label, client_login } = args;
+  const campaignSig = `campaign:${campaignName}`;
+  const campaignPayload = buildCampaignPayload({
+    type: input.campaign_type,
+    name: campaignName,
+    // Pass micros / 1_000_000 so buildCampaignPayload's internal × 1_000_000 restores the exact micros value.
+    daily_budget_rub: resolveDailyBudgetMicros(input) / 1_000_000,
+    bidding_strategy_type: input.bidding_strategy_type,
+    counter_ids: input.metrika_counter_ids,
+  });
+
+  await ledger.writePending({ op: "campaign", signature: campaignSig, cluster_id });
+  state.attempted++;
+
+  const campResult = await executeApiCall({
+    apiName: "direct",
+    endpoint: "/json/v5/campaigns",
+    body: campaignPayload,
+    account: account_label,
+    client_login,
+  });
+
+  if (!campResult.ok) {
+    const errMsg = JSON.stringify(campResult.body);
+    await ledger.writeFailed(campaignSig, errMsg);
+    state.failed_count++;
+    state.errors.push({ cluster_id, step: "campaign_create", error: errMsg });
+    const body = campResult.body as { error?: { error_code?: number } };
+    if (body?.error?.error_code === 5004) {
+      throw new Error("Campaign limit reached (error_code 5004). Stopping pipeline.");
+    }
+    return undefined;
+  }
+
+  let campaign_id: number;
+  try {
+    campaign_id = extractId(campResult.data);
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    await ledger.writeFailed(campaignSig, errMsg);
+    state.failed_count++;
+    state.errors.push({ cluster_id, step: "campaign_create", error: errMsg });
+    return undefined;
+  }
+
+  await ledger.writeCommitted(campaignSig, campaign_id);
+  state.campaigns_created.push(campaign_id);
+  state.campaign_id_by_name.set(campaignName, campaign_id);
+  return campaign_id;
 }
 
 async function processCluster(opts: ClusterProcessInput): Promise<void> {
@@ -467,55 +589,27 @@ async function processCluster(opts: ClusterProcessInput): Promise<void> {
 
   if (state.campaign_id_by_name.has(campaignName)) {
     campaign_id = state.campaign_id_by_name.get(campaignName)!;
+  } else if (input.dedupe_by_name === true) {
+    // dedupe_by_name: existing campaigns fetched once before first cluster; reuse if name matches
+    const existingId = findExistingCampaignId(state.existing_campaigns, campaignName);
+    if (existingId !== undefined) {
+      console.log(`[DEDUPE] deduped: skip create, reuse Id=${existingId} for "${campaignName}"`); // guardian: allow
+      state.campaign_id_by_name.set(campaignName, existingId);
+      campaign_id = existingId;
+    } else {
+      // Name not found in existing — fall through to create
+      const created = await doCreateCampaign(
+        { cluster_id, campaignName, state, ledger, input, account_label, client_login }
+      );
+      if (created === undefined) return;
+      campaign_id = created;
+    }
   } else {
-    const campaignSig = `campaign:${campaignName}`;
-    const campaignPayload = buildCampaignPayload({
-      type: input.campaign_type,
-      name: campaignName,
-      // Pass micros / 1_000_000 so buildCampaignPayload's internal × 1_000_000 restores the exact micros value.
-      // resolveDailyBudgetMicros already returns raw micros (currency-agnostic).
-      daily_budget_rub: resolveDailyBudgetMicros(input) / 1_000_000,
-      bidding_strategy_type: input.bidding_strategy_type,
-      counter_ids: input.metrika_counter_ids,
-    });
-
-    await ledger.writePending({ op: "campaign", signature: campaignSig, cluster_id });
-    state.attempted++;
-
-    const campResult = await executeApiCall({
-      apiName: "direct",
-      endpoint: "/json/v5/campaigns",
-      body: campaignPayload,
-      account: account_label,
-      client_login,
-    });
-
-    if (!campResult.ok) {
-      const errMsg = JSON.stringify(campResult.body);
-      await ledger.writeFailed(campaignSig, errMsg);
-      state.failed_count++;
-      state.errors.push({ cluster_id, step: "campaign_create", error: errMsg });
-      // Check for campaign limit (error_code 5004)
-      const body = campResult.body as { error?: { error_code?: number } };
-      if (body?.error?.error_code === 5004) {
-        throw new Error("Campaign limit reached (error_code 5004). Stopping pipeline.");
-      }
-      return;
-    }
-
-    try {
-      campaign_id = extractId(campResult.data);
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      await ledger.writeFailed(campaignSig, errMsg);
-      state.failed_count++;
-      state.errors.push({ cluster_id, step: "campaign_create", error: errMsg });
-      return;
-    }
-
-    await ledger.writeCommitted(campaignSig, campaign_id);
-    state.campaigns_created.push(campaign_id);
-    state.campaign_id_by_name.set(campaignName, campaign_id);
+    const created = await doCreateCampaign(
+      { cluster_id, campaignName, state, ledger, input, account_label, client_login }
+    );
+    if (created === undefined) return;
+    campaign_id = created;
   }
 
   // ---- AdGroup create ----
@@ -788,6 +882,11 @@ async function stage1Canary(
   const ledgerPath = path.join(ledgerDir, `bundle-ledger-${planHash.slice(0, 12)}-${ts}.jsonl`);
   const ledger = await openLedger(ledgerPath);
 
+  // Pre-fetch existing campaigns once if dedupe_by_name is enabled
+  const existingCampaigns = input.dedupe_by_name === true
+    ? await fetchExistingCampaigns(input.account, undefined)
+    : [];
+
   const state: ProcessState = {
     campaigns_created: [],
     ad_groups_created: [],
@@ -799,6 +898,7 @@ async function stage1Canary(
     failed_count: 0,
     campaign_id_by_name: new Map(),
     image_hash_by_url: new Map(),
+    existing_campaigns: existingCampaigns,
   };
 
   const rsyaImageUrls = input.rsya_image_urls ?? [];
@@ -949,6 +1049,11 @@ async function stage2Continuation(
     );
   }
 
+  // Pre-fetch existing campaigns once if dedupe_by_name is enabled
+  const existingCampaignsStage2 = input.dedupe_by_name === true
+    ? await fetchExistingCampaigns(input.account, undefined)
+    : [];
+
   // Restore state from prior ledger entries
   const state: ProcessState = {
     campaigns_created: [],
@@ -961,6 +1066,7 @@ async function stage2Continuation(
     failed_count: 0,
     campaign_id_by_name: new Map(),
     image_hash_by_url: new Map(),
+    existing_campaigns: existingCampaignsStage2,
   };
 
   // Rebuild campaign_id_by_name from prior committed entries

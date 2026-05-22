@@ -225,6 +225,7 @@ export const TextCampaignSchema = z.object({
 
 export const CampaignSchema = z.object({
   upload_strategy: z.enum(["one-per-cluster", "single-campaign"]).optional().default("one-per-cluster"),
+  dedupe_by_name: z.boolean().optional().default(false),
   campaign: z.object({
     Name: z.string().min(1),
     Type: CampaignType,
