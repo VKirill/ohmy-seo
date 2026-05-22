@@ -2,7 +2,7 @@ import { z } from "zod";
 import { loadCampaignFolder, resolveRefs } from "../lib/yaml-loader.js";
 import { executeApiCall } from "../lib/api-gateway.js";
 import { buildSitelinksSetPayload, buildPromoExtensionPayload } from "../lib/payload-builder.js";
-import { uploadCampaignBundle } from "../lib/upload-pipeline.js";
+import { uploadCampaignBundle, type AdTemplate } from "../lib/upload-pipeline.js";
 import { runDirectUploadImage } from "./direct-upload-image.js";
 import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
 import type { AdSchema } from "../lib/yaml-schema.js";
@@ -58,6 +58,41 @@ function extractBiddingStrategy(
   return "HIGHEST_POSITION";
 }
 
+/** Build ad_templates from YAML groups so pickAdTemplate receives real ad texts. */
+export function extractAdTemplates(bundle: ReturnType<typeof loadCampaignFolder>): AdTemplate[] {
+  return bundle.groups.flatMap((g, gi) => {
+    const clusterId = g._meta?.cluster_id ?? g.group.Name.split("_")[0] ?? String(gi);
+    return g.ads
+      .filter((ad) => ad.Type === "TEXT_AD" || ad.Type === "TEXT_IMAGE_AD")
+      .map((ad, ai) => {
+        const title =
+          ad.Type === "TEXT_AD"
+            ? (ad.TextAd?.Title ?? "")
+            : (ad.TextImageAd?.Title ?? "");
+        const title2 =
+          ad.Type === "TEXT_AD"
+            ? ad.TextAd?.Title2
+            : ad.TextImageAd?.Title2;
+        const text =
+          ad.Type === "TEXT_AD"
+            ? (ad.TextAd?.Text ?? "")
+            : (ad.TextImageAd?.Text ?? "");
+        const href =
+          ad.Type === "TEXT_AD"
+            ? ad.TextAd?.Href
+            : ad.TextImageAd?.Href;
+        return {
+          variant_label: `${clusterId}-v${ai}`,
+          title,
+          title2,
+          text,
+          href,
+          cluster_filter: { cluster_id_pattern: `^${clusterId}$` },
+        } satisfies AdTemplate;
+      });
+  });
+}
+
 export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>) {
   try {
     const parsed = InputSchema.parse(input);
@@ -97,6 +132,7 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
 
     // 2. Dry run — compute plan without creating any dependencies
     if (parsed.dry_run) {
+      const ad_templates = extractAdTemplates(bundle);
       // uploadCampaignBundle accepts additional Phase 3.5.D fields via its loose input type
       const result = await uploadCampaignBundle({
         csv_path: csvPath,
@@ -110,6 +146,7 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
         metrika_goal_ids: goalIds,
         ads_per_group: adsPerGroup,
         ad_template_strategy: "agent-provided",
+        ad_templates,
         dry_run: true,
         canary_percent: 50,
         max_clusters: bundle.groups.length,
@@ -219,6 +256,7 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
     const resolvedTc = resolvedCamp.TextCampaign;
     const resolvedBiddingStrategy = extractBiddingStrategy(resolvedTc);
     const resolvedGoalIds = resolvedTc?.PriorityGoals?.Items?.map((g) => g.GoalId);
+    const ad_templates = extractAdTemplates(resolved);
 
     const pipelineResult = await uploadCampaignBundle({
       csv_path: csvPath,
@@ -232,6 +270,7 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
       metrika_goal_ids: resolvedGoalIds,
       ads_per_group: resolved.groups[0]?.ads.length ?? 1,
       ad_template_strategy: "agent-provided",
+      ad_templates,
       dry_run: false,
       canary_percent: 50,
       max_clusters: resolved.groups.length,

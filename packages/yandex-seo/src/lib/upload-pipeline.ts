@@ -39,6 +39,11 @@ export interface AdTemplate {
   title: string;
   title2?: string;
   text: string;
+  /**
+   * Landing URL for this ad. Optional — falls back to per-group / per-bundle site_url
+   * when omitted. Reaches the final Ads.add payload via payload-builder (TASK-4006 / F6).
+   */
+  href?: string;
   sitelinks?: Array<{ title: string; description?: string; href: string }>;
   callouts?: string[];
 }
