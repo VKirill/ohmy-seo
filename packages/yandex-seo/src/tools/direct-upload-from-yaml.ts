@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { loadCampaignFolder, resolveRefs } from "../lib/yaml-loader.js";
 import { executeApiCall } from "../lib/api-gateway.js";
-import { buildSitelinksSetPayload, buildPromoExtensionPayload } from "../lib/payload-builder.js";
+import { buildSitelinksSetPayload, buildPromoExtensionPayload, buildCalloutPayload } from "../lib/payload-builder.js";
 import { uploadCampaignBundle, type AdTemplate, type CampaignStrategy } from "../lib/upload-pipeline.js";
 import { runDirectUploadImage } from "./direct-upload-image.js";
 import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
@@ -194,8 +194,9 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
     const context: {
       sitelinks_set_id?: number;
       promo_extension_id?: number;
+      callout_ids: number[];
       image_hashes: Record<string, string>;
-    } = { image_hashes: {} };
+    } = { callout_ids: [], image_hashes: {} };
 
     // 3a. Sitelinks set
     if (bundle.campaign.sitelinks_set) {
@@ -232,7 +233,31 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
       }
     }
 
-    // 3c. Images
+    // 3c. Callouts (Уточнения) — per naming map §5.2: POST /json/v5/adextensions with type CALLOUT
+    //     IDs are wired at ad level via TextAd.AdExtensions.Items / TextImageAd.AdExtensions.Items
+    if (bundle.campaign.callouts && bundle.campaign.callouts.length > 0) {
+      const calloutResult = await executeApiCall({
+        apiName: "direct",
+        endpoint: "/json/v5/adextensions",
+        body: buildCalloutPayload({ callout_texts: bundle.campaign.callouts }),
+        account: parsed.account,
+      });
+      if (calloutResult.ok) {
+        const data = calloutResult.data as Record<string, unknown>; // guardian: allow — Direct API response is untyped JSON
+        const result = data?.["result"] as Record<string, unknown> | undefined;
+        const addResults = result?.["AddResults"] as Array<Record<string, unknown>> | undefined;
+        if (addResults) {
+          for (const item of addResults) {
+            const id = item?.["Id"];
+            if (typeof id === "number") {
+              context.callout_ids.push(id);
+            }
+          }
+        }
+      }
+    }
+
+    // 3d. Images
     if (bundle.campaign.images) {
       for (const [name, imgDef] of Object.entries(bundle.campaign.images)) {
         // imgDef shape: { source, url?, path?, base64? } — map to runDirectUploadImage input
@@ -296,6 +321,10 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
       tracking_params: resolvedTc?.TrackingParams,
       sitelinks_set: resolved.campaign.sitelinks_set,
       promo_extension: resolved.campaign.promo_extension,
+      // F6 wiring — pass pre-created IDs/hashes to the pipeline
+      image_hashes: context.image_hashes,
+      sitelinks_set_id: context.sitelinks_set_id,
+      callout_ids: context.callout_ids.length > 0 ? context.callout_ids : undefined,
     } as Parameters<typeof uploadCampaignBundle>[0]); // guardian: allow — Phase 3.5.D optional fields not in base type
 
     return {
@@ -306,6 +335,7 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
           context_created: {
             sitelinks_set_id: context.sitelinks_set_id,
             promo_extension_id: context.promo_extension_id,
+            callout_ids: context.callout_ids,
             images_uploaded: Object.keys(context.image_hashes),
           },
           pipeline_result: pipelineResult,

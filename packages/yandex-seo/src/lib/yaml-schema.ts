@@ -251,6 +251,13 @@ export const CampaignSchema = z.object({
   }),
   sitelinks_set: SitelinksSetSchema.optional(),
   promo_extension: PromoExtensionSchema.optional(),
+  /**
+   * Callouts (Уточнения) — ad extension texts attached to ads in this campaign.
+   * Each string ≤ 25 chars (API limit per §5.2 of naming map).
+   * Created via AdExtensions.add (CALLOUT type) before the pipeline runs; IDs
+   * are wired into TextAd.AdExtensions.Items / TextImageAd.AdExtensions.Items.
+   */
+  callouts: z.array(z.string().max(25)).optional(),
   images: z
     .record(
       z.string(),

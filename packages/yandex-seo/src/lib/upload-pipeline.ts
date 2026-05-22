@@ -105,6 +105,30 @@ export interface UploadCampaignBundleInput {
    */
   dedupe_by_name?: boolean;
 
+  // Phase 3.5.D F6 wiring — all optional, backwards-compatible
+
+  /**
+   * Map of image name → AdImageHash, pre-uploaded by direct-upload-from-yaml.ts.
+   * Used to resolve ${img.NAME} template refs in TEXT_IMAGE_AD payloads.
+   * When both image_hashes and rsya_image_urls are present, image_hashes takes
+   * precedence for YAML-driven ads (rsya_image_urls path is the legacy CSV path).
+   */
+  image_hashes?: Record<string, string>;
+
+  /**
+   * SitelinksSet ID created by direct-upload-from-yaml.ts before the pipeline runs.
+   * Wired into TextAd.SitelinksSetId and TextImageAd.SitelinksSetId at ad level
+   * (naming map §3.2/§3.3 — SitelinksSetId is per-ad, not per-campaign).
+   */
+  sitelinks_set_id?: number;
+
+  /**
+   * Callout AdExtension IDs created by direct-upload-from-yaml.ts before the pipeline
+   * runs. Wired into TextAd.AdExtensions.Items / TextImageAd.AdExtensions.Items
+   * (naming map §5.2 — callouts attach at ad level).
+   */
+  callout_ids?: number[];
+
   // Phase 3.5.D extensions — all optional, backwards-compatible
   sitelinks_set?: {
     Sitelinks: Array<{ Title: string; Description?: string; Href: string }>;
@@ -721,6 +745,8 @@ async function processCluster(opts: ClusterProcessInput): Promise<void> {
       title2: tmpl.title2,
       text: tmpl.text,
       href: input.site_url,
+      sitelinks_set_id: input.sitelinks_set_id,
+      ad_extensions: input.callout_ids,
     });
 
     await ledger.writePending({ op: "ad_tgo", signature: adSig, cluster_id, parent_id: ad_group_id });
@@ -755,45 +781,57 @@ async function processCluster(opts: ClusterProcessInput): Promise<void> {
     }
   }
 
-  // RSYA image ads
-  if (isRsya && rsya_image_urls.length > 0) {
-    // Round-robin image selection
-    const imageUrl = rsya_image_urls[state.ad_groups_created.length % rsya_image_urls.length];
+  // RSYA image ads — try image_hashes (YAML-driven) first, then rsya_image_urls (legacy CSV path)
+  const hasImageHashes = input.image_hashes && Object.keys(input.image_hashes).length > 0;
+  if (isRsya && (hasImageHashes || rsya_image_urls.length > 0)) {
+    let imageHash: string | undefined;
 
-    // Upload image once per URL (cache)
-    let imageHash = state.image_hash_by_url.get(imageUrl);
-    if (!imageHash) {
-      try {
-        const { base64, format } = await fetchImageAsBase64(imageUrl);
-        const imgSig = `image:${imageUrl.slice(0, 80)}`;
-        const imgPayload = buildImageUploadPayload({ base64, format });
+    if (hasImageHashes) {
+      // YAML-driven path: pick first available hash (they are pre-uploaded before pipeline runs)
+      const hashValues = Object.values(input.image_hashes!);
+      imageHash = hashValues[state.ad_groups_created.length % hashValues.length];
+      if (imageHash && !state.images_uploaded.includes(imageHash)) {
+        state.images_uploaded.push(imageHash);
+      }
+    } else {
+      // Legacy CSV path: upload image from URL on demand
+      const imageUrl = rsya_image_urls[state.ad_groups_created.length % rsya_image_urls.length];
 
-        await ledger.writePending({ op: "image", signature: imgSig, cluster_id });
-        state.attempted++;
+      // Upload image once per URL (cache)
+      imageHash = state.image_hash_by_url.get(imageUrl);
+      if (!imageHash) {
+        try {
+          const { base64, format } = await fetchImageAsBase64(imageUrl);
+          const imgSig = `image:${imageUrl.slice(0, 80)}`;
+          const imgPayload = buildImageUploadPayload({ base64, format });
 
-        const imgResult = await executeApiCall({
-          apiName: "direct",
-          endpoint: "/json/v5/adimages",
-          body: imgPayload,
-          account: account_label,
-          client_login,
-        });
+          await ledger.writePending({ op: "image", signature: imgSig, cluster_id });
+          state.attempted++;
 
-        if (!imgResult.ok) {
-          const errMsg = JSON.stringify(imgResult.body);
-          await ledger.writeFailed(imgSig, errMsg);
-          state.failed_count++;
-          // Continue with text-only ads per error matrix
-        } else {
-          imageHash = extractImageHash(imgResult.data);
-          await ledger.writeCommitted(imgSig, imageHash);
-          state.image_hash_by_url.set(imageUrl, imageHash);
-          state.images_uploaded.push(imageHash);
+          const imgResult = await executeApiCall({
+            apiName: "direct",
+            endpoint: "/json/v5/adimages",
+            body: imgPayload,
+            account: account_label,
+            client_login,
+          });
+
+          if (!imgResult.ok) {
+            const errMsg = JSON.stringify(imgResult.body);
+            await ledger.writeFailed(imgSig, errMsg);
+            state.failed_count++;
+            // Continue with text-only ads per error matrix
+          } else {
+            imageHash = extractImageHash(imgResult.data);
+            await ledger.writeCommitted(imgSig, imageHash);
+            state.image_hash_by_url.set(imageUrl, imageHash);
+            state.images_uploaded.push(imageHash);
+          }
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          state.errors.push({ cluster_id, step: "image_upload", error: errMsg });
+          // Fall through to text-only ads
         }
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        state.errors.push({ cluster_id, step: "image_upload", error: errMsg });
-        // Fall through to text-only ads
       }
     }
 
@@ -808,6 +846,8 @@ async function processCluster(opts: ClusterProcessInput): Promise<void> {
           title2: tmpl.title2,
           text: tmpl.text,
           href: input.site_url,
+          sitelinks_set_id: input.sitelinks_set_id,
+          ad_extensions: input.callout_ids,
         });
 
         await ledger.writePending({ op: "ad_rsya", signature: rsyaSig, cluster_id, parent_id: ad_group_id });

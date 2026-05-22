@@ -201,6 +201,10 @@ export function buildKeywordPayload(input: {
  *
  * No network-specific quirks beyond the standard TextAd contract.
  * Mobile is set to NO (Direct best practice for search TGO ads).
+ *
+ * Optional extension fields:
+ *   - sitelinks_set_id: wires SitelinksSetId into TextAd (ad-level per naming map §3.2)
+ *   - ad_extensions: wires AdExtensions.Items (callout IDs) into TextAd (ad-level per naming map §3.2)
  */
 export function buildAdTgoPayload(input: {
   ad_group_id: number;
@@ -209,6 +213,8 @@ export function buildAdTgoPayload(input: {
   text: string;
   href: string;
   display_url_path?: string;
+  sitelinks_set_id?: number;
+  ad_extensions?: number[];
 }): { method: "add"; params: { Ads: [unknown] } } {
   const textAd: Record<string, unknown> = {
     Title: input.title,
@@ -222,6 +228,12 @@ export function buildAdTgoPayload(input: {
   }
   if (input.display_url_path !== undefined) {
     textAd["DisplayUrlPath"] = input.display_url_path;
+  }
+  if (input.sitelinks_set_id !== undefined) {
+    textAd["SitelinksSetId"] = input.sitelinks_set_id;
+  }
+  if (input.ad_extensions && input.ad_extensions.length > 0) {
+    textAd["AdExtensions"] = { Items: input.ad_extensions };
   }
 
   return {
@@ -246,6 +258,10 @@ export function buildAdTgoPayload(input: {
  *
  * Uses TextImageAd type which requires an uploaded image hash.
  * No additional quirks beyond standard TextImageAd contract.
+ *
+ * Optional extension fields:
+ *   - sitelinks_set_id: wires SitelinksSetId into TextImageAd (ad-level per naming map §3.3)
+ *   - ad_extensions: wires AdExtensions.Items (callout IDs) into TextImageAd (ad-level per naming map §3.3)
  */
 export function buildAdRsyaPayload(input: {
   ad_group_id: number;
@@ -254,6 +270,8 @@ export function buildAdRsyaPayload(input: {
   title2?: string;
   text: string;
   href: string;
+  sitelinks_set_id?: number;
+  ad_extensions?: number[];
 }): { method: "add"; params: { Ads: [unknown] } } {
   const textImageAd: Record<string, unknown> = {
     AdImageHash: input.ad_image_hash,
@@ -264,6 +282,12 @@ export function buildAdRsyaPayload(input: {
 
   if (input.title2 !== undefined) {
     textImageAd["Title2"] = input.title2;
+  }
+  if (input.sitelinks_set_id !== undefined) {
+    textImageAd["SitelinksSetId"] = input.sitelinks_set_id;
+  }
+  if (input.ad_extensions && input.ad_extensions.length > 0) {
+    textImageAd["AdExtensions"] = { Items: input.ad_extensions };
   }
 
   return {
@@ -388,6 +412,30 @@ export function buildSitelinksSetPayload(input: {
   Sitelinks: Array<{ Title: string; Description?: string; Href: string }>;
 }): { method: "add"; params: { Sitelinks: typeof input.Sitelinks } } {
   return { method: "add", params: { Sitelinks: input.Sitelinks } };
+}
+
+// ---------------------------------------------------------------------------
+// 9a. Callout (Уточнение) create
+// ---------------------------------------------------------------------------
+
+/**
+ * Build an AdExtensions.add payload for one or more Callout extensions.
+ *
+ * Per naming-map §5.2:
+ *   Endpoint: POST /json/v5/adextensions (type: CALLOUT)
+ *   Each callout text ≤ 25 chars. IDs returned are wired via AdExtensions.Items on TextAd/TextImageAd.
+ */
+export function buildCalloutPayload(input: {
+  callout_texts: string[];
+}): { method: "add"; params: { AdExtensions: Array<{ Callout: { CalloutText: string } }> } } {
+  return {
+    method: "add",
+    params: {
+      AdExtensions: input.callout_texts.map((text) => ({
+        Callout: { CalloutText: text },
+      })),
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
