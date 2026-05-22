@@ -1104,13 +1104,11 @@ async function stage1Canary(
     };
   }
 
-  // Count must match what stage2Continuation will read from ledger (all committed entries including keywords + images).
-  const committedCount =
-    state.campaigns_created.length +
-    state.ad_groups_created.length +
-    state.keywords_added +
-    state.ads_created.length +
-    state.images_uploaded.length;
+  // Count committed ledger entries — must match what stage2Continuation will read from the same ledger.
+  // Read from ledger directly (not from in-memory state) so that pre-uploaded images passed via
+  // image_hashes (which are not written to the ledger) are excluded from the count.
+  const allLedgerEntries = await ledger.readAll();
+  const committedCount = allLedgerEntries.filter((e) => e.state === "committed").length;
   const expectedContinuationAck = `I-UNDERSTAND-CONTINUE-LIVE:${yandexLogin}:${planHash.slice(0, 12)}:${committedCount}`;
 
   console.log("\n=== CANARY PASSED ==="); // guardian: allow
