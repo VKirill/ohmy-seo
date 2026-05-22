@@ -132,7 +132,6 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
     // Build or use provided CSV path (required by uploadCampaignBundle)
     const csvPath = parsed.csv_path ?? await buildSyntheticCsv(bundle);
 
-    const dailyBudgetRub = Math.floor(camp.DailyBudget.Amount / 1_000_000);
     const regionIds = bundle.groups[0]?.group.RegionIds ?? [213];
     const biddingStrategyType = extractBiddingStrategy(tc);
     const counterIds = tc?.CounterIds?.Items;
@@ -149,7 +148,7 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
         campaign_strategy: campaignStrategy,
         campaign_type: "search",
         site_url: siteUrl,
-        daily_budget_rub: dailyBudgetRub,
+        daily_budget_amount: camp.DailyBudget.Amount,
         region_ids: regionIds,
         bidding_strategy_type: biddingStrategyType,
         metrika_counter_ids: counterIds,
@@ -274,7 +273,7 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
       campaign_strategy: campaignStrategy,
       campaign_type: "search",
       site_url: siteUrl,
-      daily_budget_rub: Math.floor(resolvedCamp.DailyBudget.Amount / 1_000_000),
+      daily_budget_amount: resolvedCamp.DailyBudget.Amount,
       region_ids: resolved.groups[0]?.group.RegionIds ?? [213],
       bidding_strategy_type: resolvedBiddingStrategy,
       metrika_counter_ids: resolvedTc?.CounterIds?.Items,

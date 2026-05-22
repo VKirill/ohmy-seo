@@ -64,7 +64,19 @@ export interface UploadCampaignBundleInput {
   campaign_strategy: CampaignStrategy;
   campaign_type: "search" | "rsya" | "rsya-only";
   site_url: string;
-  daily_budget_rub: number;
+  /**
+   * @deprecated Use `daily_budget_amount` instead (raw micros, currency-agnostic).
+   * When set, the pipeline multiplies by 1_000_000 to convert RUB to micros.
+   * Will be removed in the next minor release.
+   */
+  daily_budget_rub?: number;
+  /**
+   * Daily budget expressed in the account's native currency units × 10^6 (micros),
+   * exactly as returned by the Yandex Direct API (`DailyBudget.Amount`).
+   * Passed through to `buildCampaignPayload` as-is — no conversion applied.
+   * Preferred over the deprecated `daily_budget_rub` for non-RUB accounts.
+   */
+  daily_budget_amount?: number;
   region_ids: number[];
   bidding_strategy_type: "WB_DAILY_BUDGET" | "HIGHEST_POSITION" | "AVERAGE_CPC";
   metrika_counter_ids?: number[];
@@ -169,7 +181,8 @@ function computePlanHash(input: {
   campaign_strategy: CampaignStrategy;
   campaign_type: string;
   site_url: string;
-  daily_budget_rub: number;
+  /** Daily budget in micros (currency-agnostic). Use resolveDailyBudgetMicros() to compute. */
+  daily_budget_micros: number;
   region_ids: number[];
   bidding_strategy_type: string;
   metrika_counter_ids?: number[] | null;
@@ -187,7 +200,7 @@ function computePlanHash(input: {
     campaign_strategy: input.campaign_strategy,
     campaign_type: input.campaign_type,
     site_url: input.site_url,
-    daily_budget_rub: input.daily_budget_rub,
+    daily_budget_micros: input.daily_budget_micros,
     region_ids: [...input.region_ids].sort((a, b) => a - b),
     bidding_strategy_type: input.bidding_strategy_type,
     metrika_counter_ids: input.metrika_counter_ids ?? null,
@@ -272,6 +285,19 @@ function ensureDir(dirPath: string): void {
   }
 }
 
+/**
+ * Resolve daily budget in micros from the input.
+ * - If `daily_budget_amount` is provided, it is already in micros — use as-is.
+ * - Otherwise fall back to the deprecated `daily_budget_rub` multiplied by 1_000_000.
+ * Returns micros as a number ready to pass to the Direct API.
+ */
+export function resolveDailyBudgetMicros(input: Pick<UploadCampaignBundleInput, "daily_budget_amount" | "daily_budget_rub">): number {
+  if (input.daily_budget_amount !== undefined) {
+    return input.daily_budget_amount;
+  }
+  return (input.daily_budget_rub ?? 0) * 1_000_000;
+}
+
 // ---------------------------------------------------------------------------
 // Stage 0 — dry-run plan
 // ---------------------------------------------------------------------------
@@ -314,7 +340,7 @@ async function stage0DryRun(
     campaign_strategy: input.campaign_strategy,
     campaign_type: input.campaign_type,
     site_url: input.site_url,
-    daily_budget_rub: input.daily_budget_rub,
+    daily_budget_micros: resolveDailyBudgetMicros(input),
     region_ids: input.region_ids,
     bidding_strategy_type: input.bidding_strategy_type,
     metrika_counter_ids: input.metrika_counter_ids,
@@ -446,7 +472,9 @@ async function processCluster(opts: ClusterProcessInput): Promise<void> {
     const campaignPayload = buildCampaignPayload({
       type: input.campaign_type,
       name: campaignName,
-      daily_budget_rub: input.daily_budget_rub,
+      // Pass micros / 1_000_000 so buildCampaignPayload's internal × 1_000_000 restores the exact micros value.
+      // resolveDailyBudgetMicros already returns raw micros (currency-agnostic).
+      daily_budget_rub: resolveDailyBudgetMicros(input) / 1_000_000,
       bidding_strategy_type: input.bidding_strategy_type,
       counter_ids: input.metrika_counter_ids,
     });
@@ -1131,7 +1159,7 @@ export async function uploadCampaignBundle(
     campaign_strategy: input.campaign_strategy,
     campaign_type: input.campaign_type,
     site_url: input.site_url,
-    daily_budget_rub: input.daily_budget_rub,
+    daily_budget_micros: resolveDailyBudgetMicros(input),
     region_ids: input.region_ids,
     bidding_strategy_type: input.bidding_strategy_type,
     metrika_counter_ids: input.metrika_counter_ids,
