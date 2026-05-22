@@ -2,7 +2,7 @@ import { z } from "zod";
 import { loadCampaignFolder, resolveRefs } from "../lib/yaml-loader.js";
 import { executeApiCall } from "../lib/api-gateway.js";
 import { buildSitelinksSetPayload, buildPromoExtensionPayload } from "../lib/payload-builder.js";
-import { uploadCampaignBundle, type AdTemplate } from "../lib/upload-pipeline.js";
+import { uploadCampaignBundle, type AdTemplate, type CampaignStrategy } from "../lib/upload-pipeline.js";
 import { runDirectUploadImage } from "./direct-upload-image.js";
 import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
 import type { AdSchema } from "../lib/yaml-schema.js";
@@ -93,6 +93,15 @@ export function extractAdTemplates(bundle: ReturnType<typeof loadCampaignFolder>
   });
 }
 
+/** Resolve campaign_strategy from bundle upload_strategy field. */
+export function resolveCampaignStrategy(bundle: ReturnType<typeof loadCampaignFolder>): CampaignStrategy {
+  const uploadStrategy = bundle.campaign.upload_strategy ?? "one-per-cluster";
+  if (uploadStrategy === "single-campaign") {
+    return { mode: "single-campaign", campaign_name: bundle.campaign.campaign.Name };
+  }
+  return { mode: "one-per-cluster" };
+}
+
 export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>) {
   try {
     const parsed = InputSchema.parse(input);
@@ -133,10 +142,11 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
     // 2. Dry run — compute plan without creating any dependencies
     if (parsed.dry_run) {
       const ad_templates = extractAdTemplates(bundle);
+      const campaignStrategy = resolveCampaignStrategy(bundle);
       // uploadCampaignBundle accepts additional Phase 3.5.D fields via its loose input type
       const result = await uploadCampaignBundle({
         csv_path: csvPath,
-        campaign_strategy: { mode: "one-per-cluster" },
+        campaign_strategy: campaignStrategy,
         campaign_type: "search",
         site_url: siteUrl,
         daily_budget_rub: dailyBudgetRub,
@@ -257,10 +267,11 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
     const resolvedBiddingStrategy = extractBiddingStrategy(resolvedTc);
     const resolvedGoalIds = resolvedTc?.PriorityGoals?.Items?.map((g) => g.GoalId);
     const ad_templates = extractAdTemplates(resolved);
+    const campaignStrategy = resolveCampaignStrategy(resolved);
 
     const pipelineResult = await uploadCampaignBundle({
       csv_path: csvPath,
-      campaign_strategy: { mode: "one-per-cluster" },
+      campaign_strategy: campaignStrategy,
       campaign_type: "search",
       site_url: siteUrl,
       daily_budget_rub: Math.floor(resolvedCamp.DailyBudget.Amount / 1_000_000),
