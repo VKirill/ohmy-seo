@@ -1,11 +1,14 @@
 /**
- * wiring.test.ts — F6 payload wiring tests for AdImageHash, SitelinkSetId, Callouts.
+ * wiring.test.ts — F6 payload wiring tests for AdImageHash, SitelinkSetId, Callouts,
+ * and ResponsiveAd v501 schema.
  *
  * Covers acceptance criteria:
  *   - AdImageHash: TEXT_IMAGE_AD payload has AdImageHash when image_hashes provided
  *   - SitelinkSetId (singular): wired INSIDE TextAd/TextImageAd (not at Ad level) — verified live
  *   - Callouts: AdExtensions.Items wired into TextAd and TextImageAd from callout_ids
  *   - buildCalloutPayload: builds correct AdExtensions.add body
+ *   - buildResponsiveAdPayload: proven v501 schema — Titles/Texts/Href/AdImageHashes/
+ *     SitelinkSetId/AdExtensionIds (no Hrefs[], no ImageHashes, no AdExtensions{Items})
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -20,6 +23,7 @@ import {
   buildAdTgoPayload,
   buildAdRsyaPayload,
   buildCalloutPayload,
+  buildResponsiveAdPayload,
 } from "../src/lib/payload-builder.js";
 
 // ---------------------------------------------------------------------------
@@ -264,5 +268,114 @@ describe("buildAdRsyaPayload — combined AdImageHash + SitelinkSetId + AdExtens
     expect(ad["SitelinkSetId"]).toBeUndefined();
     expect(ad["SitelinksSetId"]).toBeUndefined();
     expect(textImageAd["SitelinksSetId"]).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ResponsiveAd v501 schema — proven live schema tests
+// ---------------------------------------------------------------------------
+
+describe("buildResponsiveAdPayload — v501 proven schema", () => {
+  it("produces correct field names: Titles, Texts, Href (singular), AdImageHashes", () => {
+    const payload = buildResponsiveAdPayload({
+      ad_group_id: 100,
+      Titles: ["Заголовок один"],
+      Texts: ["Текст объявления"],
+      Href: "https://example.com",
+      AdImageHashes: ["hash_a", "hash_b"],
+    });
+    const ad = payload.params.Ads[0] as Record<string, unknown>;
+    const responsiveAd = ad["ResponsiveAd"] as Record<string, unknown>;
+
+    // Correct fields must be present
+    expect(responsiveAd["Titles"]).toEqual(["Заголовок один"]);
+    expect(responsiveAd["Texts"]).toEqual(["Текст объявления"]);
+    expect(responsiveAd["Href"]).toBe("https://example.com");
+    expect(responsiveAd["AdImageHashes"]).toEqual(["hash_a", "hash_b"]);
+
+    // Wrong field names from old schema must NOT be present
+    expect(responsiveAd["Hrefs"]).toBeUndefined();
+    expect(responsiveAd["ImageHashes"]).toBeUndefined();
+    expect(responsiveAd["AdImageHash"]).toBeUndefined();
+    expect(responsiveAd["Title2s"]).toBeUndefined();
+  });
+
+  it("wires AdExtensionIds as direct array (NOT AdExtensions:{Items})", () => {
+    const payload = buildResponsiveAdPayload({
+      ad_group_id: 100,
+      Titles: ["Заголовок"],
+      Texts: ["Текст"],
+      Href: "https://example.com",
+      AdExtensionIds: [501, 502, 503],
+    });
+    const responsiveAd = (payload.params.Ads[0] as Record<string, unknown>)["ResponsiveAd"] as Record<string, unknown>;
+
+    // Must be a direct array, NOT {Items: [...]}
+    expect(responsiveAd["AdExtensionIds"]).toEqual([501, 502, 503]);
+    expect(responsiveAd["AdExtensions"]).toBeUndefined();
+  });
+
+  it("wires SitelinkSetId as singular number inside ResponsiveAd", () => {
+    const payload = buildResponsiveAdPayload({
+      ad_group_id: 100,
+      Titles: ["Заголовок"],
+      Texts: ["Текст"],
+      Href: "https://example.com",
+      SitelinkSetId: 77,
+    });
+    const responsiveAd = (payload.params.Ads[0] as Record<string, unknown>)["ResponsiveAd"] as Record<string, unknown>;
+
+    expect(responsiveAd["SitelinkSetId"]).toBe(77);
+    // Must NOT use plural form
+    expect(responsiveAd["SitelinksSetId"]).toBeUndefined();
+  });
+
+  it("slices AdImageHashes to max 5", () => {
+    const hashes = ["h1", "h2", "h3", "h4", "h5", "h6", "h7"];
+    const payload = buildResponsiveAdPayload({
+      ad_group_id: 100,
+      Titles: ["Заголовок"],
+      Texts: ["Текст"],
+      Href: "https://example.com",
+      AdImageHashes: hashes,
+    });
+    const responsiveAd = (payload.params.Ads[0] as Record<string, unknown>)["ResponsiveAd"] as Record<string, unknown>;
+    expect((responsiveAd["AdImageHashes"] as string[]).length).toBe(5);
+  });
+
+  it("omits AdImageHashes when not provided", () => {
+    const payload = buildResponsiveAdPayload({
+      ad_group_id: 100,
+      Titles: ["Заголовок"],
+      Texts: ["Текст"],
+      Href: "https://example.com",
+    });
+    const responsiveAd = (payload.params.Ads[0] as Record<string, unknown>)["ResponsiveAd"] as Record<string, unknown>;
+    expect(responsiveAd["AdImageHashes"]).toBeUndefined();
+  });
+
+  it("omits optional fields when not provided", () => {
+    const payload = buildResponsiveAdPayload({
+      ad_group_id: 100,
+      Titles: ["Заголовок"],
+      Texts: ["Текст"],
+      Href: "https://example.com",
+    });
+    const responsiveAd = (payload.params.Ads[0] as Record<string, unknown>)["ResponsiveAd"] as Record<string, unknown>;
+    expect(responsiveAd["SitelinkSetId"]).toBeUndefined();
+    expect(responsiveAd["AdExtensionIds"]).toBeUndefined();
+    expect(responsiveAd["VideoHashes"]).toBeUndefined();
+  });
+
+  it("method is 'add' and AdGroupId is set correctly", () => {
+    const payload = buildResponsiveAdPayload({
+      ad_group_id: 999,
+      Titles: ["Заголовок"],
+      Texts: ["Текст"],
+      Href: "https://example.com",
+    });
+    expect(payload.method).toBe("add");
+    const ad = payload.params.Ads[0] as Record<string, unknown>;
+    expect(ad["AdGroupId"]).toBe(999);
   });
 });

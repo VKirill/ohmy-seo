@@ -475,33 +475,47 @@ export function buildPromoExtensionPayload(input: {
 // ---------------------------------------------------------------------------
 
 /**
- * Build an Ads.add payload for a ResponsiveAd (smart/adaptive banner).
+ * Build an Ads.add payload for a ResponsiveAd — РСЯ smart ad, v501 endpoint only, verified live.
  *
- * ResponsiveAd requires at minimum Titles, Texts, and Hrefs arrays.
- * Optional image/video hashes and sitelinks can be attached.
+ * MUST be posted to /json/v501/ads (NOT /json/v5/ads — v5 returns error 3500).
+ * Proven-correct schema (live-verified):
+ *   - Titles: string[]        — required, 1-7 items
+ *   - Texts: string[]         — required, 1-3 items
+ *   - Href: string            — singular URL (NOT Hrefs array)
+ *   - AdImageHashes: string[] — required when images used, 1-5 items
+ *                              (NOT ImageHashes, NOT AdImageHash)
+ *   - SitelinkSetId: number   — optional, singular
+ *   - AdExtensionIds: number[]— optional, array of IDs directly
+ *                              (NOT AdExtensions:{Items})
+ *   - No Title2s (not in ResponsiveAd spec)
  */
 export function buildResponsiveAdPayload(input: {
   ad_group_id: number;
   Titles: string[];
-  Title2s?: string[];
   Texts: string[];
-  Hrefs: string[];
-  ImageHashes?: string[];
+  Href: string;
+  AdImageHashes?: string[];
   VideoHashes?: string[];
-  SitelinksSetId?: number;
-  AdExtensions?: { Items: number[] };
+  SitelinkSetId?: number;
+  AdExtensionIds?: number[];
 }): { method: "add"; params: { Ads: Array<unknown> } } {
   const responsiveAd: Record<string, unknown> = {
     Titles: input.Titles,
     Texts: input.Texts,
-    Hrefs: input.Hrefs,
+    Href: input.Href,
   };
-  if (input.Title2s) responsiveAd["Title2s"] = input.Title2s;
-  if (input.ImageHashes) responsiveAd["ImageHashes"] = input.ImageHashes;
-  if (input.VideoHashes) responsiveAd["VideoHashes"] = input.VideoHashes;
-  // SitelinkSetId (singular) — renamed for API consistency; ResponsiveAd placement unverified live
-  if (input.SitelinksSetId) responsiveAd["SitelinkSetId"] = input.SitelinksSetId;
-  if (input.AdExtensions) responsiveAd["AdExtensions"] = input.AdExtensions;
+  if (input.AdImageHashes && input.AdImageHashes.length > 0) {
+    responsiveAd["AdImageHashes"] = input.AdImageHashes.slice(0, 5);
+  }
+  if (input.VideoHashes && input.VideoHashes.length > 0) {
+    responsiveAd["VideoHashes"] = input.VideoHashes;
+  }
+  if (input.SitelinkSetId !== undefined) {
+    responsiveAd["SitelinkSetId"] = input.SitelinkSetId;
+  }
+  if (input.AdExtensionIds && input.AdExtensionIds.length > 0) {
+    responsiveAd["AdExtensionIds"] = input.AdExtensionIds;
+  }
 
   return {
     method: "add",
