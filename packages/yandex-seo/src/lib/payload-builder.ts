@@ -203,7 +203,7 @@ export function buildKeywordPayload(input: {
  * Mobile is set to NO (Direct best practice for search TGO ads).
  *
  * Optional extension fields:
- *   - sitelinks_set_id: wires SitelinksSetId at the Ad object level (sibling of TextAd) per Direct v5 API
+ *   - sitelinks_set_id: wires SitelinkSetId (singular) inside TextAd per Direct v5 API — verified live
  *   - ad_extensions: wires AdExtensions.Items (callout IDs) into TextAd (ad-level per naming map §3.2)
  */
 export function buildAdTgoPayload(input: {
@@ -229,6 +229,10 @@ export function buildAdTgoPayload(input: {
   if (input.display_url_path !== undefined) {
     textAd["DisplayUrlPath"] = input.display_url_path;
   }
+  // SitelinkSetId (singular) inside TextAd per Direct v5 API — verified live
+  if (input.sitelinks_set_id !== undefined) {
+    textAd["SitelinkSetId"] = input.sitelinks_set_id;
+  }
   if (input.ad_extensions && input.ad_extensions.length > 0) {
     textAd["AdExtensions"] = { Items: input.ad_extensions };
   }
@@ -237,9 +241,6 @@ export function buildAdTgoPayload(input: {
     AdGroupId: input.ad_group_id,
     TextAd: textAd,
   };
-  if (input.sitelinks_set_id !== undefined) {
-    ad["SitelinksSetId"] = input.sitelinks_set_id; // Ad-level sibling of TextAd, per Direct v5
-  }
 
   return {
     method: "add",
@@ -260,7 +261,7 @@ export function buildAdTgoPayload(input: {
  * No additional quirks beyond standard TextImageAd contract.
  *
  * Optional extension fields:
- *   - sitelinks_set_id: wires SitelinksSetId at the Ad object level (sibling of TextImageAd) per Direct v5 API
+ *   - sitelinks_set_id: wires SitelinkSetId (singular) inside TextImageAd per Direct v5 API — verified live
  *   - ad_extensions: wires AdExtensions.Items (callout IDs) into TextImageAd (ad-level per naming map §3.3)
  */
 export function buildAdRsyaPayload(input: {
@@ -283,6 +284,10 @@ export function buildAdRsyaPayload(input: {
   if (input.title2 !== undefined) {
     textImageAd["Title2"] = input.title2;
   }
+  // SitelinkSetId (singular) inside TextImageAd per Direct v5 API — verified live
+  if (input.sitelinks_set_id !== undefined) {
+    textImageAd["SitelinkSetId"] = input.sitelinks_set_id;
+  }
   if (input.ad_extensions && input.ad_extensions.length > 0) {
     textImageAd["AdExtensions"] = { Items: input.ad_extensions };
   }
@@ -291,9 +296,6 @@ export function buildAdRsyaPayload(input: {
     AdGroupId: input.ad_group_id,
     TextImageAd: textImageAd,
   };
-  if (input.sitelinks_set_id !== undefined) {
-    ad["SitelinksSetId"] = input.sitelinks_set_id; // Ad-level sibling of TextImageAd, per Direct v5
-  }
 
   return {
     method: "add",
@@ -497,7 +499,8 @@ export function buildResponsiveAdPayload(input: {
   if (input.Title2s) responsiveAd["Title2s"] = input.Title2s;
   if (input.ImageHashes) responsiveAd["ImageHashes"] = input.ImageHashes;
   if (input.VideoHashes) responsiveAd["VideoHashes"] = input.VideoHashes;
-  if (input.SitelinksSetId) responsiveAd["SitelinksSetId"] = input.SitelinksSetId;
+  // SitelinkSetId (singular) — renamed for API consistency; ResponsiveAd placement unverified live
+  if (input.SitelinksSetId) responsiveAd["SitelinkSetId"] = input.SitelinksSetId;
   if (input.AdExtensions) responsiveAd["AdExtensions"] = input.AdExtensions;
 
   return {

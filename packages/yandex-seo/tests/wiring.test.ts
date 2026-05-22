@@ -1,9 +1,9 @@
 /**
- * wiring.test.ts — F6 payload wiring tests for AdImageHash, SitelinksSetId, Callouts.
+ * wiring.test.ts — F6 payload wiring tests for AdImageHash, SitelinkSetId, Callouts.
  *
  * Covers acceptance criteria:
  *   - AdImageHash: TEXT_IMAGE_AD payload has AdImageHash when image_hashes provided
- *   - SitelinksSetId: reaches TextAd and TextImageAd at ad level (per naming map §3.2/§3.3)
+ *   - SitelinkSetId (singular): wired INSIDE TextAd/TextImageAd (not at Ad level) — verified live
  *   - Callouts: AdExtensions.Items wired into TextAd and TextImageAd from callout_ids
  *   - buildCalloutPayload: builds correct AdExtensions.add body
  */
@@ -55,11 +55,11 @@ describe("buildAdRsyaPayload — AdImageHash wiring", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Part (b) — SitelinksSetId at ad level
+// Part (b) — SitelinkSetId (singular) inside TextAd/TextImageAd — verified live
 // ---------------------------------------------------------------------------
 
-describe("buildAdTgoPayload — SitelinksSetId wiring (Ad-level sibling of TextAd, naming map §3.2)", () => {
-  it("includes SitelinksSetId at Ad level (not inside TextAd) when sitelinks_set_id is provided", () => {
+describe("buildAdTgoPayload — SitelinkSetId wiring (singular, inside TextAd per Direct v5 API)", () => {
+  it("includes SitelinkSetId inside TextAd (not at Ad level) when sitelinks_set_id is provided", () => {
     const payload = buildAdTgoPayload({
       ad_group_id: 10,
       title: "Заголовок",
@@ -69,11 +69,15 @@ describe("buildAdTgoPayload — SitelinksSetId wiring (Ad-level sibling of TextA
     });
     const ad = payload.params.Ads[0] as Record<string, unknown>;
     const textAd = ad["TextAd"] as Record<string, unknown>;
-    expect(ad["SitelinksSetId"]).toBe(42);
+    // SitelinkSetId (singular) must be INSIDE TextAd
+    expect(textAd["SitelinkSetId"]).toBe(42);
+    // Must NOT appear at Ad level or with plural spelling
+    expect(ad["SitelinkSetId"]).toBeUndefined();
+    expect(ad["SitelinksSetId"]).toBeUndefined();
     expect(textAd["SitelinksSetId"]).toBeUndefined();
   });
 
-  it("omits SitelinksSetId from Ad when not provided", () => {
+  it("omits SitelinkSetId from TextAd when not provided", () => {
     const payload = buildAdTgoPayload({
       ad_group_id: 10,
       title: "Заголовок",
@@ -82,11 +86,13 @@ describe("buildAdTgoPayload — SitelinksSetId wiring (Ad-level sibling of TextA
     });
     const ad = payload.params.Ads[0] as Record<string, unknown>;
     const textAd = ad["TextAd"] as Record<string, unknown>;
+    expect(ad["SitelinkSetId"]).toBeUndefined();
     expect(ad["SitelinksSetId"]).toBeUndefined();
+    expect(textAd["SitelinkSetId"]).toBeUndefined();
     expect(textAd["SitelinksSetId"]).toBeUndefined();
   });
 
-  it("wires SitelinksSetId with correct value 555", () => {
+  it("wires SitelinkSetId (singular) inside TextAd with correct value 555", () => {
     const payload = buildAdTgoPayload({
       ad_group_id: 10,
       title: "Заголовок",
@@ -95,13 +101,15 @@ describe("buildAdTgoPayload — SitelinksSetId wiring (Ad-level sibling of TextA
       sitelinks_set_id: 555,
     });
     const ad = payload.params.Ads[0] as Record<string, unknown>;
-    expect(ad["SitelinksSetId"]).toBe(555);
-    expect((ad["TextAd"] as Record<string, unknown>)["SitelinksSetId"]).toBeUndefined();
+    const textAd = ad["TextAd"] as Record<string, unknown>;
+    expect(textAd["SitelinkSetId"]).toBe(555);
+    expect(ad["SitelinkSetId"]).toBeUndefined();
+    expect(ad["SitelinksSetId"]).toBeUndefined();
   });
 });
 
-describe("buildAdRsyaPayload — SitelinksSetId wiring (Ad-level sibling of TextImageAd, naming map §3.3)", () => {
-  it("includes SitelinksSetId at Ad level (not inside TextImageAd) when sitelinks_set_id is provided", () => {
+describe("buildAdRsyaPayload — SitelinkSetId wiring (singular, inside TextImageAd per Direct v5 API)", () => {
+  it("includes SitelinkSetId inside TextImageAd (not at Ad level) when sitelinks_set_id is provided", () => {
     const payload = buildAdRsyaPayload({
       ad_group_id: 10,
       ad_image_hash: "somehash",
@@ -112,11 +120,15 @@ describe("buildAdRsyaPayload — SitelinksSetId wiring (Ad-level sibling of Text
     });
     const ad = payload.params.Ads[0] as Record<string, unknown>;
     const textImageAd = ad["TextImageAd"] as Record<string, unknown>;
-    expect(ad["SitelinksSetId"]).toBe(99);
+    // SitelinkSetId (singular) must be INSIDE TextImageAd
+    expect(textImageAd["SitelinkSetId"]).toBe(99);
+    // Must NOT appear at Ad level or with plural spelling
+    expect(ad["SitelinkSetId"]).toBeUndefined();
+    expect(ad["SitelinksSetId"]).toBeUndefined();
     expect(textImageAd["SitelinksSetId"]).toBeUndefined();
   });
 
-  it("omits SitelinksSetId from Ad when not provided", () => {
+  it("omits SitelinkSetId from TextImageAd when not provided", () => {
     const payload = buildAdRsyaPayload({
       ad_group_id: 10,
       ad_image_hash: "somehash",
@@ -126,11 +138,13 @@ describe("buildAdRsyaPayload — SitelinksSetId wiring (Ad-level sibling of Text
     });
     const ad = payload.params.Ads[0] as Record<string, unknown>;
     const textImageAd = ad["TextImageAd"] as Record<string, unknown>;
+    expect(ad["SitelinkSetId"]).toBeUndefined();
     expect(ad["SitelinksSetId"]).toBeUndefined();
+    expect(textImageAd["SitelinkSetId"]).toBeUndefined();
     expect(textImageAd["SitelinksSetId"]).toBeUndefined();
   });
 
-  it("wires SitelinksSetId with correct value 555", () => {
+  it("wires SitelinkSetId (singular) inside TextImageAd with correct value 555", () => {
     const payload = buildAdRsyaPayload({
       ad_group_id: 10,
       ad_image_hash: "somehash",
@@ -140,8 +154,10 @@ describe("buildAdRsyaPayload — SitelinksSetId wiring (Ad-level sibling of Text
       sitelinks_set_id: 555,
     });
     const ad = payload.params.Ads[0] as Record<string, unknown>;
-    expect(ad["SitelinksSetId"]).toBe(555);
-    expect((ad["TextImageAd"] as Record<string, unknown>)["SitelinksSetId"]).toBeUndefined();
+    const textImageAd = ad["TextImageAd"] as Record<string, unknown>;
+    expect(textImageAd["SitelinkSetId"]).toBe(555);
+    expect(ad["SitelinkSetId"]).toBeUndefined();
+    expect(ad["SitelinksSetId"]).toBeUndefined();
   });
 });
 
@@ -227,8 +243,8 @@ describe("buildAdRsyaPayload — AdExtensions (callout IDs) wiring", () => {
 // Combined — all 3 fields in one TextImageAd payload
 // ---------------------------------------------------------------------------
 
-describe("buildAdRsyaPayload — combined AdImageHash + SitelinksSetId + AdExtensions", () => {
-  it("wires AdImageHash + AdExtensions into TextImageAd, SitelinksSetId at Ad level", () => {
+describe("buildAdRsyaPayload — combined AdImageHash + SitelinkSetId + AdExtensions", () => {
+  it("wires AdImageHash + SitelinkSetId (singular) + AdExtensions all inside TextImageAd", () => {
     const payload = buildAdRsyaPayload({
       ad_group_id: 7,
       ad_image_hash: "fullhash_xyz",
@@ -242,7 +258,11 @@ describe("buildAdRsyaPayload — combined AdImageHash + SitelinksSetId + AdExten
     const textImageAd = ad["TextImageAd"] as Record<string, unknown>;
     expect(textImageAd["AdImageHash"]).toBe("fullhash_xyz");
     expect(textImageAd["AdExtensions"]).toEqual({ Items: [301, 302] });
-    expect(ad["SitelinksSetId"]).toBe(55);
+    // SitelinkSetId (singular) is INSIDE TextImageAd — verified live
+    expect(textImageAd["SitelinkSetId"]).toBe(55);
+    // Must NOT appear at Ad level or with plural spelling
+    expect(ad["SitelinkSetId"]).toBeUndefined();
+    expect(ad["SitelinksSetId"]).toBeUndefined();
     expect(textImageAd["SitelinksSetId"]).toBeUndefined();
   });
 });

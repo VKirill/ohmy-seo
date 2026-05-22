@@ -770,11 +770,20 @@ async function processCluster(opts: ClusterProcessInput): Promise<void> {
         state.errors.push({ cluster_id, step: "ad_create", error: errMsg });
       }
     } else {
-      try {
-        const ad_id = extractId(adResult.data);
+      const addResults = (adResult.data as { result?: { AddResults?: Array<{ Id?: number; Errors?: Array<{ Code: number; Message: string }> }> } })
+        ?.result?.AddResults;
+      const firstResult = addResults?.[0];
+      if (firstResult?.Id !== undefined) {
+        const ad_id = firstResult.Id;
         await ledger.writeCommitted(adSig, ad_id, ad_group_id);
         state.ads_created.push(ad_id);
-      } catch {
+      } else if (firstResult?.Errors && firstResult.Errors.length > 0) {
+        // Surface item-level Direct API errors (HTTP 200 but item failed)
+        const itemErrMsg = JSON.stringify(firstResult.Errors);
+        await ledger.writeFailed(adSig, itemErrMsg);
+        state.failed_count++;
+        state.errors.push({ cluster_id, step: "ad_create", error: itemErrMsg });
+      } else {
         await ledger.writeFailed(adSig, "id_extraction_failed");
         state.failed_count++;
       }
@@ -866,11 +875,20 @@ async function processCluster(opts: ClusterProcessInput): Promise<void> {
           await ledger.writeFailed(rsyaSig, errMsg);
           state.failed_count++;
         } else {
-          try {
-            const ad_id = extractId(rsyaResult.data);
+          const rsyaAddResults = (rsyaResult.data as { result?: { AddResults?: Array<{ Id?: number; Errors?: Array<{ Code: number; Message: string }> }> } })
+            ?.result?.AddResults;
+          const rsyaFirstResult = rsyaAddResults?.[0];
+          if (rsyaFirstResult?.Id !== undefined) {
+            const ad_id = rsyaFirstResult.Id;
             await ledger.writeCommitted(rsyaSig, ad_id, ad_group_id);
             state.ads_created.push(ad_id);
-          } catch {
+          } else if (rsyaFirstResult?.Errors && rsyaFirstResult.Errors.length > 0) {
+            // Surface item-level Direct API errors (HTTP 200 but item failed)
+            const itemErrMsg = JSON.stringify(rsyaFirstResult.Errors);
+            await ledger.writeFailed(rsyaSig, itemErrMsg);
+            state.failed_count++;
+            state.errors.push({ cluster_id, step: "ad_rsya_create", error: itemErrMsg });
+          } else {
             await ledger.writeFailed(rsyaSig, "id_extraction_failed");
             state.failed_count++;
           }
