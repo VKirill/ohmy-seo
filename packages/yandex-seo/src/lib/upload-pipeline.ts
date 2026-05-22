@@ -213,8 +213,21 @@ function clusterIntent(rows: ClusterRow[]): string {
   return rows[0]?.intent ?? "informational";
 }
 
-/** Compute the plan hash over all deterministic inputs. */
-function computePlanHash(input: {
+/** Stable JSON serialization: sorts object keys recursively. */
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return "[" + value.map(stableStringify).join(",") + "]";
+  }
+  const keys = Object.keys(value as Record<string, unknown>).sort();
+  const pairs = keys.map((k) => JSON.stringify(k) + ":" + stableStringify((value as Record<string, unknown>)[k]));
+  return "{" + pairs.join(",") + "}";
+}
+
+/** Compute the plan hash over all deterministic inputs, including ad payload content. */
+export function computePlanHash(input: {
   csv_hash: string;
   account_login: string;
   campaign_strategy: CampaignStrategy;
@@ -232,6 +245,14 @@ function computePlanHash(input: {
   max_clusters: number;
   cluster_count: number;
   campaign_names: string[];
+  // Ad content fields — must match between dry_run and live to prevent content substitution
+  ad_templates?: AdTemplate[] | null;
+  bidding_strategy?: Record<string, unknown> | null;
+  sitelinks_set?: { Sitelinks: Array<{ Title: string; Description?: string; Href: string }> } | null;
+  promo_extension?: Record<string, unknown> | null;
+  callout_ids?: number[] | null;
+  image_hashes_keys?: string[] | null;
+  dedupe_by_name?: boolean;
 }): string {
   const planInput = {
     csv_hash: input.csv_hash,
@@ -250,8 +271,16 @@ function computePlanHash(input: {
     max_clusters: input.max_clusters,
     cluster_count: input.cluster_count,
     campaign_names: [...input.campaign_names].sort(),
+    // Ad content — bind to prevent dry_run approving one payload, live uploading another
+    ad_templates: input.ad_templates ?? null,
+    bidding_strategy: input.bidding_strategy ?? null,
+    sitelinks_set: input.sitelinks_set ?? null,
+    promo_extension: input.promo_extension ?? null,
+    callout_ids: input.callout_ids ? [...input.callout_ids].sort((a, b) => a - b) : null,
+    image_hashes_keys: input.image_hashes_keys ? [...input.image_hashes_keys].sort() : null,
+    dedupe_by_name: input.dedupe_by_name ?? false,
   };
-  return crypto.createHash("sha256").update(JSON.stringify(planInput)).digest("hex");
+  return crypto.createHash("sha256").update(stableStringify(planInput)).digest("hex");
 }
 
 /** Fetch image bytes from URL and return base64 + format. Throws if unusable. */
@@ -349,13 +378,25 @@ export function findExistingCampaignId(
   warnings?: Array<{ cluster_id: string; step: string; error: string }>,
   cluster_id?: string
 ): number | undefined {
-  const match = existingCampaigns.find((c) => c.Name === name);
-  if (!match) return undefined;
+  // Filter to non-ARCHIVED campaigns with the matching name
+  const nonArchivedMatches = existingCampaigns.filter(
+    (c) => c.Name === name && c.Status !== "ARCHIVED"
+  );
 
-  // ARCHIVED campaigns must not be reused — they are logically deleted
-  if (match.Status === "ARCHIVED") {
+  if (nonArchivedMatches.length === 0) {
     return undefined;
   }
+
+  // Fail-closed: if multiple non-ARCHIVED campaigns share the same name, refuse to guess
+  if (nonArchivedMatches.length > 1) {
+    throw new Error(
+      `Ambiguous dedupe: ${nonArchivedMatches.length} non-ARCHIVED campaigns named "${name}" ` +
+      `(IDs: ${nonArchivedMatches.map((c) => c.Id).join(", ")}). ` +
+      `Cannot safely deduplicate — resolve the duplicates in Yandex Direct UI first.`
+    );
+  }
+
+  const match = nonArchivedMatches[0];
 
   // Warn on unexpected states (anything other than the normal active/draft states)
   const NORMAL_STATES = new Set(["DRAFT", "ACTIVE", "SUSPENDED", "ENDED", "OFF", "CONVERTED"]);
@@ -488,6 +529,13 @@ async function stage0DryRun(
     max_clusters: maxClusters,
     cluster_count: filteredEntries.length,
     campaign_names: plannedNames,
+    ad_templates: input.ad_templates ?? null,
+    bidding_strategy: input.bidding_strategy ?? null,
+    sitelinks_set: input.sitelinks_set ?? null,
+    promo_extension: input.promo_extension ?? null,
+    callout_ids: input.callout_ids ?? null,
+    image_hashes_keys: input.image_hashes ? Object.keys(input.image_hashes) : null,
+    dedupe_by_name: input.dedupe_by_name ?? false,
   });
 
   const expectedAckLive = `I-UNDERSTAND-BUNDLE-LIVE:${yandexLogin}:${planHash.slice(0, 12)}`;
@@ -1449,6 +1497,13 @@ export async function uploadCampaignBundle(
     max_clusters: maxClusters,
     cluster_count: filteredEntries.length,
     campaign_names: plannedNames,
+    ad_templates: input.ad_templates ?? null,
+    bidding_strategy: input.bidding_strategy ?? null,
+    sitelinks_set: input.sitelinks_set ?? null,
+    promo_extension: input.promo_extension ?? null,
+    callout_ids: input.callout_ids ?? null,
+    image_hashes_keys: input.image_hashes ? Object.keys(input.image_hashes) : null,
+    dedupe_by_name: input.dedupe_by_name ?? false,
   });
 
   const expectedAckLive = `I-UNDERSTAND-BUNDLE-LIVE:${yandexLogin}:${planHash.slice(0, 12)}`;

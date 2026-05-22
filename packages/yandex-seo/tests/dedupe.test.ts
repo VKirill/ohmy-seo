@@ -192,8 +192,9 @@ describe("uploadCampaignBundle dedupe_by_name", () => {
       return { ok: false, status: 500, body: { error: "unexpected" } };
     });
 
-    // We need a valid plan_hash + acknowledge_live — compute them by doing a dry run first
-    const dryResult = await uploadCampaignBundle({ ...baseInput, dry_run: true });
+    // We need a valid plan_hash + acknowledge_live — compute them by doing a dry run first.
+    // dedupe_by_name must be the same in dry_run and live so the hash matches.
+    const dryResult = await uploadCampaignBundle({ ...baseInput, dry_run: true, dedupe_by_name: true });
     const planHash = dryResult.plan_hash!;
     const ackLive = dryResult.expected_ack_live!;
 
@@ -251,7 +252,7 @@ describe("uploadCampaignBundle dedupe_by_name", () => {
       return { ok: false, status: 500, body: { error: "unexpected" } };
     });
 
-    const dryResult = await uploadCampaignBundle({ ...baseInput, dry_run: true });
+    const dryResult = await uploadCampaignBundle({ ...baseInput, dry_run: true, dedupe_by_name: true });
     const result = await uploadCampaignBundle({
       ...baseInput,
       dedupe_by_name: true,
@@ -293,7 +294,7 @@ describe("uploadCampaignBundle dedupe_by_name", () => {
       return { ok: false, status: 500, body: { error: "unexpected" } };
     });
 
-    const dryResult = await uploadCampaignBundle({ ...baseInput, dry_run: true });
+    const dryResult = await uploadCampaignBundle({ ...baseInput, dry_run: true, dedupe_by_name: true });
     const result = await uploadCampaignBundle({
       ...baseInput,
       dedupe_by_name: true,
@@ -394,6 +395,43 @@ describe("findExistingCampaignId — Status filtering", () => {
       findExistingCampaignId([{ Id: 1, Name: "X", Status: status }], "X", warnings, "cl00");
       expect(warnings).toHaveLength(0);
     }
+  });
+
+  // --- Fail-closed on ambiguity ---
+
+  it("throws when multiple non-ARCHIVED campaigns share the same name", () => {
+    const campaigns = [
+      { Id: 10, Name: "Duplicate-Camp", Status: "ACTIVE" },
+      { Id: 20, Name: "Duplicate-Camp", Status: "DRAFT" },
+    ];
+    expect(() => findExistingCampaignId(campaigns, "Duplicate-Camp")).toThrow(
+      /Ambiguous dedupe/
+    );
+  });
+
+  it("throws listing all duplicate IDs in the error message", () => {
+    const campaigns = [
+      { Id: 11, Name: "Camp-X", Status: "ACTIVE" },
+      { Id: 22, Name: "Camp-X", Status: "SUSPENDED" },
+    ];
+    expect(() => findExistingCampaignId(campaigns, "Camp-X")).toThrow(/11/);
+    expect(() => findExistingCampaignId(campaigns, "Camp-X")).toThrow(/22/);
+  });
+
+  it("does NOT throw when one match is ARCHIVED — reachable non-archived count is 1", () => {
+    const campaigns = [
+      { Id: 30, Name: "Camp-Y", Status: "ARCHIVED" },
+      { Id: 31, Name: "Camp-Y", Status: "ACTIVE" },
+    ];
+    expect(findExistingCampaignId(campaigns, "Camp-Y")).toBe(31);
+  });
+
+  it("does NOT throw when all same-name campaigns are ARCHIVED (returns undefined)", () => {
+    const campaigns = [
+      { Id: 40, Name: "Camp-Z", Status: "ARCHIVED" },
+      { Id: 41, Name: "Camp-Z", Status: "ARCHIVED" },
+    ];
+    expect(findExistingCampaignId(campaigns, "Camp-Z")).toBeUndefined();
   });
 });
 

@@ -16,7 +16,7 @@ vi.mock("@ohmy-seo/mcp-core/errors", () => ({
 // payload-builder is NOT mocked — we test its real buildCampaignPayload
 import { buildCampaignPayload } from "../src/lib/payload-builder.js";
 import { resolveCampaignStrategy, resolveCampaignType } from "../src/tools/direct-upload-from-yaml.js";
-import { pickAdTemplate } from "../src/lib/upload-pipeline.js";
+import { pickAdTemplate, computePlanHash } from "../src/lib/upload-pipeline.js";
 
 /** Minimal bundle fixture factory. */
 function makeBundle(overrides: { upload_strategy?: string; campaignName?: string }) {
@@ -239,5 +239,98 @@ describe("buildCampaignPayload — bidding_strategy passthrough", () => {
 
     expect(bs["Search"]["BiddingStrategyType"]).toBe("HIGHEST_POSITION");
     expect(bs["Network"]["BiddingStrategyType"]).toBe("SERVING_OFF");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computePlanHash — content binding
+// ---------------------------------------------------------------------------
+
+/** Minimal base input for computePlanHash. */
+const basePlanInput = {
+  csv_hash: "abc123",
+  account_login: "test-login",
+  campaign_strategy: { mode: "one-per-cluster" as const },
+  campaign_type: "search",
+  site_url: "https://example.com",
+  daily_budget_micros: 300_000_000,
+  region_ids: [213],
+  bidding_strategy_type: "WB_DAILY_BUDGET",
+  rsya_image_urls: [],
+  ads_per_group: 3,
+  canary_percent: 10,
+  max_clusters: 50,
+  cluster_count: 5,
+  campaign_names: ["camp-a", "camp-b"],
+};
+
+describe("computePlanHash — determinism and content binding", () => {
+  it("same inputs produce the same hash", () => {
+    const h1 = computePlanHash({ ...basePlanInput });
+    const h2 = computePlanHash({ ...basePlanInput });
+    expect(h1).toBe(h2);
+  });
+
+  it("changing ad title produces a different hash", () => {
+    const h1 = computePlanHash({
+      ...basePlanInput,
+      ad_templates: [{ variant_label: "v0", title: "Original Title", text: "Text" }],
+    });
+    const h2 = computePlanHash({
+      ...basePlanInput,
+      ad_templates: [{ variant_label: "v0", title: "CHANGED Title", text: "Text" }],
+    });
+    expect(h1).not.toBe(h2);
+  });
+
+  it("changing bidding_strategy produces a different hash", () => {
+    const h1 = computePlanHash({
+      ...basePlanInput,
+      bidding_strategy: { Search: { BiddingStrategyType: "HIGHEST_POSITION" } },
+    });
+    const h2 = computePlanHash({
+      ...basePlanInput,
+      bidding_strategy: { Search: { BiddingStrategyType: "AVERAGE_CPC" } },
+    });
+    expect(h1).not.toBe(h2);
+  });
+
+  it("changing sitelinks_set produces a different hash", () => {
+    const h1 = computePlanHash({
+      ...basePlanInput,
+      sitelinks_set: { Sitelinks: [{ Title: "Link 1", Href: "https://example.com/1" }] },
+    });
+    const h2 = computePlanHash({
+      ...basePlanInput,
+      sitelinks_set: { Sitelinks: [{ Title: "Link CHANGED", Href: "https://example.com/1" }] },
+    });
+    expect(h1).not.toBe(h2);
+  });
+
+  it("changing callout_ids produces a different hash", () => {
+    const h1 = computePlanHash({ ...basePlanInput, callout_ids: [1, 2, 3] });
+    const h2 = computePlanHash({ ...basePlanInput, callout_ids: [1, 2, 99] });
+    expect(h1).not.toBe(h2);
+  });
+
+  it("changing image_hashes_keys produces a different hash", () => {
+    const h1 = computePlanHash({ ...basePlanInput, image_hashes_keys: ["img-a", "img-b"] });
+    const h2 = computePlanHash({ ...basePlanInput, image_hashes_keys: ["img-a", "img-DIFFERENT"] });
+    expect(h1).not.toBe(h2);
+  });
+
+  it("hash is stable regardless of ad_templates array key insertion order", () => {
+    const tmpl1 = { variant_label: "v0", title: "Title", text: "Text", href: "https://x.com", cluster_filter: { intent: "informational" } };
+    const h1 = computePlanHash({ ...basePlanInput, ad_templates: [tmpl1] });
+    // Reconstruct the template object with a different key insertion order
+    const tmpl2 = { cluster_filter: { intent: "informational" }, href: "https://x.com", text: "Text", title: "Title", variant_label: "v0" };
+    const h2 = computePlanHash({ ...basePlanInput, ad_templates: [tmpl2] });
+    expect(h1).toBe(h2);
+  });
+
+  it("null ad_templates and absent ad_templates produce the same hash", () => {
+    const h1 = computePlanHash({ ...basePlanInput, ad_templates: null });
+    const h2 = computePlanHash({ ...basePlanInput });
+    expect(h1).toBe(h2);
   });
 });
