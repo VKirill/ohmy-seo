@@ -744,7 +744,7 @@ async function processCluster(opts: ClusterProcessInput): Promise<void> {
       title: tmpl.title,
       title2: tmpl.title2,
       text: tmpl.text,
-      href: input.site_url,
+      href: tmpl.href ?? input.site_url,
       sitelinks_set_id: input.sitelinks_set_id,
       ad_extensions: input.callout_ids,
     });

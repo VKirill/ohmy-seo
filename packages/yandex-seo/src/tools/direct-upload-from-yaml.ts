@@ -93,6 +93,21 @@ export function extractAdTemplates(bundle: ReturnType<typeof loadCampaignFolder>
   });
 }
 
+/**
+ * Resolve campaign_type from the bundle's TextCampaign BiddingStrategy.
+ * Returns "rsya" when Network is active (non-SERVING_OFF) and Search is SERVING_OFF.
+ * Returns "search" otherwise.
+ */
+export function resolveCampaignType(bundle: ReturnType<typeof loadCampaignFolder>): "search" | "rsya" {
+  const bs = bundle.campaign.campaign.TextCampaign?.BiddingStrategy;
+  const networkType = bs?.Network?.BiddingStrategyType;
+  const searchType = bs?.Search?.BiddingStrategyType;
+  if (searchType === "SERVING_OFF" && networkType !== undefined && networkType !== "SERVING_OFF") {
+    return "rsya";
+  }
+  return "search";
+}
+
 /** Resolve campaign_strategy from bundle upload_strategy field. */
 export function resolveCampaignStrategy(bundle: ReturnType<typeof loadCampaignFolder>): CampaignStrategy {
   const uploadStrategy = bundle.campaign.upload_strategy ?? "one-per-cluster";
@@ -142,11 +157,12 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
     if (parsed.dry_run) {
       const ad_templates = extractAdTemplates(bundle);
       const campaignStrategy = resolveCampaignStrategy(bundle);
+      const campaignType = resolveCampaignType(bundle);
       // uploadCampaignBundle accepts additional Phase 3.5.D fields via its loose input type
       const result = await uploadCampaignBundle({
         csv_path: csvPath,
         campaign_strategy: campaignStrategy,
-        campaign_type: "search",
+        campaign_type: campaignType,
         site_url: siteUrl,
         daily_budget_amount: camp.DailyBudget.Amount,
         region_ids: regionIds,
@@ -294,10 +310,11 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
     const ad_templates = extractAdTemplates(resolved);
     const campaignStrategy = resolveCampaignStrategy(resolved);
 
+    const resolvedCampaignType = resolveCampaignType(resolved);
     const pipelineResult = await uploadCampaignBundle({
       csv_path: csvPath,
       campaign_strategy: campaignStrategy,
-      campaign_type: "search",
+      campaign_type: resolvedCampaignType,
       site_url: siteUrl,
       daily_budget_amount: resolvedCamp.DailyBudget.Amount,
       region_ids: resolved.groups[0]?.group.RegionIds ?? [213],
