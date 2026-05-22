@@ -205,14 +205,65 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
       };
     }
 
-    // 3. Live mode — create dependencies first, then run pipeline
+    // 3. Live mode — gate check first, then create dependencies, then run pipeline
+    //
+    // SECURITY INVARIANT: dependency creation (sitelinks/promo/callouts/images) MUST NOT
+    // happen unless the caller has explicitly confirmed with confirm=true AND provided a
+    // plan_hash. Without these, we return the dry-run plan so they can obtain plan_hash
+    // and construct the correct acknowledge_live string — no mutations occur.
+    if (parsed.confirm !== true || !parsed.plan_hash) {
+      // Return the plan preview (same as dry_run=true) without creating any dependencies.
+      const ad_templates = extractAdTemplates(bundle);
+      const campaignStrategy = resolveCampaignStrategy(bundle);
+      const campaignType = resolveCampaignType(bundle);
+      const planResult = await uploadCampaignBundle({
+        csv_path: csvPath,
+        campaign_strategy: campaignStrategy,
+        campaign_type: campaignType,
+        site_url: siteUrl,
+        daily_budget_amount: camp.DailyBudget.Amount,
+        region_ids: regionIds,
+        bidding_strategy_type: biddingStrategyType,
+        metrika_counter_ids: counterIds,
+        metrika_goal_ids: goalIds,
+        ads_per_group: adsPerGroup,
+        ad_template_strategy: "agent-provided",
+        ad_templates,
+        dry_run: true,
+        canary_percent: 50,
+        max_clusters: bundle.groups.length,
+        abort_on_error_rate: 0.3,
+        account: parsed.account,
+        dedupe_by_name: bundle.campaign.dedupe_by_name,
+        tracking_params: tc?.TrackingParams,
+        sitelinks_set: bundle.campaign.sitelinks_set,
+        promo_extension: bundle.campaign.promo_extension,
+      } as Parameters<typeof uploadCampaignBundle>[0]); // guardian: allow — Phase 3.5.D optional fields not in base type
+
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            stage: "plan_needed",
+            reason: !parsed.confirm
+              ? "confirm: true is required to run live"
+              : "plan_hash is required to run live — obtain it from this plan result",
+            yaml_validation: "OK",
+            pipeline_result: planResult,
+          }, null, 2),
+        }],
+      };
+    }
+
+    // confirm=true and plan_hash are present — safe to create dependencies.
 
     const context: {
       sitelinks_set_id?: number;
       promo_extension_id?: number;
       callout_ids: number[];
       image_hashes: Record<string, string>;
-    } = { callout_ids: [], image_hashes: {} };
+      dep_errors: string[];
+    } = { callout_ids: [], image_hashes: {}, dep_errors: [] };
 
     // 3a. Sitelinks set
     if (bundle.campaign.sitelinks_set) {
@@ -222,13 +273,25 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
         body: buildSitelinksSetPayload(bundle.campaign.sitelinks_set),
         account: parsed.account,
       });
-      if (sitelinksResult.ok) {
+      if (!sitelinksResult.ok) {
+        context.dep_errors.push(`sitelinks creation failed: HTTP error`);
+      } else {
         // Direct API returns nested result; shape is opaque at this layer
         const data = sitelinksResult.data as Record<string, unknown>; // guardian: allow — Direct API response is untyped JSON
         const result = data?.["result"] as Record<string, unknown> | undefined;
         const addResults = result?.["AddResults"] as Array<Record<string, unknown>> | undefined;
-        const id = addResults?.[0]?.["Id"];
-        context.sitelinks_set_id = typeof id === "number" ? id : undefined;
+        const firstItem = addResults?.[0];
+        const errors = firstItem?.["Errors"] as Array<Record<string, unknown>> | undefined;
+        if (errors && errors.length > 0) {
+          const msg = errors.map((e) => e?.["Message"] ?? JSON.stringify(e)).join("; ");
+          context.dep_errors.push(`sitelinks creation failed: ${msg}`);
+        } else {
+          const id = firstItem?.["Id"];
+          context.sitelinks_set_id = typeof id === "number" ? id : undefined;
+          if (context.sitelinks_set_id === undefined) {
+            context.dep_errors.push("sitelinks creation: no Id returned");
+          }
+        }
       }
     }
 
@@ -240,12 +303,24 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
         body: buildPromoExtensionPayload(bundle.campaign.promo_extension.AdExtension),
         account: parsed.account,
       });
-      if (promoResult.ok) {
+      if (!promoResult.ok) {
+        context.dep_errors.push(`promo extension creation failed: HTTP error`);
+      } else {
         const data = promoResult.data as Record<string, unknown>; // guardian: allow — Direct API response is untyped JSON
         const result = data?.["result"] as Record<string, unknown> | undefined;
         const addResults = result?.["AddResults"] as Array<Record<string, unknown>> | undefined;
-        const id = addResults?.[0]?.["Id"];
-        context.promo_extension_id = typeof id === "number" ? id : undefined;
+        const firstItem = addResults?.[0];
+        const errors = firstItem?.["Errors"] as Array<Record<string, unknown>> | undefined;
+        if (errors && errors.length > 0) {
+          const msg = errors.map((e) => e?.["Message"] ?? JSON.stringify(e)).join("; ");
+          context.dep_errors.push(`promo extension creation failed: ${msg}`);
+        } else {
+          const id = firstItem?.["Id"];
+          context.promo_extension_id = typeof id === "number" ? id : undefined;
+          if (context.promo_extension_id === undefined) {
+            context.dep_errors.push("promo extension creation: no Id returned");
+          }
+        }
       }
     }
 
@@ -258,15 +333,25 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
         body: buildCalloutPayload({ callout_texts: bundle.campaign.callouts }),
         account: parsed.account,
       });
-      if (calloutResult.ok) {
+      if (!calloutResult.ok) {
+        context.dep_errors.push(`callouts creation failed: HTTP error`);
+      } else {
         const data = calloutResult.data as Record<string, unknown>; // guardian: allow — Direct API response is untyped JSON
         const result = data?.["result"] as Record<string, unknown> | undefined;
         const addResults = result?.["AddResults"] as Array<Record<string, unknown>> | undefined;
         if (addResults) {
           for (const item of addResults) {
-            const id = item?.["Id"];
-            if (typeof id === "number") {
-              context.callout_ids.push(id);
+            const errors = item?.["Errors"] as Array<Record<string, unknown>> | undefined;
+            if (errors && errors.length > 0) {
+              const msg = errors.map((e) => e?.["Message"] ?? JSON.stringify(e)).join("; ");
+              context.dep_errors.push(`callout creation failed: ${msg}`);
+            } else {
+              const id = item?.["Id"];
+              if (typeof id === "number") {
+                context.callout_ids.push(id);
+              } else {
+                context.dep_errors.push("callout creation: item returned no Id");
+              }
             }
           }
         }
@@ -290,7 +375,11 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
           const hash = parsed_img?.["ad_image_hash"];
           if (typeof hash === "string") {
             context.image_hashes[name] = hash;
+          } else {
+            context.dep_errors.push(`image upload failed for "${name}": no ad_image_hash in response`);
           }
+        } else {
+          context.dep_errors.push(`image upload failed for "${name}": unexpected response shape`);
         }
       }
     }
@@ -355,6 +444,7 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
             callout_ids: context.callout_ids,
             images_uploaded: Object.keys(context.image_hashes),
           },
+          dep_errors: context.dep_errors.length > 0 ? context.dep_errors : undefined,
           pipeline_result: pipelineResult,
         }, null, 2),
       }],
