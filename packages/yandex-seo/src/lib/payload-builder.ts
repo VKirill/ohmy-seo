@@ -203,7 +203,7 @@ export function buildKeywordPayload(input: {
  * Mobile is set to NO (Direct best practice for search TGO ads).
  *
  * Optional extension fields:
- *   - sitelinks_set_id: wires SitelinksSetId into TextAd (ad-level per naming map §3.2)
+ *   - sitelinks_set_id: wires SitelinksSetId at the Ad object level (sibling of TextAd) per Direct v5 API
  *   - ad_extensions: wires AdExtensions.Items (callout IDs) into TextAd (ad-level per naming map §3.2)
  */
 export function buildAdTgoPayload(input: {
@@ -229,22 +229,22 @@ export function buildAdTgoPayload(input: {
   if (input.display_url_path !== undefined) {
     textAd["DisplayUrlPath"] = input.display_url_path;
   }
-  if (input.sitelinks_set_id !== undefined) {
-    textAd["SitelinksSetId"] = input.sitelinks_set_id;
-  }
   if (input.ad_extensions && input.ad_extensions.length > 0) {
     textAd["AdExtensions"] = { Items: input.ad_extensions };
+  }
+
+  const ad: Record<string, unknown> = {
+    AdGroupId: input.ad_group_id,
+    TextAd: textAd,
+  };
+  if (input.sitelinks_set_id !== undefined) {
+    ad["SitelinksSetId"] = input.sitelinks_set_id; // Ad-level sibling of TextAd, per Direct v5
   }
 
   return {
     method: "add",
     params: {
-      Ads: [
-        {
-          AdGroupId: input.ad_group_id,
-          TextAd: textAd,
-        },
-      ],
+      Ads: [ad],
     },
   };
 }
@@ -260,7 +260,7 @@ export function buildAdTgoPayload(input: {
  * No additional quirks beyond standard TextImageAd contract.
  *
  * Optional extension fields:
- *   - sitelinks_set_id: wires SitelinksSetId into TextImageAd (ad-level per naming map §3.3)
+ *   - sitelinks_set_id: wires SitelinksSetId at the Ad object level (sibling of TextImageAd) per Direct v5 API
  *   - ad_extensions: wires AdExtensions.Items (callout IDs) into TextImageAd (ad-level per naming map §3.3)
  */
 export function buildAdRsyaPayload(input: {
@@ -283,22 +283,22 @@ export function buildAdRsyaPayload(input: {
   if (input.title2 !== undefined) {
     textImageAd["Title2"] = input.title2;
   }
-  if (input.sitelinks_set_id !== undefined) {
-    textImageAd["SitelinksSetId"] = input.sitelinks_set_id;
-  }
   if (input.ad_extensions && input.ad_extensions.length > 0) {
     textImageAd["AdExtensions"] = { Items: input.ad_extensions };
+  }
+
+  const ad: Record<string, unknown> = {
+    AdGroupId: input.ad_group_id,
+    TextImageAd: textImageAd,
+  };
+  if (input.sitelinks_set_id !== undefined) {
+    ad["SitelinksSetId"] = input.sitelinks_set_id; // Ad-level sibling of TextImageAd, per Direct v5
   }
 
   return {
     method: "add",
     params: {
-      Ads: [
-        {
-          AdGroupId: input.ad_group_id,
-          TextImageAd: textImageAd,
-        },
-      ],
+      Ads: [ad],
     },
   };
 }
@@ -406,12 +406,15 @@ export function buildMetrikaUpdatePayload(input: {
 /**
  * Build a Sitelinks.add payload for Yandex Direct v5.
  *
+ * Direct v5 API requires sitelinks wrapped in a SitelinksSets array:
+ *   { method: "add", params: { SitelinksSets: [{ Sitelinks: [...] }] } }
+ *
  * Each sitelink requires at minimum a Title and Href; Description is optional.
  */
 export function buildSitelinksSetPayload(input: {
   Sitelinks: Array<{ Title: string; Description?: string; Href: string }>;
-}): { method: "add"; params: { Sitelinks: typeof input.Sitelinks } } {
-  return { method: "add", params: { Sitelinks: input.Sitelinks } };
+}): { method: "add"; params: { SitelinksSets: Array<{ Sitelinks: typeof input.Sitelinks }> } } {
+  return { method: "add", params: { SitelinksSets: [{ Sitelinks: input.Sitelinks }] } };
 }
 
 // ---------------------------------------------------------------------------

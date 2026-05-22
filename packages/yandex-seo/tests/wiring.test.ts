@@ -58,8 +58,8 @@ describe("buildAdRsyaPayload — AdImageHash wiring", () => {
 // Part (b) — SitelinksSetId at ad level
 // ---------------------------------------------------------------------------
 
-describe("buildAdTgoPayload — SitelinksSetId wiring (TextAd, naming map §3.2)", () => {
-  it("includes SitelinksSetId in TextAd when sitelinks_set_id is provided", () => {
+describe("buildAdTgoPayload — SitelinksSetId wiring (Ad-level sibling of TextAd, naming map §3.2)", () => {
+  it("includes SitelinksSetId at Ad level (not inside TextAd) when sitelinks_set_id is provided", () => {
     const payload = buildAdTgoPayload({
       ad_group_id: 10,
       title: "Заголовок",
@@ -67,24 +67,41 @@ describe("buildAdTgoPayload — SitelinksSetId wiring (TextAd, naming map §3.2)
       href: "https://example.com",
       sitelinks_set_id: 42,
     });
-    const textAd = (payload.params.Ads[0] as Record<string, unknown>)["TextAd"] as Record<string, unknown>;
-    expect(textAd["SitelinksSetId"]).toBe(42);
+    const ad = payload.params.Ads[0] as Record<string, unknown>;
+    const textAd = ad["TextAd"] as Record<string, unknown>;
+    expect(ad["SitelinksSetId"]).toBe(42);
+    expect(textAd["SitelinksSetId"]).toBeUndefined();
   });
 
-  it("omits SitelinksSetId from TextAd when not provided", () => {
+  it("omits SitelinksSetId from Ad when not provided", () => {
     const payload = buildAdTgoPayload({
       ad_group_id: 10,
       title: "Заголовок",
       text: "Текст TGO",
       href: "https://example.com",
     });
-    const textAd = (payload.params.Ads[0] as Record<string, unknown>)["TextAd"] as Record<string, unknown>;
+    const ad = payload.params.Ads[0] as Record<string, unknown>;
+    const textAd = ad["TextAd"] as Record<string, unknown>;
+    expect(ad["SitelinksSetId"]).toBeUndefined();
     expect(textAd["SitelinksSetId"]).toBeUndefined();
+  });
+
+  it("wires SitelinksSetId with correct value 555", () => {
+    const payload = buildAdTgoPayload({
+      ad_group_id: 10,
+      title: "Заголовок",
+      text: "Текст TGO",
+      href: "https://example.com",
+      sitelinks_set_id: 555,
+    });
+    const ad = payload.params.Ads[0] as Record<string, unknown>;
+    expect(ad["SitelinksSetId"]).toBe(555);
+    expect((ad["TextAd"] as Record<string, unknown>)["SitelinksSetId"]).toBeUndefined();
   });
 });
 
-describe("buildAdRsyaPayload — SitelinksSetId wiring (TextImageAd, naming map §3.3)", () => {
-  it("includes SitelinksSetId in TextImageAd when sitelinks_set_id is provided", () => {
+describe("buildAdRsyaPayload — SitelinksSetId wiring (Ad-level sibling of TextImageAd, naming map §3.3)", () => {
+  it("includes SitelinksSetId at Ad level (not inside TextImageAd) when sitelinks_set_id is provided", () => {
     const payload = buildAdRsyaPayload({
       ad_group_id: 10,
       ad_image_hash: "somehash",
@@ -93,11 +110,13 @@ describe("buildAdRsyaPayload — SitelinksSetId wiring (TextImageAd, naming map 
       href: "https://example.com",
       sitelinks_set_id: 99,
     });
-    const textImageAd = (payload.params.Ads[0] as Record<string, unknown>)["TextImageAd"] as Record<string, unknown>;
-    expect(textImageAd["SitelinksSetId"]).toBe(99);
+    const ad = payload.params.Ads[0] as Record<string, unknown>;
+    const textImageAd = ad["TextImageAd"] as Record<string, unknown>;
+    expect(ad["SitelinksSetId"]).toBe(99);
+    expect(textImageAd["SitelinksSetId"]).toBeUndefined();
   });
 
-  it("omits SitelinksSetId from TextImageAd when not provided", () => {
+  it("omits SitelinksSetId from Ad when not provided", () => {
     const payload = buildAdRsyaPayload({
       ad_group_id: 10,
       ad_image_hash: "somehash",
@@ -105,8 +124,24 @@ describe("buildAdRsyaPayload — SitelinksSetId wiring (TextImageAd, naming map 
       text: "Текст РСЯ",
       href: "https://example.com",
     });
-    const textImageAd = (payload.params.Ads[0] as Record<string, unknown>)["TextImageAd"] as Record<string, unknown>;
+    const ad = payload.params.Ads[0] as Record<string, unknown>;
+    const textImageAd = ad["TextImageAd"] as Record<string, unknown>;
+    expect(ad["SitelinksSetId"]).toBeUndefined();
     expect(textImageAd["SitelinksSetId"]).toBeUndefined();
+  });
+
+  it("wires SitelinksSetId with correct value 555", () => {
+    const payload = buildAdRsyaPayload({
+      ad_group_id: 10,
+      ad_image_hash: "somehash",
+      title: "Заголовок РСЯ",
+      text: "Текст РСЯ",
+      href: "https://example.com",
+      sitelinks_set_id: 555,
+    });
+    const ad = payload.params.Ads[0] as Record<string, unknown>;
+    expect(ad["SitelinksSetId"]).toBe(555);
+    expect((ad["TextImageAd"] as Record<string, unknown>)["SitelinksSetId"]).toBeUndefined();
   });
 });
 
@@ -193,7 +228,7 @@ describe("buildAdRsyaPayload — AdExtensions (callout IDs) wiring", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildAdRsyaPayload — combined AdImageHash + SitelinksSetId + AdExtensions", () => {
-  it("wires all 3 fields simultaneously into TextImageAd", () => {
+  it("wires AdImageHash + AdExtensions into TextImageAd, SitelinksSetId at Ad level", () => {
     const payload = buildAdRsyaPayload({
       ad_group_id: 7,
       ad_image_hash: "fullhash_xyz",
@@ -203,9 +238,11 @@ describe("buildAdRsyaPayload — combined AdImageHash + SitelinksSetId + AdExten
       sitelinks_set_id: 55,
       ad_extensions: [301, 302],
     });
-    const textImageAd = (payload.params.Ads[0] as Record<string, unknown>)["TextImageAd"] as Record<string, unknown>;
+    const ad = payload.params.Ads[0] as Record<string, unknown>;
+    const textImageAd = ad["TextImageAd"] as Record<string, unknown>;
     expect(textImageAd["AdImageHash"]).toBe("fullhash_xyz");
-    expect(textImageAd["SitelinksSetId"]).toBe(55);
     expect(textImageAd["AdExtensions"]).toEqual({ Items: [301, 302] });
+    expect(ad["SitelinksSetId"]).toBe(55);
+    expect(textImageAd["SitelinksSetId"]).toBeUndefined();
   });
 });
