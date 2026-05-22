@@ -1,0 +1,64 @@
+group:
+  Name: cl04_rukavnyy-filtr
+  Type: TEXT_AD_GROUP
+  RegionIds: [225]
+  AutoTargetingCategories:
+    Items:
+      - { Category: TARGET_QUERIES, Value: "YES" }
+      - { Category: ALTERNATIVE_QUERIES, Value: "NO" }
+      - { Category: COMPETITOR_QUERIES, Value: "NO" }
+      - { Category: ACCESSORY_QUERIES, Value: "NO" }
+      - { Category: BROAD_MATCH, Value: "NO" }
+      - { Category: EXACT_MENTION, Value: "YES" }
+
+keywords:
+  - { Keyword: "рукавный фильтр" }
+  - { Keyword: "рукавные фильтры для" }
+  - { Keyword: "блок рукавных фильтров" }
+  - { Keyword: "батарея рукавных фильтров" }
+  - { Keyword: "фильтр рукавный для фильтрации" }
+  - { Keyword: "большие рукавные фильтра" }
+  - { Keyword: "рукавный вытяжной фильтр" }
+  - { Keyword: "цилиндрический рукавный фильтр" }
+  - { Keyword: "рукавные фильтры от производителя" }
+  - { Keyword: "промышленный рукавный фильтр" }
+  - { Keyword: "рукавные фильтры на тэц" }
+  - { Keyword: "рукавный фильтр для дробилок" }
+  - { Keyword: "новые рукавные фильтры" }
+  - { Keyword: "фильтр рукавный для вентиляции" }
+
+negative_keywords:
+  Items: [своими, реферат, схема, чертёж, чертеж, википедия, принцип, устройство]
+
+_meta:
+  cluster_id: "4"
+  intent: commercial-dominant
+  note: "Самый коммерческий кластер, основной фокус Поиска. Тексты обогащены фактами с gas-cleaning.ru (ПЗГО, 30+ лет, 150+ проектов)."
+
+ads:
+  - variant_id: A
+    Type: TEXT_AD
+    TextAd:
+      Title: Рукавные фильтры ФРКИ от ПЗГО
+      Title2: Расчёт под объект за 1 час
+      Text: Серии ФРКИ, ФРИ, ФРИП. Очистка до 99,9%. Поставка от 1 модуля до батарей.
+      Href: https://gas-cleaning.ru/
+      Mobile: "NO"
+
+  - variant_id: B
+    Type: TEXT_AD
+    TextAd:
+      Title: Промышленные рукавные фильтры
+      Title2: Опыт 30+ лет, 150+ проектов
+      Text: Производим блоки и батареи. Металлургия, ТЭЦ, цемент. КП в течение 1 часа.
+      Href: https://gas-cleaning.ru/
+      Mobile: "NO"
+
+  - variant_id: C
+    Type: TEXT_AD
+    TextAd:
+      Title: Рукавный фильтр для производства
+      Title2: Изготовление от 30 дней
+      Text: Подбор под газ и пыль. Проект, документация, шеф-монтаж. Поставка по РФ и СНГ.
+      Href: https://gas-cleaning.ru/
+      Mobile: "NO"

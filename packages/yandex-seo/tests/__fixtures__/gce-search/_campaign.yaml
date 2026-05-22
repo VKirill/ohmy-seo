@@ -1,0 +1,63 @@
+campaign:
+  Name: gce_search_5clusters_2026-05
+  Type: TEXT_CAMPAIGN
+  StartDate: "2026-05-23"
+  DailyBudget:
+    Amount: 8500000
+    Currency: EUR
+  TextCampaign:
+    BiddingStrategy:
+      Search:
+        BiddingStrategyType: WB_MAXIMUM_CLICKS
+        WbMaximumClicks:
+          WeeklySpendLimit: 59500000
+      Network:
+        BiddingStrategyType: SERVING_OFF
+    Settings:
+      - Option: ADD_TO_FAVORITES
+        Value: "NO"
+      - Option: ENABLE_AREA_OF_INTEREST_TARGETING
+        Value: "YES"
+    NegativeKeywords:
+      Items:
+        - бесплатно
+        - реферат
+        - курсовая
+        - своими руками
+        - принцип работы
+        - устройство
+        - схема
+        - чертёж
+        - чертеж
+        - формула
+        - расчёт
+        - расчет
+        - википедия
+        - вики
+        - фото
+        - картинки
+        - видео
+        - youtube
+        - б/у
+        - бу
+        - бывший
+        - аренда
+        - ремонт
+        - обзор
+        - отзывы
+    TrackingParams: "utm_source=yandex&utm_medium=cpc&utm_campaign=gce_search_5cl&utm_content={ad_id}&utm_term={keyword}"
+
+sitelinks_set:
+  Sitelinks:
+    - Title: Скрубберы
+      Description: Мокрая очистка газов
+      Href: https://gas-cleaning.ru/#scrubbers
+    - Title: Рукавные фильтры
+      Description: Сухая очистка от пыли
+      Href: https://gas-cleaning.ru/#filters
+    - Title: Циклоны
+      Description: Грубая пылеочистка
+      Href: https://gas-cleaning.ru/#cyclones
+    - Title: Расчёт оборудования
+      Description: Подбор под объект
+      Href: https://gas-cleaning.ru/#contact

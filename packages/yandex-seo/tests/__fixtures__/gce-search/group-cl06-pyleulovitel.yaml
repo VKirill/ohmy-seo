@@ -1,0 +1,58 @@
+group:
+  Name: cl06_pyleulovitel
+  Type: TEXT_AD_GROUP
+  RegionIds: [225]
+  AutoTargetingCategories:
+    Items:
+      - { Category: TARGET_QUERIES, Value: "YES" }
+      - { Category: ALTERNATIVE_QUERIES, Value: "NO" }
+      - { Category: COMPETITOR_QUERIES, Value: "NO" }
+      - { Category: ACCESSORY_QUERIES, Value: "NO" }
+      - { Category: BROAD_MATCH, Value: "NO" }
+      - { Category: EXACT_MENTION, Value: "YES" }
+
+keywords:
+  - { Keyword: "пылеуловитель" }
+  - { Keyword: "промышленный пылеуловитель" }
+  - { Keyword: "пылеуловитель циклон" }
+  - { Keyword: "пылеуловитель для производства" }
+  - { Keyword: "пылеуловитель промышленный купить" }
+  - { Keyword: "пылеуловитель заказать" }
+  - { Keyword: "пылеуловитель цена" }
+  - { Keyword: "поставка пылеуловителей" }
+
+negative_keywords:
+  Items: [бытовой, домашний, пылесос, своими, схема, чертёж, чертеж, википедия]
+
+_meta:
+  cluster_id: "6"
+  intent: commercial
+  note: "Расширили кластер 6 — без 'ПВВ' и без 'купить' в чистом виде по правилу из senior."
+
+ads:
+  - variant_id: A
+    Type: TEXT_AD
+    TextAd:
+      Title: Промышленные пылеуловители от ПЗГО
+      Title2: ЦН-11, ЦН-15, ЦН-24
+      Text: Циклоны, рукавные, мокрые. Очистка до 99,9%. Опыт — цемент, металлургия, ТЭС.
+      Href: https://gas-cleaning.ru/
+      Mobile: "NO"
+
+  - variant_id: B
+    Type: TEXT_AD
+    TextAd:
+      Title: Пылеуловитель для цеха и завода
+      Title2: Расчёт от инженера за 1 час
+      Text: Поставка от 1 единицы. Документация, шеф-монтаж, заводская гарантия по договору.
+      Href: https://gas-cleaning.ru/
+      Mobile: "NO"
+
+  - variant_id: C
+    Type: TEXT_AD
+    TextAd:
+      Title: Пылеуловитель промышленный — ПЗГО
+      Title2: Доставка по РФ и СНГ
+      Text: Под газ, температуру и состав пыли. КП за 1 час. Изготовление от 30 дней.
+      Href: https://gas-cleaning.ru/
+      Mobile: "NO"

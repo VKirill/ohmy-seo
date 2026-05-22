@@ -1,0 +1,58 @@
+group:
+  Name: cl01_skrubber-eto
+  Type: TEXT_AD_GROUP
+  RegionIds: [225]
+  AutoTargetingCategories:
+    Items:
+      - { Category: TARGET_QUERIES, Value: "NO" }
+      - { Category: ALTERNATIVE_QUERIES, Value: "NO" }
+      - { Category: COMPETITOR_QUERIES, Value: "NO" }
+      - { Category: ACCESSORY_QUERIES, Value: "NO" }
+      - { Category: BROAD_MATCH, Value: "NO" }
+      - { Category: EXACT_MENTION, Value: "NO" }
+
+keywords:
+  - { Keyword: "скруббер это" }
+  - { Keyword: "что такое скруббер" }
+  - { Keyword: "скруббер это такое" }
+  - { Keyword: "скруббер что это" }
+  - { Keyword: "для чего нужен скруббер" }
+  - { Keyword: "скруббер это простыми словами" }
+  - { Keyword: "скруббер это фильтр" }
+  - { Keyword: "для чего используется скруббер" }
+
+negative_keywords:
+  Items: [компрессора, компрессор, тэс, тэц, угольный, корабль, судовой]
+
+_meta:
+  cluster_id: "1"
+  intent: informational
+  warning: "Информационный intent — низкий CR в Поиске ожидаем. Мониторим CR через 14 дней, при CPL > 5000 ₽ — отключить группу."
+
+ads:
+  - variant_id: A
+    Type: TEXT_AD
+    TextAd:
+      Title: Скруббер — аппарат газоочистки от ПЗГО
+      Title2: Вентури и насадочные
+      Text: Производим под объект Заказчика. Расчёт за 1 час. 30+ лет на рынке РФ и СНГ.
+      Href: https://gas-cleaning.ru/
+      Mobile: "NO"
+
+  - variant_id: B
+    Type: TEXT_AD
+    TextAd:
+      Title: Что такое скруббер и зачем он нужен
+      Title2: Покажем оборудование
+      Text: Производим для металлургии, химии, ТЭС. Подбор под газ, температуру, фракцию.
+      Href: https://gas-cleaning.ru/
+      Mobile: "NO"
+
+  - variant_id: C
+    Type: TEXT_AD
+    TextAd:
+      Title: Скрубберы для очистки промышленных газов
+      Title2: ПЗГО — производитель
+      Text: Расчёт, проект, поставка, монтаж. 150+ проектов в металлургии, химии, энергетике.
+      Href: https://gas-cleaning.ru/
+      Mobile: "NO"
