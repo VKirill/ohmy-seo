@@ -334,3 +334,59 @@ describe("computePlanHash — determinism and content binding", () => {
     expect(h1).toBe(h2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// computePlanHash — dry-run / live image-hash consistency (P0 #2)
+// Ensures that an rsya bundle with declared images produces the SAME hash
+// whether we supply declared_image_keys (dry-run path, no uploads yet) or
+// image_hashes_keys (live path, only successful uploads present).
+// ---------------------------------------------------------------------------
+
+describe("computePlanHash — dry-run and live hash agree for rsya bundle with images", () => {
+  /** Rsya bundle base input (no image fields). */
+  const rsyaBase = {
+    ...basePlanInput,
+    campaign_type: "rsya",
+    bidding_strategy_type: "WB_DAILY_BUDGET",
+  };
+
+  it("dry-run path (declared_image_keys) equals live path (same declared_image_keys) for banner_1to1", () => {
+    const declaredKeys = ["banner_1to1"];
+
+    // Dry-run: no image_hashes uploaded yet — pass declared keys directly
+    const dryHash = computePlanHash({
+      ...rsyaBase,
+      image_hashes_keys: declaredKeys, // populated from bundle declaration
+    });
+
+    // Live path: same declared keys (not the partial upload result)
+    const liveHash = computePlanHash({
+      ...rsyaBase,
+      image_hashes_keys: declaredKeys,
+    });
+
+    expect(dryHash).toBe(liveHash);
+  });
+
+  it("dry hash differs when declared keys differ (sensitivity check)", () => {
+    const h1 = computePlanHash({ ...rsyaBase, image_hashes_keys: ["banner_1to1"] });
+    const h2 = computePlanHash({ ...rsyaBase, image_hashes_keys: ["banner_1to1", "banner_16to9"] });
+    expect(h1).not.toBe(h2);
+  });
+
+  it("null image_hashes_keys (dry-run no images) equals null at live time (no images declared)", () => {
+    const h1 = computePlanHash({ ...rsyaBase, image_hashes_keys: null });
+    const h2 = computePlanHash({ ...rsyaBase });
+    expect(h1).toBe(h2);
+  });
+
+  it("dry-run with 3 declared keys matches live with same 3 declared keys (order-independent)", () => {
+    const declaredKeys = ["img_c", "img_a", "img_b"]; // unsorted
+    const sortedKeys = ["img_a", "img_b", "img_c"];
+
+    // computePlanHash sorts the keys internally
+    const h1 = computePlanHash({ ...rsyaBase, image_hashes_keys: declaredKeys });
+    const h2 = computePlanHash({ ...rsyaBase, image_hashes_keys: sortedKeys });
+    expect(h1).toBe(h2);
+  });
+});

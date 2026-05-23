@@ -116,6 +116,15 @@ export interface UploadCampaignBundleInput {
   image_hashes?: Record<string, string>;
 
   /**
+   * Declared image keys from the bundle's campaign.images definition.
+   * When provided, used as the stable image-key input for computePlanHash instead of
+   * Object.keys(image_hashes). This ensures dry-run and live plan_hash agree even
+   * when some image uploads fail at live time (partial image_hashes != declared keys).
+   * Set by direct-upload-from-yaml.ts from Object.keys(bundle.campaign.images ?? {}).
+   */
+  declared_image_keys?: string[] | null;
+
+  /**
    * SitelinksSet ID created by direct-upload-from-yaml.ts before the pipeline runs.
    * Wired into TextAd.SitelinksSetId and TextImageAd.SitelinksSetId at ad level
    * (naming map §3.2/§3.3 — SitelinksSetId is per-ad, not per-campaign).
@@ -534,7 +543,9 @@ async function stage0DryRun(
     sitelinks_set: input.sitelinks_set ?? null,
     promo_extension: input.promo_extension ?? null,
     callout_ids: input.callout_ids ?? null,
-    image_hashes_keys: input.image_hashes ? Object.keys(input.image_hashes) : null,
+    image_hashes_keys: input.declared_image_keys !== undefined
+      ? (input.declared_image_keys ?? null)
+      : (input.image_hashes ? Object.keys(input.image_hashes) : null),
     dedupe_by_name: input.dedupe_by_name ?? false,
   });
 
@@ -1502,7 +1513,9 @@ export async function uploadCampaignBundle(
     sitelinks_set: input.sitelinks_set ?? null,
     promo_extension: input.promo_extension ?? null,
     callout_ids: input.callout_ids ?? null,
-    image_hashes_keys: input.image_hashes ? Object.keys(input.image_hashes) : null,
+    image_hashes_keys: input.declared_image_keys !== undefined
+      ? (input.declared_image_keys ?? null)
+      : (input.image_hashes ? Object.keys(input.image_hashes) : null),
     dedupe_by_name: input.dedupe_by_name ?? false,
   });
 

@@ -7,6 +7,8 @@ import { runDirectUploadImage } from "./direct-upload-image.js";
 import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
 import type { AdSchema } from "../lib/yaml-schema.js";
 import { validateLiveAck } from "../lib/api/confirm-gate.js";
+import { resolveAccount } from "../lib/account-resolver.js";
+import { SCOPES } from "../lib/scopes.js";
 
 /** Narrow the first ad in a group to extract Href for site_url fallback. */
 function extractFirstHref(ad: z.infer<typeof AdSchema> | undefined): string | undefined {
@@ -139,6 +141,10 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
     const camp = bundle.campaign.campaign;
     const tc = camp.TextCampaign;
 
+    // Image keys declared in the bundle — stable at both dry-run and live time.
+    // Used as the plan_hash image input so dry and live hashes always agree.
+    const declaredImageKeys = Object.keys(bundle.campaign.images ?? {}).sort();
+
     // Derive site_url from first ad Href in YAML if not provided
     const siteUrl: string =
       parsed.site_url
@@ -183,6 +189,7 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
         sitelinks_set: bundle.campaign.sitelinks_set,
         promo_extension: bundle.campaign.promo_extension,
         bidding_strategy: tc?.BiddingStrategy as Record<string, unknown> | undefined,
+        declared_image_keys: declaredImageKeys.length > 0 ? declaredImageKeys : null,
       } as Parameters<typeof uploadCampaignBundle>[0]); // guardian: allow — Phase 3.5.D optional fields not in base type
 
       return {
@@ -241,6 +248,7 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
         sitelinks_set: bundle.campaign.sitelinks_set,
         promo_extension: bundle.campaign.promo_extension,
         bidding_strategy: tc?.BiddingStrategy as Record<string, unknown> | undefined,
+        declared_image_keys: declaredImageKeys.length > 0 ? declaredImageKeys : null,
       } as Parameters<typeof uploadCampaignBundle>[0]); // guardian: allow — Phase 3.5.D optional fields not in base type
 
       return {
@@ -261,7 +269,10 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
     // confirm=true and plan_hash are present. Now validate acknowledge_live
     // BEFORE creating any dependencies — a bad/missing ack must be rejected here
     // so no orphaned sitelinks/callouts/images are created on the live account.
-    if (!validateLiveAck(parsed.acknowledge_live, parsed.plan_hash)) {
+    // Resolve the account to get the exact yandex_login for the ack check.
+    const liveAcc = resolveAccount(SCOPES.DIRECT_API, parsed.account);
+    const liveLogin = liveAcc.yandex_login ?? liveAcc.label;
+    if (!validateLiveAck(parsed.acknowledge_live, liveLogin, parsed.plan_hash)) {
       const ad_templates = extractAdTemplates(bundle);
       const campaignStrategy = resolveCampaignStrategy(bundle);
       const campaignType = resolveCampaignType(bundle);
@@ -288,6 +299,7 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
         sitelinks_set: bundle.campaign.sitelinks_set,
         promo_extension: bundle.campaign.promo_extension,
         bidding_strategy: tc?.BiddingStrategy as Record<string, unknown> | undefined,
+        declared_image_keys: declaredImageKeys.length > 0 ? declaredImageKeys : null,
       } as Parameters<typeof uploadCampaignBundle>[0]); // guardian: allow — Phase 3.5.D optional fields not in base type
 
       return {
@@ -499,6 +511,8 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
       // Pass the resolved bundle's BiddingStrategy verbatim to bypass reconstruction.
       // Path: resolved.campaign.campaign.TextCampaign?.BiddingStrategy
       bidding_strategy: resolvedTc?.BiddingStrategy as Record<string, unknown> | undefined,
+      // Use declared image keys (stable at both dry-run and live time) for plan_hash consistency.
+      declared_image_keys: declaredImageKeys.length > 0 ? declaredImageKeys : null,
     } as Parameters<typeof uploadCampaignBundle>[0]); // guardian: allow — Phase 3.5.D optional fields not in base type
 
     return {

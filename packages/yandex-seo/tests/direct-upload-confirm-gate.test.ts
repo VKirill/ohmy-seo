@@ -48,7 +48,10 @@ vi.mock("../src/lib/payload-builder.js", () => ({
   buildCalloutPayload: (...args: unknown[]) => mockBuildCalloutPayload(...args),
 }));
 
-vi.mock("../src/lib/account-resolver.js", () => ({}));
+vi.mock("../src/lib/account-resolver.js", () => ({
+  resolveAccount: () => ({ yandex_login: "testlogin", label: "testlogin" }),
+}));
+vi.mock("../src/lib/scopes.js", () => ({ SCOPES: { DIRECT_API: "direct:api" } }));
 vi.mock("../src/lib/csv-parser.js", () => ({}));
 vi.mock("../src/lib/bundle-ledger.js", () => ({}));
 
@@ -60,6 +63,7 @@ vi.mock("@ohmy-seo/mcp-core/errors", () => ({
 
 // Import after mocks
 import { runDirectUploadFromYaml } from "../src/tools/direct-upload-from-yaml.js";
+import { validateLiveAck } from "../src/lib/api/confirm-gate.js";
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -414,6 +418,47 @@ describe("runDirectUploadFromYaml — dep creation failure aborts campaign", () 
     expect(text.dep_errors[0]).toMatch(/hero/);
   });
 
+  it("wrong-login ack: uploadCampaignBundle NOT called (live), returns plan_needed", async () => {
+    // ack has correct hash but WRONG login
+    const wrongLoginAck = "I-UNDERSTAND-BUNDLE-LIVE:wronglogin:abc123planHa";
+    mockLoadCampaignFolder.mockReturnValue(makeBundle({ hasSitelinks: true }));
+
+    const result = await runDirectUploadFromYaml({
+      folder: "/fake/folder",
+      dry_run: false,
+      confirm: true,
+      plan_hash: TEST_PLAN_HASH,
+      acknowledge_live: wrongLoginAck,
+    });
+
+    // Wrong login must be rejected — NO dep API calls
+    expect(mockExecuteApiCall).not.toHaveBeenCalled();
+    expect(mockRunDirectUploadImage).not.toHaveBeenCalled();
+
+    const text = JSON.parse((result as { content: { text: string }[] }).content[0].text);
+    expect(text.stage).toBe("plan_needed");
+    expect(text.reason).toMatch(/acknowledge_live/i);
+  });
+
+  it("extra-segment ack: uploadCampaignBundle NOT called (live), returns plan_needed", async () => {
+    // ack has correct login+hash but an extra segment after
+    const extraSegmentAck = "I-UNDERSTAND-BUNDLE-LIVE:testlogin:abc123planHa:extra";
+    mockLoadCampaignFolder.mockReturnValue(makeBundle({ hasSitelinks: true }));
+
+    const result = await runDirectUploadFromYaml({
+      folder: "/fake/folder",
+      dry_run: false,
+      confirm: true,
+      plan_hash: TEST_PLAN_HASH,
+      acknowledge_live: extraSegmentAck,
+    });
+
+    expect(mockExecuteApiCall).not.toHaveBeenCalled();
+
+    const text = JSON.parse((result as { content: { text: string }[] }).content[0].text);
+    expect(text.stage).toBe("plan_needed");
+  });
+
   it("successful deps: uploadCampaignBundle IS called and dep_errors absent in response", async () => {
     mockLoadCampaignFolder.mockReturnValue(makeBundle({ hasSitelinks: true }));
     mockExecuteApiCall.mockResolvedValue(sitelinksOkResponse(42));
@@ -454,5 +499,48 @@ describe("runDirectUploadFromYaml — dep creation failure aborts campaign", () 
     expect(text.stage).toBe("live_orchestration");
     expect(text.dep_errors).toBeUndefined();
     expect(text.context_created.sitelinks_set_id).toBe(42);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateLiveAck — exact-match unit tests (P0 #1)
+// ---------------------------------------------------------------------------
+
+describe("validateLiveAck — exact string equality", () => {
+  const login = "mylogin";
+  const planHash = "aabbccddeeff1122"; // 16 chars; slice(0,12) = "aabbccddeeff"
+
+  it("accepts the exact expected ack string", () => {
+    expect(validateLiveAck("I-UNDERSTAND-BUNDLE-LIVE:mylogin:aabbccddeeff", login, planHash)).toBe(true);
+  });
+
+  it("rejects ack with wrong login", () => {
+    expect(validateLiveAck("I-UNDERSTAND-BUNDLE-LIVE:wronglogin:aabbccddeeff", login, planHash)).toBe(false);
+  });
+
+  it("rejects ack with extra segment after hash", () => {
+    expect(validateLiveAck("I-UNDERSTAND-BUNDLE-LIVE:mylogin:aabbccddeeff:extra", login, planHash)).toBe(false);
+  });
+
+  it("rejects ack with wrong hash prefix", () => {
+    expect(validateLiveAck("I-UNDERSTAND-BUNDLE-LIVE:mylogin:000000000000", login, planHash)).toBe(false);
+  });
+
+  it("rejects ack with prefix-only login match (login is prefix of actual login)", () => {
+    // 'myl' is a prefix of 'mylogin' — must be rejected
+    expect(validateLiveAck("I-UNDERSTAND-BUNDLE-LIVE:myl:aabbccddeeff", login, planHash)).toBe(false);
+  });
+
+  it("rejects undefined ack", () => {
+    expect(validateLiveAck(undefined, login, planHash)).toBe(false);
+  });
+
+  it("rejects empty ack", () => {
+    expect(validateLiveAck("", login, planHash)).toBe(false);
+  });
+
+  it("rejects ack missing the login segment (only prefix + hash)", () => {
+    // Format: I-UNDERSTAND-BUNDLE-LIVE:aabbccddeeff (no login)
+    expect(validateLiveAck("I-UNDERSTAND-BUNDLE-LIVE:aabbccddeeff", login, planHash)).toBe(false);
   });
 });
