@@ -1,16 +1,18 @@
 /**
- * fix-direct-final-reupload.ts — Production reupload of 10 broken draft campaigns.
+ * fix-direct-final-reupload.ts — Production reupload of broken draft campaigns.
  *
  * SAFE BY DEFAULT: no API calls are made unless RUN_LIVE=true.
  *
  * When RUN_LIVE=true, the script:
- *   1. DELETE PREFLIGHT: verifies all 10 target IDs exist, are DRAFT, and have expected names.
- *      If ANY check fails → ABORT (no deletes, no uploads).
- *   2. DELETE: removes the 10 broken draft campaigns.
- *   3. REUPLOAD SEARCH: uploads all 5 groups as "GCE-Поиск-Скрубберы" (dedupe_by_name=true).
- *   4. REUPLOAD RSYA:   uploads all 5 groups as "GCE-РСЯ-Скрубберы"  (dedupe_by_name=true).
- *   5. VERIFY: campaigns.get both, confirm names + budgets + ads exist.
- *   6. Print final JSON { deleted: [...10 ids], created: [{id,name},{id,name}] }.
+ *   1. DELETE (idempotent, name-based): fetches all campaigns, selects those whose Name
+ *      EXACTLY equals SEARCH_CAMPAIGN_NAME or RSYA_CAMPAIGN_NAME.
+ *      - Non-DRAFT match → ABORT the whole run (no deletions, no uploads).
+ *      - Zero matches → fine, proceed (idempotent re-run).
+ *      - DRAFT matches → delete them, check DeleteResults for errors.
+ *   2. REUPLOAD SEARCH: uploads all 5 groups as "GCE-Поиск-Скрубберы" (dedupe_by_name=true).
+ *   3. REUPLOAD RSYA:   uploads all 5 groups as "GCE-РСЯ-Скрубберы"  (dedupe_by_name=true).
+ *   4. VERIFY: campaigns.get both, confirm names + budgets + ads exist.
+ *   5. Print final JSON { deleted: [...ids], created: [{id,name},{id,name}] }.
  *   These campaigns STAY (production — no self-delete).
  */
 
@@ -53,18 +55,8 @@ const RSYA_BUNDLE =
 const SEARCH_CAMPAIGN_NAME = "GCE-Поиск-Скрубберы";
 const RSYA_CAMPAIGN_NAME   = "GCE-РСЯ-Скрубберы";
 
-/** The 10 broken draft campaign IDs to delete (preflight-verified before deletion). */
-const TARGET_IDS: number[] = [
-  710117401, 710117410, 710117420, 710117434, 710117449,
-  710117477, 710117484, 710117491, 710117502, 710117507,
-];
-
-/**
- * Expected name pattern for each broken draft.
- * They were created as "cluster-N" variants from the broken upload pipeline.
- * Regex: starts with "cluster-" or contains the substring, case-insensitive.
- */
-const BROKEN_NAME_PATTERN = /cluster[-\s]?\d+/i;
+/** Names that the delete phase targets (exact match, DRAFT only). */
+const TARGET_NAMES: readonly string[] = [SEARCH_CAMPAIGN_NAME, RSYA_CAMPAIGN_NAME];
 
 /** All group YAML filenames present in both bundles. */
 const GROUP_FILES = [
@@ -110,15 +102,6 @@ interface LiveResult {
   campaign_id: number | null;
   ad_group_ids: number[];
   ad_ids: number[];
-}
-
-interface PreflightEntry {
-  id: number;
-  exists: boolean;
-  status: string | null;
-  name: string | null;
-  pass: boolean;
-  failReason: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -224,79 +207,89 @@ function buildTempFolder(
 }
 
 // ---------------------------------------------------------------------------
-// DELETE PREFLIGHT (codex critical #4)
-// Fetches all 10 target campaigns and verifies each:
-//   - exists on the account
-//   - Status === "DRAFT"
-//   - Name matches BROKEN_NAME_PATTERN
-// Returns preflight entries; caller decides whether to abort.
+// FIND AND DELETE BY NAME (idempotent, DRAFT-only safety)
+//
+// Fetches all campaigns with pagination, selects those whose Name exactly
+// equals one of TARGET_NAMES. Safety invariant:
+//   - If ANY match is NOT DRAFT → abort the entire run (zero deletions).
+//   - If zero matches → proceed (idempotent re-run).
+//   - If all matches are DRAFT → delete them, verify DeleteResults.
+//
+// Returns the list of IDs that were deleted (may be empty).
 // ---------------------------------------------------------------------------
 
-async function runDeletePreflight(
-  executeApiCall: ExecuteApiFn
-): Promise<PreflightEntry[]> {
-  log("=== DELETE PREFLIGHT ===");
-  log(`Fetching ${TARGET_IDS.length} target campaigns: ${TARGET_IDS.join(", ")}`);
-
-  const res = await executeApiCall({
-    apiName: "direct",
-    endpoint: "/json/v5/campaigns",
-    method: "POST",
-    body: {
-      method: "get",
-      params: {
-        SelectionCriteria: { Ids: TARGET_IDS },
-        FieldNames: ["Id", "Name", "Status"],
-      },
-    },
-    account: ACCOUNT,
-  });
-
-  if (!res.ok) {
-    throw new Error(`Preflight campaigns.get failed: ${JSON.stringify(res.body)}`);
-  }
+async function findAndDeleteByName(executeApiCall: ExecuteApiFn): Promise<number[]> {
+  log("=== DELETE (name-based, idempotent) ===");
+  log(`Target names: ${TARGET_NAMES.join(", ")}`);
 
   type CampItem = { Id?: number; Name?: string; Status?: string };
-  const campaigns = (res.data as { result?: { Campaigns?: CampItem[] } })?.result?.Campaigns ?? [];
-  const byId = new Map<number, CampItem>();
-  for (const c of campaigns) {
-    if (c.Id != null) byId.set(c.Id, c);
-  }
 
-  const entries: PreflightEntry[] = TARGET_IDS.map((id) => {
-    const found = byId.get(id);
-    if (!found) {
-      return { id, exists: false, status: null, name: null, pass: false, failReason: "NOT FOUND on account" };
+  // Paginate through all campaigns on the account.
+  const PAGE_LIMIT = 1000;
+  let offset = 0;
+  const allCampaigns: CampItem[] = [];
+
+  for (;;) {
+    const res = await executeApiCall({
+      apiName: "direct",
+      endpoint: "/json/v5/campaigns",
+      method: "POST",
+      body: {
+        method: "get",
+        params: {
+          SelectionCriteria: {},
+          FieldNames: ["Id", "Name", "Status"],
+          Page: { Limit: PAGE_LIMIT, Offset: offset },
+        },
+      },
+      account: ACCOUNT,
+    });
+
+    if (!res.ok) {
+      throw new Error(`campaigns.get (offset=${offset}) failed: ${JSON.stringify(res.body)}`);
     }
-    const status = found.Status ?? null;
-    const name   = found.Name   ?? null;
-    const isDraft   = status === "DRAFT";
-    const nameOk    = name != null && BROKEN_NAME_PATTERN.test(name);
-    const pass      = isDraft && nameOk;
-    let failReason: string | null = null;
-    if (!isDraft) failReason = `Status="${status}" (expected DRAFT)`;
-    else if (!nameOk) failReason = `Name="${name}" does not match broken pattern`;
-    return { id, exists: true, status, name, pass, failReason };
-  });
 
-  for (const e of entries) {
-    const verdict = e.pass ? "PASS" : `FAIL — ${e.failReason}`;
-    log(`  ID ${e.id}: name="${e.name}" status=${e.status} → ${verdict}`);
+    const page = (res.data as { result?: { Campaigns?: CampItem[] } })?.result?.Campaigns ?? [];
+    log(`  Fetched ${page.length} campaigns (offset=${offset})`);
+    allCampaigns.push(...page);
+
+    if (page.length < PAGE_LIMIT) break; // last page
+    offset += PAGE_LIMIT;
   }
 
-  return entries;
-}
+  log(`  Total campaigns on account: ${allCampaigns.length}`);
 
-// ---------------------------------------------------------------------------
-// DELETE: remove the 10 target campaigns
-// ---------------------------------------------------------------------------
+  // Select campaigns whose Name EXACTLY matches one of TARGET_NAMES.
+  const targetSet = new Set<string>(TARGET_NAMES);
+  const matched = allCampaigns.filter((c) => c.Name != null && targetSet.has(c.Name));
 
-async function deleteTargetCampaigns(
-  executeApiCall: ExecuteApiFn,
-  ids: number[]
-): Promise<void> {
-  log(`=== DELETE ${ids.length} campaigns ===`);
-  const res = await executeApiCall({
+  if (matched.length === 0) {
+    log("  No campaigns matching target names found — nothing to delete (idempotent).");
+    return [];
+  }
+
+  log(`  Matched ${matched.length} campaign(s):`);
+  for (const c of matched) {
+    log(`    id=${c.Id} name="${c.Name}" status=${c.Status}`);
+  }
+
+  // SAFETY: if any matched campaign is NOT DRAFT → abort with zero deletions.
+  const nonDraft = matched.filter((c) => c.Status !== "DRAFT");
+  if (nonDraft.length > 0) {
+    const details = nonDraft
+      .map((c) => `id=${c.Id} name="${c.Name}" status=${c.Status}`)
+      .join("; ");
+    throw new Error(
+      `SAFETY ABORT: refusing to delete non-DRAFT campaign(s): ${details}. ` +
+      `No campaigns were deleted or uploaded.`
+    );
+  }
+
+  // All matches are DRAFT — proceed with deletion.
+  const ids = matched.map((c) => c.Id as number);
+  log(`  All ${ids.length} matched campaign(s) are DRAFT — deleting: ${ids.join(", ")}`);
+
+  const delRes = await executeApiCall({
     apiName: "direct",
     endpoint: "/json/v5/campaigns",
     method: "POST",
@@ -307,13 +300,13 @@ async function deleteTargetCampaigns(
     account: ACCOUNT,
   });
 
-  if (!res.ok) {
-    throw new Error(`campaigns.delete failed: ${JSON.stringify(res.body)}`);
+  if (!delRes.ok) {
+    throw new Error(`campaigns.delete failed: ${JSON.stringify(delRes.body)}`);
   }
 
   type DeleteResult = { Errors?: unknown[] };
   type DeleteResponse = { DeleteResults?: DeleteResult[] };
-  const deleteResults = (res.data as { result?: DeleteResponse })?.result?.DeleteResults ?? [];
+  const deleteResults = (delRes.data as { result?: DeleteResponse })?.result?.DeleteResults ?? [];
 
   let hasErrors = false;
   for (let i = 0; i < deleteResults.length; i++) {
@@ -327,7 +320,8 @@ async function deleteTargetCampaigns(
     throw new Error("campaigns.delete returned errors for one or more IDs");
   }
 
-  log(`  Deleted ${ids.length} campaigns successfully.`);
+  log(`  Deleted ${ids.length} campaign(s) successfully.`);
+  return ids;
 }
 
 // ---------------------------------------------------------------------------
@@ -687,14 +681,14 @@ async function verifyCampaign(
 async function main(): Promise<void> {
   log("=== fix-direct-final-reupload ===");
   log(`LIVE=${LIVE}, account=${ACCOUNT}`);
-  log(`TARGET_IDS: ${TARGET_IDS.join(", ")}`);
+  log(`Target campaign names: ${TARGET_NAMES.join(", ")}`);
 
   // -------------------------------------------------------------------------
   // GUARD: exit 0 without any API calls if not in live mode
   // -------------------------------------------------------------------------
   if (!LIVE) {
     log(
-      "DRY MODE: would delete [" + TARGET_IDS.join(", ") + "], " +
+      `DRY MODE: would delete DRAFT campaigns named [${TARGET_NAMES.join(", ")}] (if present), ` +
       `would create ${SEARCH_CAMPAIGN_NAME} + ${RSYA_CAMPAIGN_NAME}. ` +
       "Set RUN_LIVE=true to execute."
     );
@@ -711,30 +705,14 @@ async function main(): Promise<void> {
   const uploadFn   = runDirectUploadFromYaml as unknown as UploadFn;
 
   // -------------------------------------------------------------------------
-  // STEP 1: DELETE PREFLIGHT
+  // STEP 1: DELETE (name-based, idempotent, DRAFT-only)
+  // Throws if a non-DRAFT match is found (safety abort).
+  // Returns the list of deleted IDs (may be empty — idempotent).
   // -------------------------------------------------------------------------
-  const preflightEntries = await runDeletePreflight(executeApi);
-  const failed = preflightEntries.filter((e) => !e.pass);
-
-  if (failed.length > 0) {
-    log("\nPREFLIGHT FAILED — aborting. The following IDs did not pass:");
-    for (const e of failed) {
-      log(`  ID ${e.id}: ${e.failReason ?? "unknown reason"}`);
-    }
-    log("No campaigns were deleted or uploaded.");
-    process.exitCode = 1;
-    return;
-  }
-
-  log("Preflight PASSED for all 10 IDs — proceeding to delete.");
+  const deletedIds = await findAndDeleteByName(executeApi);
 
   // -------------------------------------------------------------------------
-  // STEP 2: DELETE
-  // -------------------------------------------------------------------------
-  await deleteTargetCampaigns(executeApi, TARGET_IDS);
-
-  // -------------------------------------------------------------------------
-  // STEP 3: REUPLOAD SEARCH
+  // STEP 2: REUPLOAD SEARCH
   // -------------------------------------------------------------------------
   log("\n=== REUPLOAD SEARCH ===");
   let searchCampaignId: number | null = null;
@@ -756,7 +734,7 @@ async function main(): Promise<void> {
   log(`[SEARCH] campaign_id=${searchCampaignId}`);
 
   // -------------------------------------------------------------------------
-  // STEP 4: REUPLOAD RSYA
+  // STEP 3: REUPLOAD RSYA
   // -------------------------------------------------------------------------
   log("\n=== REUPLOAD RSYA ===");
   let rsyaCampaignId: number | null = null;
@@ -778,7 +756,7 @@ async function main(): Promise<void> {
   log(`[RSYA] campaign_id=${rsyaCampaignId}`);
 
   // -------------------------------------------------------------------------
-  // STEP 5: VERIFY — full shape assertion
+  // STEP 4: VERIFY — full shape assertion
   // Each bundle has 5 clusters → expected group count = GROUP_FILES.length (5)
   // -------------------------------------------------------------------------
   log("\n=== VERIFY ===");
@@ -812,10 +790,10 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
-  // STEP 6: FINAL JSON
+  // STEP 5: FINAL JSON
   // -------------------------------------------------------------------------
   const finalReport = {
-    deleted: TARGET_IDS,
+    deleted: deletedIds,
     created: [
       { id: searchCampaignId, name: SEARCH_CAMPAIGN_NAME },
       { id: rsyaCampaignId,   name: RSYA_CAMPAIGN_NAME   },
