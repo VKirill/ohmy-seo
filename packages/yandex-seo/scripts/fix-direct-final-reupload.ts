@@ -430,9 +430,27 @@ async function runLiveUpload(
 
   const stage2Payload  = parseUploadResponse(stage2Raw, label);
   const stage2Pipeline = stage2Payload["pipeline_result"] as Record<string, unknown>;
+  const stage2Stage    = String(stage2Pipeline?.["stage"] ?? "");
 
-  log(`[${label}] Stage 2 stage: ${String(stage2Pipeline?.["stage"] ?? "")}`);
+  log(`[${label}] Stage 2 stage: ${stage2Stage}`);
   log(`[${label}] Stage 2 campaigns_created: ${JSON.stringify(stage2Pipeline?.["campaigns_created"])}`);
+  log(`[${label}] Stage 2 errors: ${JSON.stringify(stage2Pipeline?.["errors"])}`);
+
+  if (stage2Stage !== "completed") {
+    const campaignId = s1Campaigns[0] ?? null;
+    log(
+      `\n*** PARTIAL-STATE WARNING ***\n` +
+      `Stage 2 did not complete (stage="${stage2Stage}"). ` +
+      `A campaign${campaignId != null ? ` (id=${campaignId})` : ""} may have been created ` +
+      `but not all ad groups/ads were uploaded. ` +
+      `Operator should inspect the account. ` +
+      `Re-running with dedupe_by_name=true is safe.\n`
+    );
+    throw new Error(
+      `[${label}] Stage 2 incomplete (stage="${stage2Stage}"): ` +
+      `${JSON.stringify(stage2Pipeline?.["errors"] ?? "no error detail")}`
+    );
+  }
 
   const s2Campaigns = stage2Pipeline?.["campaigns_created"] as number[] | undefined ?? [];
   const s2Groups    = stage2Pipeline?.["ad_groups_created"] as number[] | undefined ?? [];
@@ -446,17 +464,29 @@ async function runLiveUpload(
 }
 
 // ---------------------------------------------------------------------------
-// VERIFY: campaigns.get + ads.get for a freshly created campaign
+// VERIFY: full shape assertion — campaign name, DailyBudget, group count, real ad texts
 // ---------------------------------------------------------------------------
+
+interface VerifyResult {
+  nameOk: boolean;
+  budgetPresent: boolean;
+  groupCount: number;
+  adCount: number;
+  adsWithRealText: number;  // ads whose Title length > 5
+  failures: string[];        // human-readable list of what's missing
+}
 
 async function verifyCampaign(
   executeApiCall: ExecuteApiFn,
   campaignId: number,
   expectedName: string,
+  expectedGroupCount: number,
   label: string
-): Promise<{ nameOk: boolean; budgetPresent: boolean; adCount: number }> {
-  log(`[${label}] Verifying campaign ${campaignId} ...`);
+): Promise<VerifyResult> {
+  log(`[${label}] Verifying campaign ${campaignId} (expect name="${expectedName}", groups=${expectedGroupCount}) ...`);
+  const failures: string[] = [];
 
+  // --- campaigns.get ---
   type CampItem = {
     Id?: number; Name?: string; Status?: string;
     DailyBudget?: { Amount?: number };
@@ -488,10 +518,51 @@ async function verifyCampaign(
   log(`[${label}] campaign: ${JSON.stringify(camp)}`);
   const nameOk        = camp.Name === expectedName;
   const budgetPresent = camp.DailyBudget?.Amount != null;
+
+  if (!nameOk) {
+    failures.push(`name mismatch: got "${camp.Name}", expected "${expectedName}"`);
+  }
+  if (!budgetPresent) {
+    failures.push("DailyBudget missing or Amount=null");
+  }
   log(`[${label}] nameOk=${nameOk}, budgetPresent=${budgetPresent}`);
 
-  // ads.get
-  type AdItem = { Id?: number; Type?: string; State?: string };
+  // --- adgroups.get ---
+  type GroupItem = { Id?: number; Name?: string; Status?: string };
+  const groupsRes = await executeApiCall({
+    apiName: "direct",
+    endpoint: "/json/v5/adgroups",
+    method: "POST",
+    body: {
+      method: "get",
+      params: {
+        SelectionCriteria: { CampaignIds: [campaignId] },
+        FieldNames: ["Id", "Name", "Status"],
+      },
+    },
+    account: ACCOUNT,
+  });
+
+  let groupCount = 0;
+  if (groupsRes.ok) {
+    const groups = (groupsRes.data as { result?: { AdGroups?: GroupItem[] } })?.result?.AdGroups ?? [];
+    groupCount = groups.length;
+    for (const g of groups) {
+      log(`[${label}] group ${g.Id} name="${g.Name}" status=${g.Status}`);
+    }
+  } else {
+    log(`[${label}] adgroups.get failed: ${JSON.stringify(groupsRes.body)}`);
+    failures.push(`adgroups.get failed: ${JSON.stringify(groupsRes.body)}`);
+  }
+
+  if (groupCount !== expectedGroupCount) {
+    failures.push(`group count: got ${groupCount}, expected ${expectedGroupCount}`);
+  }
+  log(`[${label}] groupCount=${groupCount}`);
+
+  // --- ads.get with text fields ---
+  type TextAdParams = { Title?: string; Text?: string };
+  type AdItem = { Id?: number; Type?: string; State?: string; TextAd?: TextAdParams };
   const adsRes = await executeApiCall({
     apiName: "direct",
     endpoint: "/json/v5/ads",
@@ -501,24 +572,36 @@ async function verifyCampaign(
       params: {
         SelectionCriteria: { CampaignIds: [campaignId] },
         FieldNames: ["Id", "Type", "State"],
+        TextAdFieldNames: ["Title", "Text"],
       },
     },
     account: ACCOUNT,
   });
 
   let adCount = 0;
+  let adsWithRealText = 0;
   if (adsRes.ok) {
     const ads = (adsRes.data as { result?: { Ads?: AdItem[] } })?.result?.Ads ?? [];
     adCount = ads.length;
     for (const ad of ads) {
-      log(`[${label}] ad ${ad.Id} Type=${ad.Type} State=${ad.State}`);
+      const title = ad.TextAd?.Title ?? "";
+      const hasRealText = title.length > 5;
+      if (hasRealText) adsWithRealText++;
+      log(`[${label}] ad ${ad.Id} Type=${ad.Type} Title="${title}" realText=${hasRealText}`);
     }
   } else {
     log(`[${label}] ads.get failed: ${JSON.stringify(adsRes.body)}`);
+    failures.push(`ads.get failed: ${JSON.stringify(adsRes.body)}`);
   }
 
-  log(`[${label}] adCount=${adCount}`);
-  return { nameOk, budgetPresent, adCount };
+  if (adCount === 0) {
+    failures.push("no ads returned");
+  } else if (adsWithRealText === 0) {
+    failures.push(`all ${adCount} ads have Title length <=5 (likely placeholders)`);
+  }
+  log(`[${label}] adCount=${adCount}, adsWithRealText=${adsWithRealText}`);
+
+  return { nameOk, budgetPresent, groupCount, adCount, adsWithRealText, failures };
 }
 
 // ---------------------------------------------------------------------------
@@ -619,24 +702,37 @@ async function main(): Promise<void> {
   log(`[RSYA] campaign_id=${rsyaCampaignId}`);
 
   // -------------------------------------------------------------------------
-  // STEP 5: VERIFY
+  // STEP 5: VERIFY — full shape assertion
+  // Each bundle has 5 clusters → expected group count = GROUP_FILES.length (5)
   // -------------------------------------------------------------------------
   log("\n=== VERIFY ===");
-  const searchVerify = await verifyCampaign(executeApi, searchCampaignId, SEARCH_CAMPAIGN_NAME, "SEARCH");
-  const rsyaVerify   = await verifyCampaign(executeApi, rsyaCampaignId,   RSYA_CAMPAIGN_NAME,   "RSYA");
+  const expectedGroupCount = GROUP_FILES.length; // 5
 
-  const verifyOk =
-    searchVerify.nameOk &&
-    searchVerify.adCount > 0 &&
-    rsyaVerify.nameOk &&
-    rsyaVerify.adCount > 0;
+  const searchVerify = await verifyCampaign(
+    executeApi, searchCampaignId, SEARCH_CAMPAIGN_NAME, expectedGroupCount, "SEARCH"
+  );
+  const rsyaVerify = await verifyCampaign(
+    executeApi, rsyaCampaignId, RSYA_CAMPAIGN_NAME, expectedGroupCount, "RSYA"
+  );
+
+  const allFailures: string[] = [
+    ...searchVerify.failures.map((f) => `SEARCH: ${f}`),
+    ...rsyaVerify.failures.map((f) => `RSYA: ${f}`),
+  ];
+  const verifyOk = allFailures.length === 0;
 
   if (!verifyOk) {
-    log("VERIFY ISSUES:");
-    if (!searchVerify.nameOk)   log(`  SEARCH name mismatch (expected="${SEARCH_CAMPAIGN_NAME}")`);
-    if (searchVerify.adCount === 0) log("  SEARCH: 0 ads returned");
-    if (!rsyaVerify.nameOk)     log(`  RSYA name mismatch (expected="${RSYA_CAMPAIGN_NAME}")`);
-    if (rsyaVerify.adCount === 0)   log("  RSYA: 0 ads returned");
+    log("\n*** PARTIAL-STATE WARNING ***");
+    log(
+      "One or both campaigns were created but verification found missing/incomplete data. " +
+      "The account may have a campaign created but not fully populated. " +
+      "Operator should inspect the account before enabling campaigns. " +
+      "Re-running with dedupe_by_name=true is safe."
+    );
+    log("VERIFY FAILURES:");
+    for (const f of allFailures) {
+      log(`  - ${f}`);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -652,6 +748,8 @@ async function main(): Promise<void> {
       search: searchVerify,
       rsya:   rsyaVerify,
     },
+    verify_ok: verifyOk,
+    verify_failures: allFailures,
   };
 
   log("\n=== FINAL REPORT ===");
@@ -659,9 +757,9 @@ async function main(): Promise<void> {
 
   if (!verifyOk) {
     process.exitCode = 1;
-    log("RESULT: COMPLETED WITH VERIFY WARNINGS (see above)");
+    log(`RESULT: FAILED — ${allFailures.length} verification failure(s). See PARTIAL-STATE WARNING above.`);
   } else {
-    log("RESULT: SUCCESS — campaigns created and verified.");
+    log("RESULT: SUCCESS — campaigns created and fully verified.");
   }
 }
 
