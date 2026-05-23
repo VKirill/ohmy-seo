@@ -1028,15 +1028,18 @@ async function processCluster(opts: ClusterProcessInput): Promise<void> {
     }
 
     // RSYA ResponsiveAd with images (if ≥1 hash succeeded), via /json/v501/ads
-    // One ResponsiveAd per distinct template variant, capped at (adsPerGroup - 1)
+    // One ResponsiveAd per distinct template variant starting at tgoCount (offset past TGO ads),
+    // so each variant is used at most once across TGO + ResponsiveAd ads.
     if (collectedHashes.length > 0) {
-      const rsyaCount = Math.min(adsPerGroup - 1, adTemplates.length);
+      // tgoCount = number of TGO ads already created above (1 for RSYA)
+      const tgoCount = adCount;
+      const rsyaCount = Math.max(0, Math.min(adsPerGroup - tgoCount, adTemplates.length - tgoCount));
       for (let i = 0; i < rsyaCount; i++) {
-        const rsyaTmpl = adTemplates[i];
+        const rsyaTmpl = adTemplates[tgoCount + i];
         // Build Titles: use title as first entry; add title2 as second if present
         const titles: string[] = [rsyaTmpl.title];
         if (rsyaTmpl.title2) titles.push(rsyaTmpl.title2);
-        const rsyaSig = `ad_rsya:${cluster_id}:v${i}`;
+        const rsyaSig = `ad_rsya:${cluster_id}:v${tgoCount + i}`;
         const rsyaPayload = buildResponsiveAdPayload({
           ad_group_id,
           Titles: titles,

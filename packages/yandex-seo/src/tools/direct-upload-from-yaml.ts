@@ -479,7 +479,15 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
 
         if (imgDef.path) {
           // Normalize local file images (aspect ratio fix for Yandex 16:9 requirement)
-          const norm = await normalizeAdImage(imgDef.path);
+          let norm: Awaited<ReturnType<typeof normalizeAdImage>>;
+          try {
+            norm = await normalizeAdImage(imgDef.path);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.warn(`[image-normalize] skipping "${name}": normalize threw — ${msg}`); // guardian: allow
+            skippedImages.push(`${name}: normalize threw — ${msg}`);
+            continue;
+          }
           if (norm.action === "skip") {
             console.warn(`[image-normalize] skipping "${name}": ${norm.reason}`);
             skippedImages.push(`${name}: ${norm.reason}`);

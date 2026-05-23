@@ -186,3 +186,82 @@ describe("ad group name from marker_query", () => {
     expect(adGroupName).toHaveLength(255);
   });
 });
+
+describe("RSYA ResponsiveAd variant offset — no duplicate of TGO variant", () => {
+  // These tests validate the indexing logic used in processCluster for RSYA.
+  // For RSYA: tgoCount = 1 (one TGO ad uses adTemplates[0]).
+  // ResponsiveAds start at adTemplates[tgoCount + i], so variant[0] is never reused.
+
+  const mkTmpl = (label: string, title: string, text: string, pattern: string): AdTemplate => ({
+    variant_label: label,
+    title,
+    text,
+    cluster_filter: { cluster_id_pattern: pattern },
+  });
+
+  const computeRsyaSlots = (adsPerGroup: number, templateCount: number) => {
+    const tgoCount = 1; // RSYA always creates exactly 1 TGO ad
+    const rsyaCount = Math.max(0, Math.min(adsPerGroup - tgoCount, templateCount - tgoCount));
+    const indices = Array.from({ length: rsyaCount }, (_, i) => tgoCount + i);
+    return { tgoCount, rsyaCount, indices };
+  };
+
+  it("2-variant RSYA: TGO uses index 0, ResponsiveAd uses index 1 (no duplication)", () => {
+    const { tgoCount, rsyaCount, indices } = computeRsyaSlots(3, 2);
+    expect(tgoCount).toBe(1);
+    expect(rsyaCount).toBe(1);
+    expect(indices).toEqual([1]); // variant B, not variant A again
+  });
+
+  it("single-variant RSYA: rsyaCount is 0 — no duplicate ResponsiveAd of variant 0", () => {
+    const { rsyaCount, indices } = computeRsyaSlots(3, 1);
+    expect(rsyaCount).toBe(0);
+    expect(indices).toHaveLength(0);
+  });
+
+  it("3-variant RSYA with ads_per_group=3: TGO=0, ResponsiveAds=[1,2]", () => {
+    const { tgoCount, rsyaCount, indices } = computeRsyaSlots(3, 3);
+    expect(tgoCount).toBe(1);
+    expect(rsyaCount).toBe(2);
+    expect(indices).toEqual([1, 2]);
+  });
+
+  it("rsyaCount never exceeds ads_per_group - tgoCount even with many templates", () => {
+    const { rsyaCount } = computeRsyaSlots(2, 10);
+    expect(rsyaCount).toBe(1); // capped at adsPerGroup - tgoCount = 2 - 1 = 1
+  });
+
+  it("rsyaCount never indexes past adTemplates.length", () => {
+    const { rsyaCount } = computeRsyaSlots(10, 3);
+    // templateCount=3, tgoCount=1 → max rsyaCount = 3 - 1 = 2
+    expect(rsyaCount).toBe(2);
+  });
+
+  it("all indices are unique across TGO and ResponsiveAd slots", () => {
+    const { tgoCount, indices } = computeRsyaSlots(4, 4);
+    const tgoIndices = Array.from({ length: tgoCount }, (_, i) => i);
+    const allIndices = [...tgoIndices, ...indices];
+    const unique = new Set(allIndices);
+    expect(unique.size).toBe(allIndices.length);
+  });
+
+  it("uses pickAdTemplatesForCluster correctly — index 1 is variant B title, not variant A", () => {
+    const templates: AdTemplate[] = [
+      mkTmpl("cl04-vA", "Заголовок A", "Текст A", "^cl04$"),
+      mkTmpl("cl04-vB", "Заголовок B", "Текст B", "^cl04$"),
+    ];
+    const resolved = pickAdTemplatesForCluster(
+      "cl04",
+      "transactional",
+      templates,
+      "agent-provided",
+      "https://example.com"
+    );
+    // TGO uses resolved[0] = variant A
+    expect(resolved[0].title).toBe("Заголовок A");
+    // ResponsiveAd uses resolved[tgoCount + 0] = resolved[1] = variant B
+    expect(resolved[1].title).toBe("Заголовок B");
+    // Confirm they differ — variant A is not reused
+    expect(resolved[0].title).not.toBe(resolved[1].title);
+  });
+});

@@ -304,20 +304,43 @@ async function findAndDeleteByName(executeApiCall: ExecuteApiFn): Promise<number
     throw new Error(`campaigns.delete failed: ${JSON.stringify(delRes.body)}`);
   }
 
-  type DeleteResult = { Errors?: unknown[] };
+  type DeleteResult = { Id?: unknown; Errors?: unknown[] };
   type DeleteResponse = { DeleteResults?: DeleteResult[] };
-  const deleteResults = (delRes.data as { result?: DeleteResponse })?.result?.DeleteResults ?? [];
+  const deleteResults = (delRes.data as { result?: DeleteResponse })?.result?.DeleteResults;
 
+  // FAIL-CLOSED: cardinality check — DeleteResults must be present and match requested ids.
+  if (!Array.isArray(deleteResults)) {
+    throw new Error(
+      `campaigns.delete returned no DeleteResults array. ` +
+      `Requested ids: [${ids.join(", ")}]. Raw result: ${JSON.stringify((delRes.data as Record<string, unknown>)?.result)}`
+    );
+  }
+  if (deleteResults.length !== ids.length) {
+    throw new Error(
+      `campaigns.delete DeleteResults cardinality mismatch: ` +
+      `requested ${ids.length} id(s) [${ids.join(", ")}] ` +
+      `but got ${deleteResults.length} result(s): ${JSON.stringify(deleteResults)}`
+    );
+  }
+
+  // FAIL-CLOSED: per-result check — each result must have a numeric Id and no Errors.
   let hasErrors = false;
   for (let i = 0; i < deleteResults.length; i++) {
     const dr = deleteResults[i];
+    if (typeof dr.Id !== "number") {
+      log(`  Delete result index ${i} (requested id=${ids[i]}) has non-numeric Id: ${JSON.stringify(dr.Id)}`);
+      hasErrors = true;
+    }
     if (dr.Errors && (dr.Errors as unknown[]).length > 0) {
       log(`  Delete error for index ${i} (id=${ids[i]}): ${JSON.stringify(dr.Errors)}`);
       hasErrors = true;
     }
   }
   if (hasErrors) {
-    throw new Error("campaigns.delete returned errors for one or more IDs");
+    throw new Error(
+      `campaigns.delete returned errors or missing Id for one or more results. ` +
+      `Requested ids: [${ids.join(", ")}]. DeleteResults: ${JSON.stringify(deleteResults)}`
+    );
   }
 
   log(`  Deleted ${ids.length} campaign(s) successfully.`);
