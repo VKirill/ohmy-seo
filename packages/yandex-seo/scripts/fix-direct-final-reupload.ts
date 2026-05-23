@@ -544,11 +544,15 @@ async function verifyCampaign(
   });
 
   let groupCount = 0;
+  const realGroupIds: number[] = [];
   if (groupsRes.ok) {
     const groups = (groupsRes.data as { result?: { AdGroups?: GroupItem[] } })?.result?.AdGroups ?? [];
     groupCount = groups.length;
     for (const g of groups) {
       log(`[${label}] group ${g.Id} name="${g.Name}" status=${g.Status}`);
+      if (typeof g.Id === "number") {
+        realGroupIds.push(g.Id);
+      }
     }
   } else {
     log(`[${label}] adgroups.get failed: ${JSON.stringify(groupsRes.body)}`);
@@ -611,9 +615,9 @@ async function verifyCampaign(
     }
 
     // Verify every ad group has at least one valid ad.
-    const groupsWithoutValidAd = [...groupAds.entries()]
-      .filter(([, hasValid]) => !hasValid)
-      .map(([gid]) => gid);
+    // Use realGroupIds (from adgroups.get) as the authoritative list so that
+    // groups with ZERO ads (absent from groupAds entirely) are also flagged.
+    const groupsWithoutValidAd = realGroupIds.filter((gid) => groupAds.get(gid) !== true);
 
     if (groupsWithoutValidAd.length > 0) {
       failures.push(`groups without a valid ad (Title>5 && Text>5): [${groupsWithoutValidAd.join(", ")}]`);
