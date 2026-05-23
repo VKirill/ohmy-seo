@@ -355,6 +355,42 @@ export function pickAdTemplate(
   };
 }
 
+/**
+ * Return ALL distinct ad templates matching a cluster (preserving bundle order).
+ * Mirrors the matching logic of pickAdTemplate but uses .filter instead of .find,
+ * so all variants for a cluster are returned (A/B/C, different Title/Title2/Text).
+ * Falls back to a single generated placeholder template when none match.
+ */
+export function pickAdTemplatesForCluster(
+  cluster_id: string,
+  intent: string,
+  templates: AdTemplate[] | undefined,
+  strategy: "agent-provided" | "fallback-template",
+  site_url: string
+): Array<Pick<AdTemplate, "title" | "title2" | "text" | "href">> {
+  if (strategy === "agent-provided" && templates && templates.length > 0) {
+    // All templates matching by cluster_id pattern (in bundle order)
+    const byId = templates.filter(
+      (t) =>
+        t.cluster_filter?.cluster_id_pattern &&
+        new RegExp(t.cluster_filter.cluster_id_pattern).test(cluster_id)
+    );
+    if (byId.length > 0) return byId;
+    // Fall back to intent match
+    const byIntent = templates.filter((t) => t.cluster_filter?.intent === intent);
+    if (byIntent.length > 0) return byIntent;
+    return [templates[0]];
+  }
+  // Fallback template — single generic placeholder
+  return [
+    {
+      title: cluster_id.slice(0, 56),
+      title2: undefined,
+      text: `${cluster_id.slice(0, 75)}. ${site_url}`,
+    },
+  ];
+}
+
 /** Ensure directory exists. */
 function ensureDir(dirPath: string): void {
   if (!fs.existsSync(dirPath)) {
@@ -756,7 +792,10 @@ async function processCluster(opts: ClusterProcessInput): Promise<void> {
   }
 
   // ---- AdGroup create ----
-  const adGroupName = `adgroup-${cluster_id}`;
+  const markerQuery = rows[0]?.marker_query?.trim() ?? "";
+  const adGroupName = (markerQuery.length > 0
+    ? markerQuery.slice(0, 255)
+    : `adgroup-${cluster_id}`);
   const adGroupSig = `adgroup:${cluster_id}`;
   const adGroupPayload = buildAdGroupPayload({
     campaign_id,
@@ -844,7 +883,7 @@ async function processCluster(opts: ClusterProcessInput): Promise<void> {
 
   // ---- Ads ----
   const adsPerGroup = input.ads_per_group ?? 3;
-  const tmpl = pickAdTemplate(
+  const adTemplates = pickAdTemplatesForCluster(
     cluster_id,
     intent,
     input.ad_templates,
@@ -854,9 +893,10 @@ async function processCluster(opts: ClusterProcessInput): Promise<void> {
 
   const isRsya = input.campaign_type === "rsya" || input.campaign_type === "rsya-only";
 
-  // TGO ads (search or rsya with text)
-  const adCount = Math.min(adsPerGroup, isRsya ? 1 : adsPerGroup);
+  // TGO ads (search or rsya with text) — one ad per distinct template, capped at ads_per_group
+  const adCount = Math.min(adsPerGroup, isRsya ? 1 : adTemplates.length);
   for (let i = 0; i < adCount; i++) {
+    const tmpl = adTemplates[i];
     const adSig = `ad_tgo:${cluster_id}:v${i}`;
     const adPayload = buildAdTgoPayload({
       ad_group_id,
@@ -988,20 +1028,20 @@ async function processCluster(opts: ClusterProcessInput): Promise<void> {
     }
 
     // RSYA ResponsiveAd with images (if ≥1 hash succeeded), via /json/v501/ads
+    // One ResponsiveAd per distinct template variant, capped at (adsPerGroup - 1)
     if (collectedHashes.length > 0) {
-      const adTitle = tmpl.title;
-      const adText = tmpl.text;
-      // Build Titles: use title as first entry; add title2 as second if present
-      const titles: string[] = [adTitle];
-      if (tmpl.title2) titles.push(tmpl.title2);
-
-      for (let i = 0; i < (adsPerGroup - 1); i++) {
+      const rsyaCount = Math.min(adsPerGroup - 1, adTemplates.length);
+      for (let i = 0; i < rsyaCount; i++) {
+        const rsyaTmpl = adTemplates[i];
+        // Build Titles: use title as first entry; add title2 as second if present
+        const titles: string[] = [rsyaTmpl.title];
+        if (rsyaTmpl.title2) titles.push(rsyaTmpl.title2);
         const rsyaSig = `ad_rsya:${cluster_id}:v${i}`;
         const rsyaPayload = buildResponsiveAdPayload({
           ad_group_id,
           Titles: titles,
-          Texts: [adText],
-          Href: tmpl.href ?? input.site_url,
+          Texts: [rsyaTmpl.text],
+          Href: rsyaTmpl.href ?? input.site_url,
           AdImageHashes: collectedHashes,
           SitelinkSetId: input.sitelinks_set_id,
           AdExtensionIds: input.callout_ids,

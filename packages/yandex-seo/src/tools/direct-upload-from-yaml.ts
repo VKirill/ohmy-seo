@@ -43,7 +43,7 @@ async function buildSyntheticCsv(bundle: ReturnType<typeof loadCampaignFolder>):
   const lines: string[] = [BOM + header];
   for (const g of bundle.groups) {
     const clusterId = g._meta?.cluster_id ?? g.group.Name.split("_")[0] ?? "1";
-    const marker = g.keywords[0]?.Keyword ?? "";
+    const marker = g._meta?.marker_query ?? g.keywords[0]?.Keyword ?? "";
     const intent = g._meta?.intent ?? "informational";
     for (const k of g.keywords) {
       lines.push(`${clusterId};${marker};${k.Keyword};${intent};100;100;100;100;5;5;5;5;1;1;10;10;5;5;10;10;1;1;1;5;RUB`);
