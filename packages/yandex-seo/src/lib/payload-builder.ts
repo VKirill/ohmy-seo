@@ -141,9 +141,10 @@ export function buildCampaignPayload(input: {
     TextCampaign: textCampaign,
   };
 
-  if (input.daily_budget_rub > 0) {
-    campaign["DailyBudget"] = { Amount: dailyBudgetMicros, Mode: "STANDARD" };
-  }
+  // NOTE: DailyBudget is intentionally NOT set here.
+  // Yandex rejects DailyBudget with auto strategies (Code 6000 "Daily budget can only be
+  // used in conjunction with manual strategies"). Budget is governed by the strategy's
+  // spend limit (WeeklySpendLimit / WeeklySpendingLimit inside the BiddingStrategy).
 
   return {
     method: "add",

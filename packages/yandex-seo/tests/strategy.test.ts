@@ -250,43 +250,38 @@ function extractCampaign(payload: ReturnType<typeof buildCampaignPayload>) {
   return payload.params.Campaigns[0] as Record<string, unknown>;
 }
 
+// Yandex rejects DailyBudget with auto strategies (Code 6000). Budget is governed
+// by the strategy's WeeklySpendLimit / WeeklySpendingLimit inside BiddingStrategy.
 describe("buildCampaignPayload — DailyBudget top-level field", () => {
-  it("adds DailyBudget with Amount=micros and Mode=STANDARD when daily_budget_rub > 0", () => {
+  it("does NOT emit top-level DailyBudget for rsya bundle with auto strategy (WB_MAXIMUM_CLICKS)", () => {
     const payload = buildCampaignPayload({
       type: "rsya",
-      name: "test-daily-budget",
+      name: "test-rsya-no-daily-budget",
       daily_budget_rub: 8.5,
       bidding_strategy_type: "WB_DAILY_BUDGET",
       bidding_strategy: rsyaBiddingStrategy,
     });
 
     const campaign = extractCampaign(payload);
-    const dailyBudget = campaign["DailyBudget"] as { Amount: number; Mode: string };
-
-    expect(dailyBudget).toBeDefined();
-    expect(dailyBudget.Amount).toBe(8_500_000);
-    expect(dailyBudget.Mode).toBe("STANDARD");
+    expect(campaign["DailyBudget"]).toBeUndefined();
   });
 
-  it("DailyBudget.Amount equals daily_budget_rub * 1_000_000", () => {
+  it("does NOT emit top-level DailyBudget for search bundle with HIGHEST_POSITION", () => {
     const payload = buildCampaignPayload({
       type: "search",
-      name: "test-daily-budget-search",
+      name: "test-search-no-daily-budget",
       daily_budget_rub: 300,
       bidding_strategy_type: "HIGHEST_POSITION",
     });
 
     const campaign = extractCampaign(payload);
-    const dailyBudget = campaign["DailyBudget"] as { Amount: number; Mode: string };
-
-    expect(dailyBudget.Amount).toBe(300_000_000);
-    expect(dailyBudget.Mode).toBe("STANDARD");
+    expect(campaign["DailyBudget"]).toBeUndefined();
   });
 
-  it("omits DailyBudget when daily_budget_rub is 0", () => {
+  it("does NOT emit top-level DailyBudget even when daily_budget_rub is 0", () => {
     const payload = buildCampaignPayload({
       type: "rsya",
-      name: "test-no-daily-budget",
+      name: "test-zero-budget",
       daily_budget_rub: 0,
       bidding_strategy_type: "WB_DAILY_BUDGET",
     });
@@ -295,10 +290,10 @@ describe("buildCampaignPayload — DailyBudget top-level field", () => {
     expect(campaign["DailyBudget"]).toBeUndefined();
   });
 
-  it("DailyBudget present alongside BiddingStrategy (both coexist on campaign object)", () => {
+  it("BiddingStrategy is present inside TextCampaign even without top-level DailyBudget", () => {
     const payload = buildCampaignPayload({
       type: "rsya",
-      name: "test-coexist",
+      name: "test-strategy-present",
       daily_budget_rub: 8.5,
       bidding_strategy_type: "WB_DAILY_BUDGET",
       bidding_strategy: rsyaBiddingStrategy,
@@ -307,10 +302,12 @@ describe("buildCampaignPayload — DailyBudget top-level field", () => {
     const campaign = extractCampaign(payload);
     const tc = campaign["TextCampaign"] as Record<string, unknown>;
 
-    // DailyBudget on campaign
-    expect(campaign["DailyBudget"]).toBeDefined();
-    // BiddingStrategy still inside TextCampaign (unchanged)
+    // No top-level DailyBudget
+    expect(campaign["DailyBudget"]).toBeUndefined();
+    // Budget governed by WeeklySpendLimit inside BiddingStrategy
     expect(tc["BiddingStrategy"]).toBeDefined();
+    const bs = tc["BiddingStrategy"] as typeof rsyaBiddingStrategy;
+    expect(bs.Network.WbMaximumClicks.WeeklySpendLimit).toBe(59500000);
   });
 });
 

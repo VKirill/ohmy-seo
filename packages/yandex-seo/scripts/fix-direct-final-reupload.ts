@@ -563,9 +563,20 @@ async function verifyCampaign(
   const failures: string[] = [];
 
   // --- campaigns.get ---
+  type BiddingStrategyArm = {
+    BiddingStrategyType?: string;
+    WbMaximumClicks?: { WeeklySpendLimit?: number; WeeklySpendingLimit?: number };
+    [key: string]: unknown;
+  };
   type CampItem = {
     Id?: number; Name?: string; Status?: string;
     DailyBudget?: { Amount?: number };
+    TextCampaign?: {
+      BiddingStrategy?: {
+        Search?: BiddingStrategyArm;
+        Network?: BiddingStrategyArm;
+      };
+    };
   };
   const campRes = await executeApiCall({
     apiName: "direct",
@@ -592,14 +603,32 @@ async function verifyCampaign(
   }
 
   log(`[${label}] campaign: ${JSON.stringify(camp)}`);
-  const nameOk        = camp.Name === expectedName;
-  const budgetPresent = camp.DailyBudget?.Amount != null;
+  const nameOk = camp.Name === expectedName;
+
+  // Budget is present if either:
+  //   (a) a top-level DailyBudget.Amount exists (manual strategies), OR
+  //   (b) the TextCampaign.BiddingStrategy has a weekly spend limit on
+  //       Search or Network (auto strategies like WB_MAXIMUM_CLICKS).
+  //       Yandex rejects DailyBudget with auto strategies (Code 6000), so
+  //       auto-strategy campaigns must not have a top-level DailyBudget.
+  const hasWeeklyLimit = (arm?: BiddingStrategyArm): boolean => {
+    if (!arm) return false;
+    const wbc = arm.WbMaximumClicks;
+    if (!wbc) return false;
+    const limit = (wbc.WeeklySpendLimit ?? wbc.WeeklySpendingLimit) ?? 0;
+    return typeof limit === "number" && limit > 0;
+  };
+  const bs = camp.TextCampaign?.BiddingStrategy;
+  const budgetPresent =
+    camp.DailyBudget?.Amount != null ||
+    hasWeeklyLimit(bs?.Search) ||
+    hasWeeklyLimit(bs?.Network);
 
   if (!nameOk) {
     failures.push(`name mismatch: got "${camp.Name}", expected "${expectedName}"`);
   }
   if (!budgetPresent) {
-    failures.push("DailyBudget missing or Amount=null");
+    failures.push("no DailyBudget and no strategy spend limit");
   }
   log(`[${label}] nameOk=${nameOk}, budgetPresent=${budgetPresent}`);
 
