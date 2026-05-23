@@ -4,6 +4,7 @@ import { executeApiCall } from "../lib/api-gateway.js";
 import { buildSitelinksSetPayload, buildPromoExtensionPayload, buildCalloutPayload } from "../lib/payload-builder.js";
 import { uploadCampaignBundle, type AdTemplate, type CampaignStrategy } from "../lib/upload-pipeline.js";
 import { runDirectUploadImage } from "./direct-upload-image.js";
+import { normalizeAdImage } from "../lib/image-normalize.js";
 import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
 import type { AdSchema } from "../lib/yaml-schema.js";
 import { validateLiveAck } from "../lib/api/confirm-gate.js";
@@ -470,15 +471,34 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
     }
 
     // 3d. Images
+    const skippedImages: string[] = [];
     if (bundle.campaign.images) {
       for (const [name, imgDef] of Object.entries(bundle.campaign.images)) {
         // imgDef shape: { source, url?, path?, base64? } — map to runDirectUploadImage input
-        const uploadInput = {
-          url: imgDef.url,
-          file_path: imgDef.path,
-          base64: imgDef.base64,
-          account: parsed.account,
-        };
+        let uploadInput: { url?: string; file_path?: string; base64?: string; account?: string };
+
+        if (imgDef.path) {
+          // Normalize local file images (aspect ratio fix for Yandex 16:9 requirement)
+          const norm = await normalizeAdImage(imgDef.path);
+          if (norm.action === "skip") {
+            console.warn(`[image-normalize] skipping "${name}": ${norm.reason}`);
+            skippedImages.push(`${name}: ${norm.reason}`);
+            continue;
+          } else if (norm.action === "resized") {
+            uploadInput = { base64: norm.base64, account: parsed.account };
+          } else {
+            // asis
+            uploadInput = { file_path: imgDef.path, account: parsed.account };
+          }
+        } else {
+          uploadInput = {
+            url: imgDef.url,
+            file_path: imgDef.path,
+            base64: imgDef.base64,
+            account: parsed.account,
+          };
+        }
+
         const uploadResult = await runDirectUploadImage(uploadInput);
         const firstContent = uploadResult.content?.[0];
         if (firstContent && "text" in firstContent) {
