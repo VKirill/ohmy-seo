@@ -343,6 +343,22 @@ async function findAndDeleteByName(executeApiCall: ExecuteApiFn): Promise<number
     );
   }
 
+  // FAIL-CLOSED: set equality — returned ids must exactly equal requested ids.
+  // Prevents silent survivors: e.g. requested [101,102] returned [101,999] would
+  // pass cardinality (length==2) but 102 survived and 999 is unexpected.
+  const requestedSet = new Set<number>(ids);
+  const returnedIds = deleteResults.map((dr) => dr.Id as number);
+  const returnedSet = new Set<number>(returnedIds);
+  const missingIds = ids.filter((id) => !returnedSet.has(id));
+  const extraIds = returnedIds.filter((id) => !requestedSet.has(id));
+  if (missingIds.length > 0 || extraIds.length > 0) {
+    throw new Error(
+      `campaigns.delete id set mismatch — delete safety check failed, aborting upload. ` +
+      `Requested: [${ids.join(", ")}]. Returned: [${returnedIds.join(", ")}]. ` +
+      `Missing from results: [${missingIds.join(", ")}]. Unexpected in results: [${extraIds.join(", ")}].`
+    );
+  }
+
   log(`  Deleted ${ids.length} campaign(s) successfully.`);
   return ids;
 }
