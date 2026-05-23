@@ -141,6 +141,10 @@ export function buildCampaignPayload(input: {
     TextCampaign: textCampaign,
   };
 
+  if (input.daily_budget_rub > 0) {
+    campaign["DailyBudget"] = { Amount: dailyBudgetMicros, Mode: "STANDARD" };
+  }
+
   return {
     method: "add",
     params: { Campaigns: [campaign] },

@@ -243,6 +243,78 @@ describe("buildCampaignPayload — bidding_strategy passthrough", () => {
 });
 
 // ---------------------------------------------------------------------------
+// buildCampaignPayload — top-level DailyBudget field
+// ---------------------------------------------------------------------------
+
+function extractCampaign(payload: ReturnType<typeof buildCampaignPayload>) {
+  return payload.params.Campaigns[0] as Record<string, unknown>;
+}
+
+describe("buildCampaignPayload — DailyBudget top-level field", () => {
+  it("adds DailyBudget with Amount=micros and Mode=STANDARD when daily_budget_rub > 0", () => {
+    const payload = buildCampaignPayload({
+      type: "rsya",
+      name: "test-daily-budget",
+      daily_budget_rub: 8.5,
+      bidding_strategy_type: "WB_DAILY_BUDGET",
+      bidding_strategy: rsyaBiddingStrategy,
+    });
+
+    const campaign = extractCampaign(payload);
+    const dailyBudget = campaign["DailyBudget"] as { Amount: number; Mode: string };
+
+    expect(dailyBudget).toBeDefined();
+    expect(dailyBudget.Amount).toBe(8_500_000);
+    expect(dailyBudget.Mode).toBe("STANDARD");
+  });
+
+  it("DailyBudget.Amount equals daily_budget_rub * 1_000_000", () => {
+    const payload = buildCampaignPayload({
+      type: "search",
+      name: "test-daily-budget-search",
+      daily_budget_rub: 300,
+      bidding_strategy_type: "HIGHEST_POSITION",
+    });
+
+    const campaign = extractCampaign(payload);
+    const dailyBudget = campaign["DailyBudget"] as { Amount: number; Mode: string };
+
+    expect(dailyBudget.Amount).toBe(300_000_000);
+    expect(dailyBudget.Mode).toBe("STANDARD");
+  });
+
+  it("omits DailyBudget when daily_budget_rub is 0", () => {
+    const payload = buildCampaignPayload({
+      type: "rsya",
+      name: "test-no-daily-budget",
+      daily_budget_rub: 0,
+      bidding_strategy_type: "WB_DAILY_BUDGET",
+    });
+
+    const campaign = extractCampaign(payload);
+    expect(campaign["DailyBudget"]).toBeUndefined();
+  });
+
+  it("DailyBudget present alongside BiddingStrategy (both coexist on campaign object)", () => {
+    const payload = buildCampaignPayload({
+      type: "rsya",
+      name: "test-coexist",
+      daily_budget_rub: 8.5,
+      bidding_strategy_type: "WB_DAILY_BUDGET",
+      bidding_strategy: rsyaBiddingStrategy,
+    });
+
+    const campaign = extractCampaign(payload);
+    const tc = campaign["TextCampaign"] as Record<string, unknown>;
+
+    // DailyBudget on campaign
+    expect(campaign["DailyBudget"]).toBeDefined();
+    // BiddingStrategy still inside TextCampaign (unchanged)
+    expect(tc["BiddingStrategy"]).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // computePlanHash — content binding
 // ---------------------------------------------------------------------------
 
