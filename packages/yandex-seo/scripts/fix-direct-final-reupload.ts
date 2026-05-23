@@ -561,8 +561,9 @@ async function verifyCampaign(
   log(`[${label}] groupCount=${groupCount}`);
 
   // --- ads.get with text fields ---
+  // AdGroupId is required so we can verify per-group ad coverage.
   type TextAdParams = { Title?: string; Text?: string };
-  type AdItem = { Id?: number; Type?: string; State?: string; TextAd?: TextAdParams };
+  type AdItem = { Id?: number; AdGroupId?: number; Type?: string; State?: string; TextAd?: TextAdParams };
   const adsRes = await executeApiCall({
     apiName: "direct",
     endpoint: "/json/v5/ads",
@@ -571,7 +572,7 @@ async function verifyCampaign(
       method: "get",
       params: {
         SelectionCriteria: { CampaignIds: [campaignId] },
-        FieldNames: ["Id", "Type", "State"],
+        FieldNames: ["Id", "AdGroupId", "Type", "State"],
         TextAdFieldNames: ["Title", "Text"],
       },
     },
@@ -583,11 +584,39 @@ async function verifyCampaign(
   if (adsRes.ok) {
     const ads = (adsRes.data as { result?: { Ads?: AdItem[] } })?.result?.Ads ?? [];
     adCount = ads.length;
+
+    // A valid ad for a search campaign must have a TextAd with both Title and
+    // Text longer than 5 characters. RSYA/responsive ads may lack TextAd; if
+    // encountered they are treated as valid only when adGroupId is tracked
+    // (they appear in the groupAds map and avoid the zero-coverage failure).
+    // For safety, we require TextAd shape here so that placeholder ads
+    // (empty or 1-2 char titles) do not count.
+    const isValidAd = (ad: AdItem): boolean => {
+      const title = ad.TextAd?.Title ?? "";
+      const text  = ad.TextAd?.Text  ?? "";
+      return title.length > 5 && text.length > 5;
+    };
+
+    // Group ads by AdGroupId; track whether each group has at least one valid ad.
+    const groupAds = new Map<number, boolean>(); // groupId -> hasValidAd
     for (const ad of ads) {
       const title = ad.TextAd?.Title ?? "";
-      const hasRealText = title.length > 5;
-      if (hasRealText) adsWithRealText++;
-      log(`[${label}] ad ${ad.Id} Type=${ad.Type} Title="${title}" realText=${hasRealText}`);
+      const valid = isValidAd(ad);
+      if (valid) adsWithRealText++;
+      log(`[${label}] ad ${ad.Id} AdGroupId=${ad.AdGroupId} Type=${ad.Type} Title="${title}" valid=${valid}`);
+
+      const gid = ad.AdGroupId ?? 0;
+      // If group already has a valid ad, keep true; otherwise set to current.
+      groupAds.set(gid, (groupAds.get(gid) ?? false) || valid);
+    }
+
+    // Verify every ad group has at least one valid ad.
+    const groupsWithoutValidAd = [...groupAds.entries()]
+      .filter(([, hasValid]) => !hasValid)
+      .map(([gid]) => gid);
+
+    if (groupsWithoutValidAd.length > 0) {
+      failures.push(`groups without a valid ad (Title>5 && Text>5): [${groupsWithoutValidAd.join(", ")}]`);
     }
   } else {
     log(`[${label}] ads.get failed: ${JSON.stringify(adsRes.body)}`);
@@ -597,7 +626,7 @@ async function verifyCampaign(
   if (adCount === 0) {
     failures.push("no ads returned");
   } else if (adsWithRealText === 0) {
-    failures.push(`all ${adCount} ads have Title length <=5 (likely placeholders)`);
+    failures.push(`all ${adCount} ads have Title/Text length <=5 (likely placeholders)`);
   }
   log(`[${label}] adCount=${adCount}, adsWithRealText=${adsWithRealText}`);
 
@@ -631,8 +660,8 @@ async function main(): Promise<void> {
   const { runDirectUploadFromYaml } = await import("../src/tools/direct-upload-from-yaml.js");
   const { executeApiCall }          = await import("../src/lib/api-gateway.js");
 
-  const executeApi = executeApiCall as ExecuteApiFn;
-  const uploadFn   = runDirectUploadFromYaml as UploadFn;
+  const executeApi = executeApiCall as unknown as ExecuteApiFn;
+  const uploadFn   = runDirectUploadFromYaml as unknown as UploadFn;
 
   // -------------------------------------------------------------------------
   // STEP 1: DELETE PREFLIGHT

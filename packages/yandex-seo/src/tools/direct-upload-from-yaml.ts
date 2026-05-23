@@ -315,7 +315,58 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
       };
     }
 
-    // acknowledge_live validated — safe to create dependencies.
+    // Recompute the canonical plan_hash NOW (before any dep creation) by running an
+    // authoritative dry-run.  This closes the window where a caller passes a WRONG
+    // plan_hash that happens to produce a matching ack prefix: validateLiveAck above
+    // only checks the first 12 chars, so a wrong-but-prefix-matching hash would slip
+    // through without this extra gate.
+    {
+      const adTemplatesForCheck = extractAdTemplates(bundle);
+      const campaignStrategyForCheck = resolveCampaignStrategy(bundle);
+      const campaignTypeForCheck = resolveCampaignType(bundle);
+      const canonicalResult = await uploadCampaignBundle({
+        csv_path: csvPath,
+        campaign_strategy: campaignStrategyForCheck,
+        campaign_type: campaignTypeForCheck,
+        site_url: siteUrl,
+        daily_budget_amount: camp.DailyBudget.Amount,
+        region_ids: regionIds,
+        bidding_strategy_type: biddingStrategyType,
+        metrika_counter_ids: counterIds,
+        metrika_goal_ids: goalIds,
+        ads_per_group: adsPerGroup,
+        ad_template_strategy: "agent-provided",
+        ad_templates: adTemplatesForCheck,
+        dry_run: true,
+        canary_percent: 50,
+        max_clusters: bundle.groups.length,
+        abort_on_error_rate: 0.3,
+        account: parsed.account,
+        dedupe_by_name: bundle.campaign.dedupe_by_name,
+        tracking_params: tc?.TrackingParams,
+        sitelinks_set: bundle.campaign.sitelinks_set,
+        promo_extension: bundle.campaign.promo_extension,
+        bidding_strategy: tc?.BiddingStrategy as Record<string, unknown> | undefined,
+        declared_image_keys: declaredImageKeys.length > 0 ? declaredImageKeys : null,
+      } as Parameters<typeof uploadCampaignBundle>[0]); // guardian: allow — Phase 3.5.D optional fields not in base type
+
+      const canonicalPlanHash = canonicalResult.plan_hash;
+      if (parsed.plan_hash !== canonicalPlanHash) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              stage: "plan_needed",
+              reason: "The supplied plan_hash is stale or invalid — it does not match the canonical plan_hash computed from the current bundle state. Please obtain a fresh dry_run result and use its plan_hash and expected_ack_live.",
+              yaml_validation: "OK",
+              pipeline_result: canonicalResult,
+            }, null, 2),
+          }],
+        };
+      }
+    }
+
+    // acknowledge_live validated and plan_hash confirmed canonical — safe to create dependencies.
 
     const context: {
       sitelinks_set_id?: number;

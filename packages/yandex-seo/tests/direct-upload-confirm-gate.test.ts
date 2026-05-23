@@ -503,6 +503,98 @@ describe("runDirectUploadFromYaml — dep creation failure aborts campaign", () 
 });
 
 // ---------------------------------------------------------------------------
+// P0#1 residual: canonical plan_hash recheck BEFORE dep creation
+// ---------------------------------------------------------------------------
+
+describe("runDirectUploadFromYaml — canonical plan_hash gate (P0#1 residual)", () => {
+  // Stale/wrong plan_hash whose first 12 chars happen to form a valid ack prefix.
+  // The canonical dry-run (mockUploadCampaignBundle) returns TEST_PLAN_HASH, which differs.
+  const STALE_HASH = "stale_or_wrongXYZ"; // slice(0,12) = "stale_or_wro"
+  const STALE_ACK = "I-UNDERSTAND-BUNDLE-LIVE:testlogin:stale_or_wro";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockLoadCampaignFolder.mockReturnValue(
+      makeBundle({ hasSitelinks: true, hasPromo: true, hasCallouts: true, hasImages: true })
+    );
+    mockResolveRefs.mockImplementation((bundle: unknown) => bundle);
+    // Canonical dry-run always returns TEST_PLAN_HASH — the "real" current hash
+    mockUploadCampaignBundle.mockResolvedValue(planResult);
+    mockBuildSitelinksSetPayload.mockReturnValue({});
+    mockBuildPromoExtensionPayload.mockReturnValue({});
+    mockBuildCalloutPayload.mockReturnValue({});
+  });
+
+  it("wrong plan_hash + matching-prefix ack: ZERO dep-creation API calls, returns plan_needed", async () => {
+    // validateLiveAck will pass because STALE_ACK contains first 12 chars of STALE_HASH,
+    // but the canonical plan_hash from the fresh dry-run (TEST_PLAN_HASH) differs.
+    const result = await runDirectUploadFromYaml({
+      folder: "/fake/folder",
+      dry_run: false,
+      confirm: true,
+      plan_hash: STALE_HASH,
+      acknowledge_live: STALE_ACK,
+    });
+
+    // CRITICAL: no dep-creation side effects must have occurred
+    expect(mockExecuteApiCall).not.toHaveBeenCalled();
+    expect(mockRunDirectUploadImage).not.toHaveBeenCalled();
+
+    const text = JSON.parse((result as { content: { text: string }[] }).content[0].text);
+    expect(text.stage).toBe("plan_needed");
+    expect(text.reason).toMatch(/stale|invalid|canonical|plan_hash/i);
+    // Fresh pipeline_result is included so caller can read the correct plan_hash
+    expect(text.pipeline_result).toBeDefined();
+    expect(text.pipeline_result.plan_hash).toBe(TEST_PLAN_HASH);
+  });
+
+  it("correct plan_hash + correct ack: dep-creation IS called (happy path unaffected)", async () => {
+    const liveResult = {
+      dry_run: false,
+      plan_hash: TEST_PLAN_HASH,
+      campaigns_created: [77],
+      ad_groups_created: [],
+      keywords_added: 1,
+      ads_created: [],
+      images_uploaded: [],
+      metrika_linked: false,
+      canary_passed: true,
+      total_clusters: 1,
+      clusters_processed: 1,
+      ledger_path: "",
+      errors: [],
+      recovery_command: "",
+      next_actions: [],
+    };
+    // First call (canonical check dry_run=true) returns planResult;
+    // second call (live run dry_run=false) returns liveResult.
+    mockUploadCampaignBundle
+      .mockResolvedValueOnce(planResult)  // canonical check
+      .mockResolvedValueOnce(liveResult); // live pipeline run
+
+    mockExecuteApiCall.mockResolvedValue(sitelinksOkResponse(55));
+    mockRunDirectUploadImage.mockResolvedValue({
+      content: [{ type: "text", text: JSON.stringify({ ad_image_hash: "imgHash123" }) }],
+    });
+
+    const result = await runDirectUploadFromYaml({
+      folder: "/fake/folder",
+      dry_run: false,
+      confirm: true,
+      plan_hash: TEST_PLAN_HASH,
+      acknowledge_live: TEST_ACK_VALID,
+    });
+
+    // Dep-creation calls must have happened
+    expect(mockExecuteApiCall).toHaveBeenCalled();
+    expect(mockRunDirectUploadImage).toHaveBeenCalled();
+
+    const text = JSON.parse((result as { content: { text: string }[] }).content[0].text);
+    expect(text.stage).toBe("live_orchestration");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // validateLiveAck — exact-match unit tests (P0 #1)
 // ---------------------------------------------------------------------------
 
