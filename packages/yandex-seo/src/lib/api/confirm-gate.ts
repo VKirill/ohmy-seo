@@ -15,6 +15,17 @@ export class ConfirmGateError extends Error {
   }
 }
 
+/**
+ * Validate that `ack` is EXACTLY the expected live-ack string for the given login and plan_hash.
+ * Expected format: `I-UNDERSTAND-BUNDLE-LIVE:<login>:<planHash.slice(0,12)>`
+ * Performs exact string equality — any deviation (wrong login, extra segment, wrong hash) returns false.
+ */
+export function validateLiveAck(ack: string | undefined, login: string, planHash: string): boolean {
+  if (!ack || !login || !planHash) return false;
+  const expected = `I-UNDERSTAND-BUNDLE-LIVE:${login}:${planHash.slice(0, 12)}`;
+  return ack === expected;
+}
+
 export function requireConfirmGate(
   input: ConfirmGateInput,
   options: ConfirmGateOptions

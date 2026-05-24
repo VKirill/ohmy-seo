@@ -61,13 +61,25 @@ export function buildCampaignPayload(input: {
   counter_ids?: number[];
   start_date?: string;
   tracking_params?: string;
+  /**
+   * When provided, the BiddingStrategy is set VERBATIM from this value and the
+   * search/rsya/rsya-only reconstruction block is skipped entirely.
+   * Used by YAML-driven uploads (direct-upload-from-yaml.ts) to pass the
+   * bundle's already-correct strategy through without re-constructing it.
+   * CSV callers (upload-pipeline.ts without bidding_strategy) still use the
+   * existing reconstruction path — fully backwards-compatible.
+   */
+  bidding_strategy?: Record<string, unknown>;
 }): { method: "add"; params: { Campaigns: [unknown] } } {
   const startDate = input.start_date ?? getMoscowDate();
   const dailyBudgetMicros = input.daily_budget_rub * 1_000_000;
 
   let biddingStrategy: Record<string, unknown>;
 
-  if (input.type === "search") {
+  // Passthrough path: use the caller-supplied strategy verbatim.
+  if (input.bidding_strategy !== undefined) {
+    biddingStrategy = input.bidding_strategy;
+  } else if (input.type === "search") {
     // Quirk 2: Search campaigns use HIGHEST_POSITION (manual CPC); WB_DAILY_BUDGET
     // is only valid for network placement. Network must be SERVING_OFF.
     const searchType = input.bidding_strategy_type === "WB_DAILY_BUDGET"
@@ -128,6 +140,11 @@ export function buildCampaignPayload(input: {
     StartDate: startDate,
     TextCampaign: textCampaign,
   };
+
+  // NOTE: DailyBudget is intentionally NOT set here.
+  // Yandex rejects DailyBudget with auto strategies (Code 6000 "Daily budget can only be
+  // used in conjunction with manual strategies"). Budget is governed by the strategy's
+  // spend limit (WeeklySpendLimit / WeeklySpendingLimit inside the BiddingStrategy).
 
   return {
     method: "add",
@@ -201,6 +218,10 @@ export function buildKeywordPayload(input: {
  *
  * No network-specific quirks beyond the standard TextAd contract.
  * Mobile is set to NO (Direct best practice for search TGO ads).
+ *
+ * Optional extension fields:
+ *   - sitelinks_set_id: wires SitelinkSetId (singular) inside TextAd per Direct v5 API — verified live
+ *   - ad_extensions: wires AdExtensions.Items (callout IDs) into TextAd (ad-level per naming map §3.2)
  */
 export function buildAdTgoPayload(input: {
   ad_group_id: number;
@@ -209,6 +230,8 @@ export function buildAdTgoPayload(input: {
   text: string;
   href: string;
   display_url_path?: string;
+  sitelinks_set_id?: number;
+  ad_extensions?: number[];
 }): { method: "add"; params: { Ads: [unknown] } } {
   const textAd: Record<string, unknown> = {
     Title: input.title,
@@ -223,16 +246,23 @@ export function buildAdTgoPayload(input: {
   if (input.display_url_path !== undefined) {
     textAd["DisplayUrlPath"] = input.display_url_path;
   }
+  // SitelinkSetId (singular) inside TextAd per Direct v5 API — verified live
+  if (input.sitelinks_set_id !== undefined) {
+    textAd["SitelinkSetId"] = input.sitelinks_set_id;
+  }
+  if (input.ad_extensions && input.ad_extensions.length > 0) {
+    textAd["AdExtensions"] = { Items: input.ad_extensions };
+  }
+
+  const ad: Record<string, unknown> = {
+    AdGroupId: input.ad_group_id,
+    TextAd: textAd,
+  };
 
   return {
     method: "add",
     params: {
-      Ads: [
-        {
-          AdGroupId: input.ad_group_id,
-          TextAd: textAd,
-        },
-      ],
+      Ads: [ad],
     },
   };
 }
@@ -246,6 +276,10 @@ export function buildAdTgoPayload(input: {
  *
  * Uses TextImageAd type which requires an uploaded image hash.
  * No additional quirks beyond standard TextImageAd contract.
+ *
+ * Optional extension fields:
+ *   - sitelinks_set_id: wires SitelinkSetId (singular) inside TextImageAd per Direct v5 API — verified live
+ *   - ad_extensions: wires AdExtensions.Items (callout IDs) into TextImageAd (ad-level per naming map §3.3)
  */
 export function buildAdRsyaPayload(input: {
   ad_group_id: number;
@@ -254,6 +288,8 @@ export function buildAdRsyaPayload(input: {
   title2?: string;
   text: string;
   href: string;
+  sitelinks_set_id?: number;
+  ad_extensions?: number[];
 }): { method: "add"; params: { Ads: [unknown] } } {
   const textImageAd: Record<string, unknown> = {
     AdImageHash: input.ad_image_hash,
@@ -265,16 +301,23 @@ export function buildAdRsyaPayload(input: {
   if (input.title2 !== undefined) {
     textImageAd["Title2"] = input.title2;
   }
+  // SitelinkSetId (singular) inside TextImageAd per Direct v5 API — verified live
+  if (input.sitelinks_set_id !== undefined) {
+    textImageAd["SitelinkSetId"] = input.sitelinks_set_id;
+  }
+  if (input.ad_extensions && input.ad_extensions.length > 0) {
+    textImageAd["AdExtensions"] = { Items: input.ad_extensions };
+  }
+
+  const ad: Record<string, unknown> = {
+    AdGroupId: input.ad_group_id,
+    TextImageAd: textImageAd,
+  };
 
   return {
     method: "add",
     params: {
-      Ads: [
-        {
-          AdGroupId: input.ad_group_id,
-          TextImageAd: textImageAd,
-        },
-      ],
+      Ads: [ad],
     },
   };
 }
@@ -382,12 +425,39 @@ export function buildMetrikaUpdatePayload(input: {
 /**
  * Build a Sitelinks.add payload for Yandex Direct v5.
  *
+ * Direct v5 API requires sitelinks wrapped in a SitelinksSets array:
+ *   { method: "add", params: { SitelinksSets: [{ Sitelinks: [...] }] } }
+ *
  * Each sitelink requires at minimum a Title and Href; Description is optional.
  */
 export function buildSitelinksSetPayload(input: {
   Sitelinks: Array<{ Title: string; Description?: string; Href: string }>;
-}): { method: "add"; params: { Sitelinks: typeof input.Sitelinks } } {
-  return { method: "add", params: { Sitelinks: input.Sitelinks } };
+}): { method: "add"; params: { SitelinksSets: Array<{ Sitelinks: typeof input.Sitelinks }> } } {
+  return { method: "add", params: { SitelinksSets: [{ Sitelinks: input.Sitelinks }] } };
+}
+
+// ---------------------------------------------------------------------------
+// 9a. Callout (Уточнение) create
+// ---------------------------------------------------------------------------
+
+/**
+ * Build an AdExtensions.add payload for one or more Callout extensions.
+ *
+ * Per naming-map §5.2:
+ *   Endpoint: POST /json/v5/adextensions (type: CALLOUT)
+ *   Each callout text ≤ 25 chars. IDs returned are wired via AdExtensions.Items on TextAd/TextImageAd.
+ */
+export function buildCalloutPayload(input: {
+  callout_texts: string[];
+}): { method: "add"; params: { AdExtensions: Array<{ Callout: { CalloutText: string } }> } } {
+  return {
+    method: "add",
+    params: {
+      AdExtensions: input.callout_texts.map((text) => ({
+        Callout: { CalloutText: text },
+      })),
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -422,32 +492,47 @@ export function buildPromoExtensionPayload(input: {
 // ---------------------------------------------------------------------------
 
 /**
- * Build an Ads.add payload for a ResponsiveAd (smart/adaptive banner).
+ * Build an Ads.add payload for a ResponsiveAd — РСЯ smart ad, v501 endpoint only, verified live.
  *
- * ResponsiveAd requires at minimum Titles, Texts, and Hrefs arrays.
- * Optional image/video hashes and sitelinks can be attached.
+ * MUST be posted to /json/v501/ads (NOT /json/v5/ads — v5 returns error 3500).
+ * Proven-correct schema (live-verified):
+ *   - Titles: string[]        — required, 1-7 items
+ *   - Texts: string[]         — required, 1-3 items
+ *   - Href: string            — singular URL (NOT Hrefs array)
+ *   - AdImageHashes: string[] — required when images used, 1-5 items
+ *                              (NOT ImageHashes, NOT AdImageHash)
+ *   - SitelinkSetId: number   — optional, singular
+ *   - AdExtensionIds: number[]— optional, array of IDs directly
+ *                              (NOT AdExtensions:{Items})
+ *   - No Title2s (not in ResponsiveAd spec)
  */
 export function buildResponsiveAdPayload(input: {
   ad_group_id: number;
   Titles: string[];
-  Title2s?: string[];
   Texts: string[];
-  Hrefs: string[];
-  ImageHashes?: string[];
+  Href: string;
+  AdImageHashes?: string[];
   VideoHashes?: string[];
-  SitelinksSetId?: number;
-  AdExtensions?: { Items: number[] };
+  SitelinkSetId?: number;
+  AdExtensionIds?: number[];
 }): { method: "add"; params: { Ads: Array<unknown> } } {
   const responsiveAd: Record<string, unknown> = {
     Titles: input.Titles,
     Texts: input.Texts,
-    Hrefs: input.Hrefs,
+    Href: input.Href,
   };
-  if (input.Title2s) responsiveAd["Title2s"] = input.Title2s;
-  if (input.ImageHashes) responsiveAd["ImageHashes"] = input.ImageHashes;
-  if (input.VideoHashes) responsiveAd["VideoHashes"] = input.VideoHashes;
-  if (input.SitelinksSetId) responsiveAd["SitelinksSetId"] = input.SitelinksSetId;
-  if (input.AdExtensions) responsiveAd["AdExtensions"] = input.AdExtensions;
+  if (input.AdImageHashes && input.AdImageHashes.length > 0) {
+    responsiveAd["AdImageHashes"] = input.AdImageHashes.slice(0, 5);
+  }
+  if (input.VideoHashes && input.VideoHashes.length > 0) {
+    responsiveAd["VideoHashes"] = input.VideoHashes;
+  }
+  if (input.SitelinkSetId !== undefined) {
+    responsiveAd["SitelinkSetId"] = input.SitelinkSetId;
+  }
+  if (input.AdExtensionIds && input.AdExtensionIds.length > 0) {
+    responsiveAd["AdExtensionIds"] = input.AdExtensionIds;
+  }
 
   return {
     method: "add",
@@ -465,33 +550,102 @@ export function buildResponsiveAdPayload(input: {
 // ---------------------------------------------------------------------------
 
 /**
- * Build an AdGroups.update payload to configure auto-targeting categories.
+ * Map legacy / bundle category names to Yandex Direct API category names for
+ * the ---autotargeting keyword's AutotargetingCategories field.
  *
- * The sub-object name on AdGroup differs by group type:
- *   - TEXT_AD_GROUP         → TextAdGroupAutoTargeting
- *   - UNIFIED_AD_GROUP      → UnifiedAdGroupAutoTargeting
- *   - MOBILE_APP_AD_GROUP   → MobileAppAdGroupAutoTargeting
+ * Returns null for names that have no API equivalent (TARGET_QUERIES) so
+ * callers can drop them with a simple filter.
  *
- * Each category entry is { Category: string; Value: "YES" | "NO" }.
+ * API category names: EXACT, ALTERNATIVE, COMPETITOR, BROADER, ACCESSORY
  */
-export function buildAutoTargetingUpdatePayload(input: {
-  ad_group_id: number;
-  group_type: "TEXT_AD_GROUP" | "UNIFIED_AD_GROUP" | "MOBILE_APP_AD_GROUP";
-  categories: Array<{ Category: string; Value: "YES" | "NO" }>;
-}): { method: "update"; params: { AdGroups: Array<unknown> } } {
-  const autoTargeting = { Items: input.categories };
-  const adGroup: Record<string, unknown> = { Id: input.ad_group_id };
+export function mapAutotargetingCategoryName(name: string): string | null {
+  switch (name) {
+    case "BROAD_MATCH":          return "BROADER";
+    case "ACCESSORY_QUERIES":    return "ACCESSORY";
+    case "ALTERNATIVE_QUERIES":  return "ALTERNATIVE";
+    case "COMPETITOR_QUERIES":   return "COMPETITOR";
+    case "EXACT_MENTION":        return "EXACT";
+    // Already-canonical names pass through
+    case "BROADER":              return "BROADER";
+    case "ACCESSORY":            return "ACCESSORY";
+    case "ALTERNATIVE":          return "ALTERNATIVE";
+    case "COMPETITOR":           return "COMPETITOR";
+    case "EXACT":                return "EXACT";
+    // TARGET_QUERIES has no keyword-category equivalent
+    case "TARGET_QUERIES":       return null;
+    default:                     return null;
+  }
+}
 
-  if (input.group_type === "TEXT_AD_GROUP") {
-    adGroup["TextAdGroupAutoTargeting"] = autoTargeting;
-  } else if (input.group_type === "UNIFIED_AD_GROUP") {
-    adGroup["UnifiedAdGroupAutoTargeting"] = autoTargeting;
-  } else {
-    // MOBILE_APP_AD_GROUP
-    adGroup["MobileAppAdGroupAutoTargeting"] = autoTargeting;
+/**
+ * Sanitize autotargeting categories before sending to Yandex Direct.
+ *
+ * Yandex Direct Code 5005: "Запрещено выключать все категории в автотаргетинге"
+ * — at least one category must remain ON. Additionally, EXACT (целевые) is the
+ * safest category to keep enabled; disabling it is almost never desired and
+ * causes confusing rejections when other categories are also disabled.
+ *
+ * Rules applied:
+ *   1. Drop any entry where Category === "EXACT" and Value === "NO"
+ *      (never send a request to disable EXACT targeting).
+ *   2. If an EXACT:NO entry WAS present (and was dropped), AND the resulting
+ *      list has no Value === "YES" entry, append { Category: "EXACT", Value: "YES" }
+ *      as a guard so the update never leaves all categories OFF.
+ *
+ * The search default [BROADER:NO, ACCESSORY:NO, ALTERNATIVE:NO] passes through
+ * unchanged because it has no EXACT:NO entry — EXACT/COMPETITOR implicitly
+ * stay ON (not listed = remain at their current Direct state).
+ *
+ * @see Yandex Direct API error Code 5005
+ */
+export function sanitizeAutotargetingCategories(
+  categories: Array<{ Category: string; Value: "YES" | "NO" }>,
+): Array<{ Category: string; Value: "YES" | "NO" }> {
+  // Rule 1: drop {EXACT, NO} — never disable EXACT targeting
+  const hadExactNo = categories.some(
+    (c) => c.Category === "EXACT" && c.Value === "NO",
+  );
+  const filtered = categories.filter(
+    (c) => !(c.Category === "EXACT" && c.Value === "NO"),
+  );
+
+  // Rule 2: if EXACT:NO was removed AND nothing else is YES, append EXACT:YES
+  // to prevent Code 5005 (all categories disabled). Only fires when EXACT was
+  // explicitly in the input — the 3-default (BROADER/ACCESSORY/ALTERNATIVE all NO)
+  // is unaffected because it never includes EXACT:NO.
+  if (hadExactNo && filtered.length > 0 && !filtered.some((c) => c.Value === "YES")) {
+    filtered.push({ Category: "EXACT", Value: "YES" });
   }
 
-  return { method: "update", params: { AdGroups: [adGroup] } };
+  return filtered;
+}
+
+/**
+ * Build a Keywords.update payload to configure auto-targeting categories on
+ * the special "---autotargeting" keyword in a TEXT_AD_GROUP.
+ *
+ * LIVE-PROVEN mechanism (canary on ki.vech):
+ *   - Endpoint: /json/v5/keywords, method "update"
+ *   - AutotargetingCategories is a DIRECT ARRAY on write (NOT wrapped in Items).
+ *     On GET the API returns { Items: [...] } — the asymmetry is intentional.
+ *
+ * Category names: EXACT, ALTERNATIVE, COMPETITOR, BROADER, ACCESSORY
+ */
+export function buildAutoTargetingUpdatePayload(input: {
+  autotargeting_keyword_id: number;
+  categories: Array<{ Category: string; Value: "YES" | "NO" }>;
+}): { method: "update"; params: { Keywords: Array<unknown> } } {
+  return {
+    method: "update",
+    params: {
+      Keywords: [
+        {
+          Id: input.autotargeting_keyword_id,
+          AutotargetingCategories: input.categories,
+        },
+      ],
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------

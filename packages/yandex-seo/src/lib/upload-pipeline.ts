@@ -20,7 +20,10 @@ import {
   buildAdGroupPayload,
   buildKeywordPayload,
   buildAdTgoPayload,
-  buildAdRsyaPayload,
+  buildResponsiveAdPayload,
+  buildAutoTargetingUpdatePayload,
+  mapAutotargetingCategoryName,
+  sanitizeAutotargetingCategories,
   buildImageUploadPayload,
   buildMetrikaUpdatePayload,
 } from "./payload-builder.js";
@@ -39,6 +42,11 @@ export interface AdTemplate {
   title: string;
   title2?: string;
   text: string;
+  /**
+   * Landing URL for this ad. Optional — falls back to per-group / per-bundle site_url
+   * when omitted. Reaches the final Ads.add payload via payload-builder (TASK-4006 / F6).
+   */
+  href?: string;
   sitelinks?: Array<{ title: string; description?: string; href: string }>;
   callouts?: string[];
 }
@@ -59,7 +67,19 @@ export interface UploadCampaignBundleInput {
   campaign_strategy: CampaignStrategy;
   campaign_type: "search" | "rsya" | "rsya-only";
   site_url: string;
-  daily_budget_rub: number;
+  /**
+   * @deprecated Use `daily_budget_amount` instead (raw micros, currency-agnostic).
+   * When set, the pipeline multiplies by 1_000_000 to convert RUB to micros.
+   * Will be removed in the next minor release.
+   */
+  daily_budget_rub?: number;
+  /**
+   * Daily budget expressed in the account's native currency units × 10^6 (micros),
+   * exactly as returned by the Yandex Direct API (`DailyBudget.Amount`).
+   * Passed through to `buildCampaignPayload` as-is — no conversion applied.
+   * Preferred over the deprecated `daily_budget_rub` for non-RUB accounts.
+   */
+  daily_budget_amount?: number;
   region_ids: number[];
   bidding_strategy_type: "WB_DAILY_BUDGET" | "HIGHEST_POSITION" | "AVERAGE_CPC";
   metrika_counter_ids?: number[];
@@ -81,6 +101,54 @@ export interface UploadCampaignBundleInput {
   canary_passed?: boolean;
   continuation_ack?: string;
 
+  /**
+   * When true, skip Campaigns.add if a campaign with the same Name already exists
+   * for this account; return the existing Id instead. Makes re-runs idempotent.
+   * Default: false (create unconditionally — existing behaviour).
+   */
+  dedupe_by_name?: boolean;
+
+  // Phase 3.5.D F6 wiring — all optional, backwards-compatible
+
+  /**
+   * Map of image name → AdImageHash, pre-uploaded by direct-upload-from-yaml.ts.
+   * Used to resolve ${img.NAME} template refs in TEXT_IMAGE_AD payloads.
+   * When both image_hashes and rsya_image_urls are present, image_hashes takes
+   * precedence for YAML-driven ads (rsya_image_urls path is the legacy CSV path).
+   */
+  image_hashes?: Record<string, string>;
+
+  /**
+   * Declared image keys from the bundle's campaign.images definition.
+   * When provided, used as the stable image-key input for computePlanHash instead of
+   * Object.keys(image_hashes). This ensures dry-run and live plan_hash agree even
+   * when some image uploads fail at live time (partial image_hashes != declared keys).
+   * Set by direct-upload-from-yaml.ts from Object.keys(bundle.campaign.images ?? {}).
+   */
+  declared_image_keys?: string[] | null;
+
+  /**
+   * SitelinksSet ID created by direct-upload-from-yaml.ts before the pipeline runs.
+   * Wired into TextAd.SitelinksSetId and TextImageAd.SitelinksSetId at ad level
+   * (naming map §3.2/§3.3 — SitelinksSetId is per-ad, not per-campaign).
+   */
+  sitelinks_set_id?: number;
+
+  /**
+   * Callout AdExtension IDs created by direct-upload-from-yaml.ts before the pipeline
+   * runs. Wired into TextAd.AdExtensions.Items / TextImageAd.AdExtensions.Items
+   * (naming map §5.2 — callouts attach at ad level).
+   */
+  callout_ids?: number[];
+
+  /**
+   * When provided, the BiddingStrategy is forwarded VERBATIM to buildCampaignPayload,
+   * bypassing the search/rsya/rsya-only reconstruction logic.
+   * Set by direct-upload-from-yaml.ts from bundle.campaign.campaign.TextCampaign.BiddingStrategy.
+   * When absent, the existing reconstruction path is used (backwards-compatible for CSV callers).
+   */
+  bidding_strategy?: Record<string, unknown>;
+
   // Phase 3.5.D extensions — all optional, backwards-compatible
   sitelinks_set?: {
     Sitelinks: Array<{ Title: string; Description?: string; Href: string }>;
@@ -100,6 +168,13 @@ export interface UploadCampaignBundleInput {
   };
   tracking_params?: string;
   autotargeting_per_group?: Record<string, Array<{ Category: string; Value: "YES" | "NO" }>>;
+  /**
+   * Per-group headline/text pools for combinatorial ResponsiveAd creation (RSYA).
+   * Key = cluster_id. When present for a group, ONE ResponsiveAd is created using
+   * pool.headlines (≤7) + pool.texts (≤3) instead of deriving from ad templates.
+   * Set by direct-upload-from-yaml.ts from extractCombinatorialPools(bundle).
+   */
+  combinatorial_per_group?: Record<string, { headlines: string[]; texts: string[] }>;
   ad_format_mix?: Array<"TEXT_AD" | "TEXT_IMAGE_AD" | "RESPONSIVE_AD">;
   campaign_types?: Array<"TEXT_CAMPAIGN" | "UNIFIED_PERFORMANCE_CAMPAIGN">;
 }
@@ -157,14 +232,28 @@ function clusterIntent(rows: ClusterRow[]): string {
   return rows[0]?.intent ?? "informational";
 }
 
-/** Compute the plan hash over all deterministic inputs. */
-function computePlanHash(input: {
+/** Stable JSON serialization: sorts object keys recursively. */
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return "[" + value.map(stableStringify).join(",") + "]";
+  }
+  const keys = Object.keys(value as Record<string, unknown>).sort();
+  const pairs = keys.map((k) => JSON.stringify(k) + ":" + stableStringify((value as Record<string, unknown>)[k]));
+  return "{" + pairs.join(",") + "}";
+}
+
+/** Compute the plan hash over all deterministic inputs, including ad payload content. */
+export function computePlanHash(input: {
   csv_hash: string;
   account_login: string;
   campaign_strategy: CampaignStrategy;
   campaign_type: string;
   site_url: string;
-  daily_budget_rub: number;
+  /** Daily budget in micros (currency-agnostic). Use resolveDailyBudgetMicros() to compute. */
+  daily_budget_micros: number;
   region_ids: number[];
   bidding_strategy_type: string;
   metrika_counter_ids?: number[] | null;
@@ -175,6 +264,14 @@ function computePlanHash(input: {
   max_clusters: number;
   cluster_count: number;
   campaign_names: string[];
+  // Ad content fields — must match between dry_run and live to prevent content substitution
+  ad_templates?: AdTemplate[] | null;
+  bidding_strategy?: Record<string, unknown> | null;
+  sitelinks_set?: { Sitelinks: Array<{ Title: string; Description?: string; Href: string }> } | null;
+  promo_extension?: Record<string, unknown> | null;
+  callout_ids?: number[] | null;
+  image_hashes_keys?: string[] | null;
+  dedupe_by_name?: boolean;
 }): string {
   const planInput = {
     csv_hash: input.csv_hash,
@@ -182,7 +279,7 @@ function computePlanHash(input: {
     campaign_strategy: input.campaign_strategy,
     campaign_type: input.campaign_type,
     site_url: input.site_url,
-    daily_budget_rub: input.daily_budget_rub,
+    daily_budget_micros: input.daily_budget_micros,
     region_ids: [...input.region_ids].sort((a, b) => a - b),
     bidding_strategy_type: input.bidding_strategy_type,
     metrika_counter_ids: input.metrika_counter_ids ?? null,
@@ -193,8 +290,16 @@ function computePlanHash(input: {
     max_clusters: input.max_clusters,
     cluster_count: input.cluster_count,
     campaign_names: [...input.campaign_names].sort(),
+    // Ad content — bind to prevent dry_run approving one payload, live uploading another
+    ad_templates: input.ad_templates ?? null,
+    bidding_strategy: input.bidding_strategy ?? null,
+    sitelinks_set: input.sitelinks_set ?? null,
+    promo_extension: input.promo_extension ?? null,
+    callout_ids: input.callout_ids ? [...input.callout_ids].sort((a, b) => a - b) : null,
+    image_hashes_keys: input.image_hashes_keys ? [...input.image_hashes_keys].sort() : null,
+    dedupe_by_name: input.dedupe_by_name ?? false,
   };
-  return crypto.createHash("sha256").update(JSON.stringify(planInput)).digest("hex");
+  return crypto.createHash("sha256").update(stableStringify(planInput)).digest("hex");
 }
 
 /** Fetch image bytes from URL and return base64 + format. Throws if unusable. */
@@ -233,13 +338,13 @@ function extractImageHash(data: unknown): string {
 }
 
 /** Pick an ad template for a given cluster intent + cluster_id. Falls back to first template or generates generic one. */
-function pickAdTemplate(
+export function pickAdTemplate(
   cluster_id: string,
   intent: string,
   templates: AdTemplate[] | undefined,
   strategy: "agent-provided" | "fallback-template",
   site_url: string
-): Pick<AdTemplate, "title" | "title2" | "text"> {
+): Pick<AdTemplate, "title" | "title2" | "text" | "href"> {
   if (strategy === "agent-provided" && templates && templates.length > 0) {
     // Find best match by cluster_id pattern then intent
     const byId = templates.find(
@@ -260,11 +365,170 @@ function pickAdTemplate(
   };
 }
 
+/**
+ * Return ALL distinct ad templates matching a cluster (preserving bundle order).
+ * Mirrors the matching logic of pickAdTemplate but uses .filter instead of .find,
+ * so all variants for a cluster are returned (A/B/C, different Title/Title2/Text).
+ * Falls back to a single generated placeholder template when none match.
+ */
+export function pickAdTemplatesForCluster(
+  cluster_id: string,
+  intent: string,
+  templates: AdTemplate[] | undefined,
+  strategy: "agent-provided" | "fallback-template",
+  site_url: string
+): Array<Pick<AdTemplate, "title" | "title2" | "text" | "href">> {
+  if (strategy === "agent-provided" && templates && templates.length > 0) {
+    // All templates matching by cluster_id pattern (in bundle order)
+    const byId = templates.filter(
+      (t) =>
+        t.cluster_filter?.cluster_id_pattern &&
+        new RegExp(t.cluster_filter.cluster_id_pattern).test(cluster_id)
+    );
+    if (byId.length > 0) return byId;
+    // Fall back to intent match
+    const byIntent = templates.filter((t) => t.cluster_filter?.intent === intent);
+    if (byIntent.length > 0) return byIntent;
+    return [templates[0]];
+  }
+  // Fallback template — single generic placeholder
+  return [
+    {
+      title: cluster_id.slice(0, 56),
+      title2: undefined,
+      text: `${cluster_id.slice(0, 75)}. ${site_url}`,
+    },
+  ];
+}
+
 /** Ensure directory exists. */
 function ensureDir(dirPath: string): void {
   if (!fs.existsSync(dirPath)) {
     fs.mkdirSync(dirPath, { recursive: true });
   }
+}
+
+/**
+ * Resolve daily budget in micros from the input.
+ * - If `daily_budget_amount` is provided, it is already in micros — use as-is.
+ * - Otherwise fall back to the deprecated `daily_budget_rub` multiplied by 1_000_000.
+ * Returns micros as a number ready to pass to the Direct API.
+ */
+export function resolveDailyBudgetMicros(input: Pick<UploadCampaignBundleInput, "daily_budget_amount" | "daily_budget_rub">): number {
+  if (input.daily_budget_amount !== undefined) {
+    return input.daily_budget_amount;
+  }
+  return (input.daily_budget_rub ?? 0) * 1_000_000;
+}
+
+/**
+ * Find an existing campaign by name in a list of campaigns returned by the API.
+ * Returns the Id if found and the campaign is in a reusable state, undefined otherwise.
+ * Pushes a warning to `warnings` (if provided) when a matched campaign is in a suspicious state.
+ * Pure function aside from the optional warnings push.
+ */
+export function findExistingCampaignId(
+  existingCampaigns: Array<{ Id: number; Name: string; Status?: string }>,
+  name: string,
+  warnings?: Array<{ cluster_id: string; step: string; error: string }>,
+  cluster_id?: string
+): number | undefined {
+  // Filter to non-ARCHIVED campaigns with the matching name
+  const nonArchivedMatches = existingCampaigns.filter(
+    (c) => c.Name === name && c.Status !== "ARCHIVED"
+  );
+
+  if (nonArchivedMatches.length === 0) {
+    return undefined;
+  }
+
+  // Fail-closed: if multiple non-ARCHIVED campaigns share the same name, refuse to guess
+  if (nonArchivedMatches.length > 1) {
+    throw new Error(
+      `Ambiguous dedupe: ${nonArchivedMatches.length} non-ARCHIVED campaigns named "${name}" ` +
+      `(IDs: ${nonArchivedMatches.map((c) => c.Id).join(", ")}). ` +
+      `Cannot safely deduplicate — resolve the duplicates in Yandex Direct UI first.`
+    );
+  }
+
+  const match = nonArchivedMatches[0];
+
+  // Warn on unexpected states (anything other than the normal active/draft states)
+  const NORMAL_STATES = new Set(["DRAFT", "ACTIVE", "SUSPENDED", "ENDED", "OFF", "CONVERTED"]);
+  if (match.Status !== undefined && !NORMAL_STATES.has(match.Status)) {
+    warnings?.push({
+      cluster_id: cluster_id ?? "unknown",
+      step: "dedupe",
+      error: `reusing campaign Id=${match.Id} Name="${name}" in unexpected state "${match.Status}" — verify it is not a stale/failed campaign`,
+    });
+  }
+
+  return match.Id;
+}
+
+/**
+ * Fetch all campaigns for the account (Id + Name + Status).
+ * Called once before processing clusters when dedupe_by_name=true.
+ * Paginates using Page.Limit + Page.Offset until all campaigns are fetched.
+ * THROWS on any API error (fail-closed) — a lookup failure must not silently
+ * fall back to create (that would produce duplicates).
+ *
+ * Exported for unit testing only.
+ */
+export async function fetchExistingCampaigns(
+  account_label: string | undefined,
+  client_login: string | undefined
+): Promise<Array<{ Id: number; Name: string; Status?: string }>> {
+  const PAGE_LIMIT = 10000;
+  const allCampaigns: Array<{ Id: number; Name: string; Status?: string }> = [];
+  let offset = 0;
+
+  for (;;) {
+    const result = await executeApiCall({
+      apiName: "direct",
+      endpoint: "/json/v5/campaigns",
+      method: "POST",
+      body: {
+        method: "get",
+        params: {
+          SelectionCriteria: {},
+          FieldNames: ["Id", "Name", "Status"],
+          Page: { Limit: PAGE_LIMIT, Offset: offset },
+        },
+      },
+      account: account_label,
+      client_login,
+    });
+
+    if (!result.ok) {
+      throw new Error(
+        `fetchExistingCampaigns failed (HTTP ${result.status}): ${JSON.stringify(result.body)}`
+      );
+    }
+
+    const data = result.data as {
+      result?: {
+        Campaigns?: Array<{ Id?: number; Name?: string; Status?: string }>;
+        LimitedBy?: number;
+      };
+    };
+
+    const page = (data?.result?.Campaigns ?? []).filter(
+      (c): c is { Id: number; Name: string; Status?: string } =>
+        typeof c.Id === "number" && typeof c.Name === "string"
+    );
+
+    allCampaigns.push(...page);
+
+    const limitedBy = data?.result?.LimitedBy;
+    if (limitedBy === undefined || page.length < PAGE_LIMIT) {
+      // No more pages
+      break;
+    }
+    offset = limitedBy;
+  }
+
+  return allCampaigns;
 }
 
 // ---------------------------------------------------------------------------
@@ -309,7 +573,7 @@ async function stage0DryRun(
     campaign_strategy: input.campaign_strategy,
     campaign_type: input.campaign_type,
     site_url: input.site_url,
-    daily_budget_rub: input.daily_budget_rub,
+    daily_budget_micros: resolveDailyBudgetMicros(input),
     region_ids: input.region_ids,
     bidding_strategy_type: input.bidding_strategy_type,
     metrika_counter_ids: input.metrika_counter_ids,
@@ -320,6 +584,15 @@ async function stage0DryRun(
     max_clusters: maxClusters,
     cluster_count: filteredEntries.length,
     campaign_names: plannedNames,
+    ad_templates: input.ad_templates ?? null,
+    bidding_strategy: input.bidding_strategy ?? null,
+    sitelinks_set: input.sitelinks_set ?? null,
+    promo_extension: input.promo_extension ?? null,
+    callout_ids: input.callout_ids ?? null,
+    image_hashes_keys: input.declared_image_keys !== undefined
+      ? (input.declared_image_keys ?? null)
+      : (input.image_hashes ? Object.keys(input.image_hashes) : null),
+    dedupe_by_name: input.dedupe_by_name ?? false,
   });
 
   const expectedAckLive = `I-UNDERSTAND-BUNDLE-LIVE:${yandexLogin}:${planHash.slice(0, 12)}`;
@@ -378,6 +651,8 @@ interface ProcessState {
   campaign_id_by_name: Map<string, number>;
   // Image URL → hash map (upload once, reuse)
   image_hash_by_url: Map<string, string>;
+  // Pre-fetched existing campaigns for deduplication (populated once when dedupe_by_name=true)
+  existing_campaigns: Array<{ Id: number; Name: string; Status?: string }>;
 }
 
 interface ClusterProcessInput {
@@ -389,6 +664,73 @@ interface ClusterProcessInput {
   rsya_image_urls: string[];
   account_label: string | undefined;
   client_login: string | undefined;
+}
+
+interface CreateCampaignArgs {
+  cluster_id: string;
+  campaignName: string;
+  state: ProcessState;
+  ledger: Ledger;
+  input: UploadCampaignBundleInput;
+  account_label: string | undefined;
+  client_login: string | undefined;
+}
+
+/**
+ * Call Campaigns.add for a single campaign.
+ * Returns the new campaign Id on success, or undefined on error (error is pushed to state).
+ */
+async function doCreateCampaign(args: CreateCampaignArgs): Promise<number | undefined> {
+  const { cluster_id, campaignName, state, ledger, input, account_label, client_login } = args;
+  const campaignSig = `campaign:${campaignName}`;
+  const campaignPayload = buildCampaignPayload({
+    type: input.campaign_type,
+    name: campaignName,
+    // Pass micros / 1_000_000 so buildCampaignPayload's internal × 1_000_000 restores the exact micros value.
+    daily_budget_rub: resolveDailyBudgetMicros(input) / 1_000_000,
+    bidding_strategy_type: input.bidding_strategy_type,
+    counter_ids: input.metrika_counter_ids,
+    bidding_strategy: input.bidding_strategy,
+  });
+
+  await ledger.writePending({ op: "campaign", signature: campaignSig, cluster_id });
+  state.attempted++;
+
+  const campResult = await executeApiCall({
+    apiName: "direct",
+    endpoint: "/json/v5/campaigns",
+    body: campaignPayload,
+    account: account_label,
+    client_login,
+  });
+
+  if (!campResult.ok) {
+    const errMsg = JSON.stringify(campResult.body);
+    await ledger.writeFailed(campaignSig, errMsg);
+    state.failed_count++;
+    state.errors.push({ cluster_id, step: "campaign_create", error: errMsg });
+    const body = campResult.body as { error?: { error_code?: number } };
+    if (body?.error?.error_code === 5004) {
+      throw new Error("Campaign limit reached (error_code 5004). Stopping pipeline.");
+    }
+    return undefined;
+  }
+
+  let campaign_id: number;
+  try {
+    campaign_id = extractId(campResult.data);
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    await ledger.writeFailed(campaignSig, errMsg);
+    state.failed_count++;
+    state.errors.push({ cluster_id, step: "campaign_create", error: errMsg });
+    return undefined;
+  }
+
+  await ledger.writeCommitted(campaignSig, campaign_id);
+  state.campaigns_created.push(campaign_id);
+  state.campaign_id_by_name.set(campaignName, campaign_id);
+  return campaign_id;
 }
 
 async function processCluster(opts: ClusterProcessInput): Promise<void> {
@@ -436,57 +778,34 @@ async function processCluster(opts: ClusterProcessInput): Promise<void> {
 
   if (state.campaign_id_by_name.has(campaignName)) {
     campaign_id = state.campaign_id_by_name.get(campaignName)!;
+  } else if (input.dedupe_by_name === true) {
+    // dedupe_by_name: existing campaigns fetched once before first cluster; reuse if name matches
+    const existingId = findExistingCampaignId(state.existing_campaigns, campaignName, state.errors, cluster_id);
+    if (existingId !== undefined) {
+      console.log(`[DEDUPE] deduped: skip create, reuse Id=${existingId} for "${campaignName}"`); // guardian: allow
+      state.campaign_id_by_name.set(campaignName, existingId);
+      campaign_id = existingId;
+    } else {
+      // Name not found in existing — fall through to create
+      const created = await doCreateCampaign(
+        { cluster_id, campaignName, state, ledger, input, account_label, client_login }
+      );
+      if (created === undefined) return;
+      campaign_id = created;
+    }
   } else {
-    const campaignSig = `campaign:${campaignName}`;
-    const campaignPayload = buildCampaignPayload({
-      type: input.campaign_type,
-      name: campaignName,
-      daily_budget_rub: input.daily_budget_rub,
-      bidding_strategy_type: input.bidding_strategy_type,
-      counter_ids: input.metrika_counter_ids,
-    });
-
-    await ledger.writePending({ op: "campaign", signature: campaignSig, cluster_id });
-    state.attempted++;
-
-    const campResult = await executeApiCall({
-      apiName: "direct",
-      endpoint: "/json/v5/campaigns",
-      body: campaignPayload,
-      account: account_label,
-      client_login,
-    });
-
-    if (!campResult.ok) {
-      const errMsg = JSON.stringify(campResult.body);
-      await ledger.writeFailed(campaignSig, errMsg);
-      state.failed_count++;
-      state.errors.push({ cluster_id, step: "campaign_create", error: errMsg });
-      // Check for campaign limit (error_code 5004)
-      const body = campResult.body as { error?: { error_code?: number } };
-      if (body?.error?.error_code === 5004) {
-        throw new Error("Campaign limit reached (error_code 5004). Stopping pipeline.");
-      }
-      return;
-    }
-
-    try {
-      campaign_id = extractId(campResult.data);
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      await ledger.writeFailed(campaignSig, errMsg);
-      state.failed_count++;
-      state.errors.push({ cluster_id, step: "campaign_create", error: errMsg });
-      return;
-    }
-
-    await ledger.writeCommitted(campaignSig, campaign_id);
-    state.campaigns_created.push(campaign_id);
-    state.campaign_id_by_name.set(campaignName, campaign_id);
+    const created = await doCreateCampaign(
+      { cluster_id, campaignName, state, ledger, input, account_label, client_login }
+    );
+    if (created === undefined) return;
+    campaign_id = created;
   }
 
   // ---- AdGroup create ----
-  const adGroupName = `adgroup-${cluster_id}`;
+  const markerQuery = rows[0]?.marker_query?.trim() ?? "";
+  const adGroupName = (markerQuery.length > 0
+    ? markerQuery.slice(0, 255)
+    : `adgroup-${cluster_id}`);
   const adGroupSig = `adgroup:${cluster_id}`;
   const adGroupPayload = buildAdGroupPayload({
     campaign_id,
@@ -572,9 +891,103 @@ async function processCluster(opts: ClusterProcessInput): Promise<void> {
     }
   }
 
+  // ---- Autotargeting update (keyword-based, after keywords are created) ----
+  // The ---autotargeting keyword is auto-created by Direct when the ad group is populated.
+  // Mechanism: GET keywords to find the ---autotargeting kw Id, then Keywords.update it.
+  {
+    const explicitCategories = input.autotargeting_per_group?.[cluster_id];
+    let rawCategories: Array<{ Category: string; Value: "YES" | "NO" }> | null = null;
+
+    if (explicitCategories !== undefined) {
+      rawCategories = explicitCategories;
+    } else if (input.campaign_type === "search") {
+      // Search default: disable broader/accessory/alternative discovery
+      rawCategories = [
+        { Category: "BROADER", Value: "NO" },
+        { Category: "ACCESSORY", Value: "NO" },
+        { Category: "ALTERNATIVE", Value: "NO" },
+      ];
+    }
+    // For RSYA without explicit override: skip autotargeting
+
+    if (rawCategories !== null) {
+      // Map legacy names to API names; drop unmappable (TARGET_QUERIES etc.)
+      // Then sanitize: drop {EXACT,NO} and guard against all-off (Yandex Code 5005)
+      const categories = sanitizeAutotargetingCategories(
+        rawCategories
+          .map((c) => {
+            const apiName = mapAutotargetingCategoryName(c.Category);
+            return apiName ? { Category: apiName, Value: c.Value } : null;
+          })
+          .filter((c): c is { Category: string; Value: "YES" | "NO" } => c !== null),
+      );
+
+      // GET keywords for this ad group to find the ---autotargeting keyword
+      const kwGetResult = await executeApiCall({
+        apiName: "direct",
+        endpoint: "/json/v5/keywords",
+        body: {
+          method: "get",
+          params: {
+            SelectionCriteria: { AdGroupIds: [ad_group_id] },
+            FieldNames: ["Id", "Keyword"],
+          },
+        },
+        account: account_label,
+        client_login,
+      });
+
+      if (!kwGetResult.ok) {
+        const errMsg = JSON.stringify(kwGetResult.body);
+        console.warn(`[WARN] autotargeting kw lookup failed for cluster ${cluster_id}: ${errMsg}`); // guardian: allow
+        state.errors.push({ cluster_id, step: "autotargeting", error: `kw_lookup: ${errMsg}` });
+        // Non-fatal: continue
+      } else {
+        const kwItems = (kwGetResult.data as { result?: { Keywords?: Array<{ Id: number; Keyword: string }> } })
+          ?.result?.Keywords ?? [];
+        const atKw = kwItems.find((k) => k.Keyword === "---autotargeting");
+
+        if (!atKw) {
+          console.warn(`[WARN] ---autotargeting keyword not found for ad_group ${ad_group_id} (cluster ${cluster_id})`); // guardian: allow
+          state.errors.push({ cluster_id, step: "autotargeting", error: "---autotargeting keyword not found" });
+          // Non-fatal: continue
+        } else {
+          const atPayload = buildAutoTargetingUpdatePayload({
+            autotargeting_keyword_id: atKw.Id,
+            categories,
+          });
+          const atResult = await executeApiCall({
+            apiName: "direct",
+            endpoint: "/json/v5/keywords",
+            body: atPayload,
+            account: account_label,
+            client_login,
+          });
+
+          if (!atResult.ok) {
+            const errMsg = JSON.stringify(atResult.body);
+            console.warn(`[WARN] autotargeting update failed for cluster ${cluster_id}: ${errMsg}`); // guardian: allow
+            state.errors.push({ cluster_id, step: "autotargeting", error: errMsg });
+            // Non-fatal: continue
+          } else {
+            const updateResults = (atResult.data as { result?: { UpdateResults?: Array<{ Id?: number; Errors?: Array<{ Code: number; Message: string }> }> } })
+              ?.result?.UpdateResults;
+            const firstUpdateResult = updateResults?.[0];
+            if (firstUpdateResult?.Errors && firstUpdateResult.Errors.length > 0) {
+              const itemErrMsg = JSON.stringify(firstUpdateResult.Errors);
+              console.warn(`[WARN] autotargeting item error for cluster ${cluster_id}: ${itemErrMsg}`); // guardian: allow
+              state.errors.push({ cluster_id, step: "autotargeting", error: itemErrMsg });
+              // Non-fatal: continue
+            }
+          }
+        }
+      }
+    }
+  }
+
   // ---- Ads ----
   const adsPerGroup = input.ads_per_group ?? 3;
-  const tmpl = pickAdTemplate(
+  const adTemplates = pickAdTemplatesForCluster(
     cluster_id,
     intent,
     input.ad_templates,
@@ -584,16 +997,19 @@ async function processCluster(opts: ClusterProcessInput): Promise<void> {
 
   const isRsya = input.campaign_type === "rsya" || input.campaign_type === "rsya-only";
 
-  // TGO ads (search or rsya with text)
-  const adCount = Math.min(adsPerGroup, isRsya ? 1 : adsPerGroup);
+  // TGO ads (search or rsya with text) — one ad per distinct template, capped at ads_per_group
+  const adCount = Math.min(adsPerGroup, isRsya ? 1 : adTemplates.length);
   for (let i = 0; i < adCount; i++) {
+    const tmpl = adTemplates[i];
     const adSig = `ad_tgo:${cluster_id}:v${i}`;
     const adPayload = buildAdTgoPayload({
       ad_group_id,
       title: tmpl.title,
       title2: tmpl.title2,
       text: tmpl.text,
-      href: input.site_url,
+      href: tmpl.href ?? input.site_url,
+      sitelinks_set_id: input.sitelinks_set_id,
+      ad_extensions: input.callout_ids,
     });
 
     await ledger.writePending({ op: "ad_tgo", signature: adSig, cluster_id, parent_id: ad_group_id });
@@ -608,105 +1024,177 @@ async function processCluster(opts: ClusterProcessInput): Promise<void> {
     });
 
     if (!adResult.ok) {
-      const body = adResult.body as { error?: { error_code?: number } };
       const errMsg = JSON.stringify(adResult.body);
       await ledger.writeFailed(adSig, errMsg);
       state.failed_count++;
-      // Skip variant on validation error (8000), continue per error matrix
-      if (body?.error?.error_code !== 8000) {
-        state.errors.push({ cluster_id, step: "ad_create", error: errMsg });
-      }
+      // All ad errors are surfaced in state.errors (including code 8000 validation errors)
+      state.errors.push({ cluster_id, step: "ad_create", error: errMsg });
     } else {
-      try {
-        const ad_id = extractId(adResult.data);
+      const addResults = (adResult.data as { result?: { AddResults?: Array<{ Id?: number; Errors?: Array<{ Code: number; Message: string }> }> } })
+        ?.result?.AddResults;
+      const firstResult = addResults?.[0];
+      if (firstResult?.Id !== undefined) {
+        const ad_id = firstResult.Id;
         await ledger.writeCommitted(adSig, ad_id, ad_group_id);
         state.ads_created.push(ad_id);
-      } catch {
+      } else if (firstResult?.Errors && firstResult.Errors.length > 0) {
+        // Surface item-level Direct API errors (HTTP 200 but item failed)
+        const itemErrMsg = JSON.stringify(firstResult.Errors);
+        await ledger.writeFailed(adSig, itemErrMsg);
+        state.failed_count++;
+        state.errors.push({ cluster_id, step: "ad_create", error: itemErrMsg });
+      } else {
         await ledger.writeFailed(adSig, "id_extraction_failed");
         state.failed_count++;
       }
     }
   }
 
-  // RSYA image ads
-  if (isRsya && rsya_image_urls.length > 0) {
-    // Round-robin image selection
-    const imageUrl = rsya_image_urls[state.ad_groups_created.length % rsya_image_urls.length];
+  // RSYA image ads — try image_hashes (YAML-driven) first, then rsya_image_urls (legacy CSV path)
+  // Creates ResponsiveAd via /json/v501/ads (v5 returns error 3500 for ResponsiveAd).
+  // Tolerates per-image rejection (e.g. Code 5004 for wrong aspect ratio): skips rejected images,
+  // proceeds with any successfully uploaded hashes. Falls back to text-only if 0 hashes succeed.
+  const hasImageHashes = input.image_hashes && Object.keys(input.image_hashes).length > 0;
+  if (isRsya && (hasImageHashes || rsya_image_urls.length > 0)) {
+    const collectedHashes: string[] = [];
 
-    // Upload image once per URL (cache)
-    let imageHash = state.image_hash_by_url.get(imageUrl);
-    if (!imageHash) {
-      try {
-        const { base64, format } = await fetchImageAsBase64(imageUrl);
-        const imgSig = `image:${imageUrl.slice(0, 80)}`;
-        const imgPayload = buildImageUploadPayload({ base64, format });
-
-        await ledger.writePending({ op: "image", signature: imgSig, cluster_id });
-        state.attempted++;
-
-        const imgResult = await executeApiCall({
-          apiName: "direct",
-          endpoint: "/json/v5/adimages",
-          body: imgPayload,
-          account: account_label,
-          client_login,
-        });
-
-        if (!imgResult.ok) {
-          const errMsg = JSON.stringify(imgResult.body);
-          await ledger.writeFailed(imgSig, errMsg);
-          state.failed_count++;
-          // Continue with text-only ads per error matrix
-        } else {
-          imageHash = extractImageHash(imgResult.data);
-          await ledger.writeCommitted(imgSig, imageHash);
-          state.image_hash_by_url.set(imageUrl, imageHash);
-          state.images_uploaded.push(imageHash);
+    if (hasImageHashes) {
+      // YAML-driven path: all pre-uploaded hashes are already available — use up to 5
+      const hashValues = Object.values(input.image_hashes!);
+      for (const h of hashValues) {
+        if (h && !collectedHashes.includes(h)) {
+          collectedHashes.push(h);
         }
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        state.errors.push({ cluster_id, step: "image_upload", error: errMsg });
-        // Fall through to text-only ads
+        if (collectedHashes.length >= 5) break;
+      }
+      for (const h of collectedHashes) {
+        if (!state.images_uploaded.includes(h)) {
+          state.images_uploaded.push(h);
+        }
+      }
+    } else {
+      // Legacy CSV path: upload images from URLs on demand; tolerate per-image rejection
+      for (const imageUrl of rsya_image_urls) {
+        if (collectedHashes.length >= 5) break;
+
+        // Upload image once per URL (cache)
+        const cachedHash = state.image_hash_by_url.get(imageUrl);
+        if (cachedHash) {
+          if (!collectedHashes.includes(cachedHash)) collectedHashes.push(cachedHash);
+          continue;
+        }
+
+        try {
+          const { base64, format } = await fetchImageAsBase64(imageUrl);
+          const imgSig = `image:${imageUrl.slice(0, 80)}`;
+          const imgPayload = buildImageUploadPayload({ base64, format });
+
+          await ledger.writePending({ op: "image", signature: imgSig, cluster_id });
+          state.attempted++;
+
+          const imgResult = await executeApiCall({
+            apiName: "direct",
+            endpoint: "/json/v5/adimages",
+            body: imgPayload,
+            account: account_label,
+            client_login,
+          });
+
+          if (!imgResult.ok) {
+            const errMsg = JSON.stringify(imgResult.body);
+            await ledger.writeFailed(imgSig, errMsg);
+            state.failed_count++;
+            // Tolerate: log warning but continue collecting other hashes
+            state.errors.push({ cluster_id, step: "image_upload", error: `url=${imageUrl.slice(0, 60)}: ${errMsg}` });
+          } else {
+            // Check for item-level errors (e.g. Code 5004 — wrong aspect ratio)
+            const imgAddResult = (imgResult.data as { result?: { AddResults?: Array<{ AdImageHash?: string; Errors?: Array<{ Code: number; Message: string }> }> } })
+              ?.result?.AddResults?.[0];
+            if (imgAddResult?.Errors && imgAddResult.Errors.length > 0) {
+              const itemErrMsg = JSON.stringify(imgAddResult.Errors);
+              await ledger.writeFailed(imgSig, itemErrMsg);
+              // Tolerate per-image rejection: warn and continue
+              state.errors.push({ cluster_id, step: "image_upload", error: `url=${imageUrl.slice(0, 60)} rejected: ${itemErrMsg}` });
+            } else {
+              const uploadedHash = extractImageHash(imgResult.data);
+              await ledger.writeCommitted(imgSig, uploadedHash);
+              state.image_hash_by_url.set(imageUrl, uploadedHash);
+              state.images_uploaded.push(uploadedHash);
+              if (!collectedHashes.includes(uploadedHash)) collectedHashes.push(uploadedHash);
+            }
+          }
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          state.errors.push({ cluster_id, step: "image_upload", error: errMsg });
+          // Fall through to next URL
+        }
       }
     }
 
-    // RSYA ad with image (if hash available)
-    if (imageHash) {
-      for (let i = 0; i < (adsPerGroup - 1); i++) {
-        const rsyaSig = `ad_rsya:${cluster_id}:v${i}`;
-        const rsyaPayload = buildAdRsyaPayload({
-          ad_group_id,
-          ad_image_hash: imageHash,
-          title: tmpl.title,
-          title2: tmpl.title2,
-          text: tmpl.text,
-          href: input.site_url,
-        });
+    // RSYA combinatorial ResponsiveAd — ONE per group, via /json/v501/ads.
+    // Titles/Texts sourced from combinatorial_per_group pool when present;
+    // falls back to deriving from the template (title, title2, text) when no pool.
+    if (collectedHashes.length > 0) {
+      // Resolve titles/texts from pool or fall back to template-derived
+      const pool = input.combinatorial_per_group?.[cluster_id];
+      let rsyaTitles: string[];
+      let rsyaTexts: string[];
 
-        await ledger.writePending({ op: "ad_rsya", signature: rsyaSig, cluster_id, parent_id: ad_group_id });
-        state.attempted++;
+      if (pool && pool.headlines.length > 0 && pool.texts.length > 0) {
+        rsyaTitles = pool.headlines.slice(0, 7);
+        rsyaTexts = pool.texts.slice(0, 3);
+      } else {
+        // Fallback: derive from the first template beyond TGO slot, or first template
+        const tgoCount = adCount;
+        const fallbackTmpl = adTemplates[tgoCount] ?? adTemplates[0];
+        rsyaTitles = [fallbackTmpl.title];
+        if (fallbackTmpl.title2) rsyaTitles.push(fallbackTmpl.title2);
+        rsyaTexts = [fallbackTmpl.text];
+      }
 
-        const rsyaResult = await executeApiCall({
-          apiName: "direct",
-          endpoint: "/json/v5/ads",
-          body: rsyaPayload,
-          account: account_label,
-          client_login,
-        });
+      const rsyaCombSig = `ad_rsya_comb:${cluster_id}`;
+      const rsyaPayload = buildResponsiveAdPayload({
+        ad_group_id,
+        Titles: rsyaTitles,
+        Texts: rsyaTexts,
+        Href: (pool ? adTemplates[0]?.href : adTemplates[adCount]?.href ?? adTemplates[0]?.href) ?? input.site_url,
+        AdImageHashes: collectedHashes,
+        SitelinkSetId: input.sitelinks_set_id,
+        AdExtensionIds: input.callout_ids,
+      });
 
-        if (!rsyaResult.ok) {
-          const errMsg = JSON.stringify(rsyaResult.body);
-          await ledger.writeFailed(rsyaSig, errMsg);
+      await ledger.writePending({ op: "ad_rsya", signature: rsyaCombSig, cluster_id, parent_id: ad_group_id });
+      state.attempted++;
+
+      const rsyaResult = await executeApiCall({
+        apiName: "direct",
+        endpoint: "/json/v501/ads",
+        body: rsyaPayload,
+        account: account_label,
+        client_login,
+      });
+
+      if (!rsyaResult.ok) {
+        const errMsg = JSON.stringify(rsyaResult.body);
+        await ledger.writeFailed(rsyaCombSig, errMsg);
+        state.failed_count++;
+        state.errors.push({ cluster_id, step: "ad_rsya_create", error: errMsg });
+      } else {
+        const rsyaAddResults = (rsyaResult.data as { result?: { AddResults?: Array<{ Id?: number; Errors?: Array<{ Code: number; Message: string }> }> } })
+          ?.result?.AddResults;
+        const rsyaFirstResult = rsyaAddResults?.[0];
+        if (rsyaFirstResult?.Id !== undefined) {
+          const ad_id = rsyaFirstResult.Id;
+          await ledger.writeCommitted(rsyaCombSig, ad_id, ad_group_id);
+          state.ads_created.push(ad_id);
+        } else if (rsyaFirstResult?.Errors && rsyaFirstResult.Errors.length > 0) {
+          const itemErrMsg = JSON.stringify(rsyaFirstResult.Errors);
+          await ledger.writeFailed(rsyaCombSig, itemErrMsg);
           state.failed_count++;
+          state.errors.push({ cluster_id, step: "ad_rsya_create", error: itemErrMsg });
         } else {
-          try {
-            const ad_id = extractId(rsyaResult.data);
-            await ledger.writeCommitted(rsyaSig, ad_id, ad_group_id);
-            state.ads_created.push(ad_id);
-          } catch {
-            await ledger.writeFailed(rsyaSig, "id_extraction_failed");
-            state.failed_count++;
-          }
+          await ledger.writeFailed(rsyaCombSig, "id_extraction_failed");
+          state.failed_count++;
         }
       }
     }
@@ -755,6 +1243,11 @@ async function stage1Canary(
   const ledgerPath = path.join(ledgerDir, `bundle-ledger-${planHash.slice(0, 12)}-${ts}.jsonl`);
   const ledger = await openLedger(ledgerPath);
 
+  // Pre-fetch existing campaigns once if dedupe_by_name is enabled
+  const existingCampaigns = input.dedupe_by_name === true
+    ? await fetchExistingCampaigns(input.account, undefined)
+    : [];
+
   const state: ProcessState = {
     campaigns_created: [],
     ad_groups_created: [],
@@ -766,6 +1259,7 @@ async function stage1Canary(
     failed_count: 0,
     campaign_id_by_name: new Map(),
     image_hash_by_url: new Map(),
+    existing_campaigns: existingCampaigns,
   };
 
   const rsyaImageUrls = input.rsya_image_urls ?? [];
@@ -822,13 +1316,11 @@ async function stage1Canary(
     };
   }
 
-  // Count must match what stage2Continuation will read from ledger (all committed entries including keywords + images).
-  const committedCount =
-    state.campaigns_created.length +
-    state.ad_groups_created.length +
-    state.keywords_added +
-    state.ads_created.length +
-    state.images_uploaded.length;
+  // Count committed ledger entries — must match what stage2Continuation will read from the same ledger.
+  // Read from ledger directly (not from in-memory state) so that pre-uploaded images passed via
+  // image_hashes (which are not written to the ledger) are excluded from the count.
+  const allLedgerEntries = await ledger.readAll();
+  const committedCount = allLedgerEntries.filter((e) => e.state === "committed").length;
   const expectedContinuationAck = `I-UNDERSTAND-CONTINUE-LIVE:${yandexLogin}:${planHash.slice(0, 12)}:${committedCount}`;
 
   console.log("\n=== CANARY PASSED ==="); // guardian: allow
@@ -916,6 +1408,11 @@ async function stage2Continuation(
     );
   }
 
+  // Pre-fetch existing campaigns once if dedupe_by_name is enabled
+  const existingCampaignsStage2 = input.dedupe_by_name === true
+    ? await fetchExistingCampaigns(input.account, undefined)
+    : [];
+
   // Restore state from prior ledger entries
   const state: ProcessState = {
     campaigns_created: [],
@@ -928,6 +1425,7 @@ async function stage2Continuation(
     failed_count: 0,
     campaign_id_by_name: new Map(),
     image_hash_by_url: new Map(),
+    existing_campaigns: existingCampaignsStage2,
   };
 
   // Rebuild campaign_id_by_name from prior committed entries
@@ -969,6 +1467,32 @@ async function stage2Continuation(
         state.errors.push({ cluster_id, step: "cluster_loop", error: errMsg });
         break;
       }
+    }
+
+    // Stage 2 error rate check — mirrors Stage 1 canary abort logic
+    const abortOnErrorRate = input.abort_on_error_rate ?? 0.3;
+    const bulkErrorRate = state.attempted > 0 ? state.failed_count / state.attempted : 0;
+    if (bulkErrorRate >= abortOnErrorRate) {
+      return {
+        dry_run: false,
+        total_clusters: totalClusters,
+        clusters_processed: canaryCount + bulkSlice.length,
+        campaigns_created: state.campaigns_created,
+        ad_groups_created: state.ad_groups_created,
+        keywords_added: state.keywords_added,
+        ads_created: state.ads_created,
+        images_uploaded: state.images_uploaded,
+        metrika_linked: false,
+        canary_passed: true,
+        ledger_path: ledgerPath,
+        errors: state.errors,
+        stage: "bulk_aborted",
+        recovery_command: `npx tsx scripts/bundle-recovery.ts --ledger "${ledgerPath}"`,
+        next_actions: [
+          `Bulk error rate ${(bulkErrorRate * 100).toFixed(1)}% >= threshold ${(abortOnErrorRate * 100).toFixed(1)}%. Campaign bundle is INCOMPLETE.`,
+          `Review errors above, then run recovery: npx tsx scripts/bundle-recovery.ts --ledger "${ledgerPath}"`,
+        ],
+      };
     }
 
     // Metrika linking
@@ -1126,7 +1650,7 @@ export async function uploadCampaignBundle(
     campaign_strategy: input.campaign_strategy,
     campaign_type: input.campaign_type,
     site_url: input.site_url,
-    daily_budget_rub: input.daily_budget_rub,
+    daily_budget_micros: resolveDailyBudgetMicros(input),
     region_ids: input.region_ids,
     bidding_strategy_type: input.bidding_strategy_type,
     metrika_counter_ids: input.metrika_counter_ids,
@@ -1137,6 +1661,15 @@ export async function uploadCampaignBundle(
     max_clusters: maxClusters,
     cluster_count: filteredEntries.length,
     campaign_names: plannedNames,
+    ad_templates: input.ad_templates ?? null,
+    bidding_strategy: input.bidding_strategy ?? null,
+    sitelinks_set: input.sitelinks_set ?? null,
+    promo_extension: input.promo_extension ?? null,
+    callout_ids: input.callout_ids ?? null,
+    image_hashes_keys: input.declared_image_keys !== undefined
+      ? (input.declared_image_keys ?? null)
+      : (input.image_hashes ? Object.keys(input.image_hashes) : null),
+    dedupe_by_name: input.dedupe_by_name ?? false,
   });
 
   const expectedAckLive = `I-UNDERSTAND-BUNDLE-LIVE:${yandexLogin}:${planHash.slice(0, 12)}`;

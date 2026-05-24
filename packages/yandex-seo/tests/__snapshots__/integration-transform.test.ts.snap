@@ -1,0 +1,96 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Snapshot — extractAdTemplates(bundle) shape > matches snapshot of real GCE bundle (3 groups = cl01 + cl04 + cl06) 1`] = `
+[
+  {
+    "cluster_filter": {
+      "cluster_id_pattern": "^1$",
+    },
+    "href": "https://gas-cleaning.ru/",
+    "text": "Производим под объект Заказчика. Расчёт за 1 час. 30+ лет на рынке РФ и СНГ.",
+    "title": "Скруббер — аппарат газоочистки от ПЗГО",
+    "title2": "Вентури и насадочные",
+    "variant_label": "1-v0",
+  },
+  {
+    "cluster_filter": {
+      "cluster_id_pattern": "^1$",
+    },
+    "href": "https://gas-cleaning.ru/",
+    "text": "Производим для металлургии, химии, ТЭС. Подбор под газ, температуру, фракцию.",
+    "title": "Что такое скруббер и зачем он нужен",
+    "title2": "Покажем оборудование",
+    "variant_label": "1-v1",
+  },
+  {
+    "cluster_filter": {
+      "cluster_id_pattern": "^1$",
+    },
+    "href": "https://gas-cleaning.ru/",
+    "text": "Расчёт, проект, поставка, монтаж. 150+ проектов в металлургии, химии, энергетике.",
+    "title": "Скрубберы для очистки промышленных газов",
+    "title2": "ПЗГО — производитель",
+    "variant_label": "1-v2",
+  },
+  {
+    "cluster_filter": {
+      "cluster_id_pattern": "^4$",
+    },
+    "href": "https://gas-cleaning.ru/",
+    "text": "Серии ФРКИ, ФРИ, ФРИП. Очистка до 99,9%. Поставка от 1 модуля до батарей.",
+    "title": "Рукавные фильтры ФРКИ от ПЗГО",
+    "title2": "Расчёт под объект за 1 час",
+    "variant_label": "4-v0",
+  },
+  {
+    "cluster_filter": {
+      "cluster_id_pattern": "^4$",
+    },
+    "href": "https://gas-cleaning.ru/",
+    "text": "Производим блоки и батареи. Металлургия, ТЭЦ, цемент. КП в течение 1 часа.",
+    "title": "Промышленные рукавные фильтры",
+    "title2": "Опыт 30+ лет, 150+ проектов",
+    "variant_label": "4-v1",
+  },
+  {
+    "cluster_filter": {
+      "cluster_id_pattern": "^4$",
+    },
+    "href": "https://gas-cleaning.ru/",
+    "text": "Подбор под газ и пыль. Проект, документация, шеф-монтаж. Поставка по РФ и СНГ.",
+    "title": "Рукавный фильтр для производства",
+    "title2": "Изготовление от 30 дней",
+    "variant_label": "4-v2",
+  },
+  {
+    "cluster_filter": {
+      "cluster_id_pattern": "^6$",
+    },
+    "href": "https://gas-cleaning.ru/",
+    "text": "Циклоны, рукавные, мокрые. Очистка до 99,9%. Опыт — цемент, металлургия, ТЭС.",
+    "title": "Промышленные пылеуловители от ПЗГО",
+    "title2": "ЦН-11, ЦН-15, ЦН-24",
+    "variant_label": "6-v0",
+  },
+  {
+    "cluster_filter": {
+      "cluster_id_pattern": "^6$",
+    },
+    "href": "https://gas-cleaning.ru/",
+    "text": "Поставка от 1 единицы. Документация, шеф-монтаж, заводская гарантия по договору.",
+    "title": "Пылеуловитель для цеха и завода",
+    "title2": "Расчёт от инженера за 1 час",
+    "variant_label": "6-v1",
+  },
+  {
+    "cluster_filter": {
+      "cluster_id_pattern": "^6$",
+    },
+    "href": "https://gas-cleaning.ru/",
+    "text": "Под газ, температуру и состав пыли. КП за 1 час. Изготовление от 30 дней.",
+    "title": "Пылеуловитель промышленный — ПЗГО",
+    "title2": "Доставка по РФ и СНГ",
+    "variant_label": "6-v2",
+  },
+]
+`;

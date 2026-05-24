@@ -1,0 +1,4 @@
+# Runtime ledgers from smoke tests
+scripts/.b3-smoke-ledger.jsonl
+scripts/.*-smoke-ledger.jsonl
+scripts/.*-ledger.jsonl

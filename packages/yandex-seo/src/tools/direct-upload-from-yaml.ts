@@ -1,11 +1,15 @@
 import { z } from "zod";
 import { loadCampaignFolder, resolveRefs } from "../lib/yaml-loader.js";
 import { executeApiCall } from "../lib/api-gateway.js";
-import { buildSitelinksSetPayload, buildPromoExtensionPayload } from "../lib/payload-builder.js";
-import { uploadCampaignBundle } from "../lib/upload-pipeline.js";
+import { buildSitelinksSetPayload, buildPromoExtensionPayload, buildCalloutPayload } from "../lib/payload-builder.js";
+import { uploadCampaignBundle, type AdTemplate, type CampaignStrategy } from "../lib/upload-pipeline.js";
 import { runDirectUploadImage } from "./direct-upload-image.js";
+import { normalizeAdImage } from "../lib/image-normalize.js";
 import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
 import type { AdSchema } from "../lib/yaml-schema.js";
+import { validateLiveAck } from "../lib/api/confirm-gate.js";
+import { resolveAccount } from "../lib/account-resolver.js";
+import { SCOPES } from "../lib/scopes.js";
 
 /** Narrow the first ad in a group to extract Href for site_url fallback. */
 function extractFirstHref(ad: z.infer<typeof AdSchema> | undefined): string | undefined {
@@ -39,7 +43,7 @@ async function buildSyntheticCsv(bundle: ReturnType<typeof loadCampaignFolder>):
   const lines: string[] = [BOM + header];
   for (const g of bundle.groups) {
     const clusterId = g._meta?.cluster_id ?? g.group.Name.split("_")[0] ?? "1";
-    const marker = g.keywords[0]?.Keyword ?? "";
+    const marker = g._meta?.marker_query ?? g.keywords[0]?.Keyword ?? "";
     const intent = g._meta?.intent ?? "informational";
     for (const k of g.keywords) {
       lines.push(`${clusterId};${marker};${k.Keyword};${intent};100;100;100;100;5;5;5;5;1;1;10;10;5;5;10;10;1;1;1;5;RUB`);
@@ -56,6 +60,122 @@ function extractBiddingStrategy(
   const raw = tc?.BiddingStrategy?.Search?.BiddingStrategyType;
   if (raw === "WB_DAILY_BUDGET" || raw === "AVERAGE_CPC") return raw;
   return "HIGHEST_POSITION";
+}
+
+/** Build ad_templates from YAML groups so pickAdTemplate receives real ad texts. */
+export function extractAdTemplates(bundle: ReturnType<typeof loadCampaignFolder>): AdTemplate[] {
+  return bundle.groups.flatMap((g, gi) => {
+    const clusterId = g._meta?.cluster_id ?? g.group.Name.split("_")[0] ?? String(gi);
+    return g.ads
+      .filter((ad) => ad.Type === "TEXT_AD" || ad.Type === "TEXT_IMAGE_AD")
+      .map((ad, ai) => {
+        const title =
+          ad.Type === "TEXT_AD"
+            ? (ad.TextAd?.Title ?? "")
+            : (ad.TextImageAd?.Title ?? "");
+        const title2 =
+          ad.Type === "TEXT_AD"
+            ? ad.TextAd?.Title2
+            : ad.TextImageAd?.Title2;
+        const text =
+          ad.Type === "TEXT_AD"
+            ? (ad.TextAd?.Text ?? "")
+            : (ad.TextImageAd?.Text ?? "");
+        const href =
+          ad.Type === "TEXT_AD"
+            ? ad.TextAd?.Href
+            : ad.TextImageAd?.Href;
+        return {
+          variant_label: `${clusterId}-v${ai}`,
+          title,
+          title2,
+          text,
+          href,
+          cluster_filter: { cluster_id_pattern: `^${clusterId}$` },
+        } satisfies AdTemplate;
+      });
+  });
+}
+
+/**
+ * Build autotargeting_per_group from bundle group AutoTargetingCategories.
+ * Returns Record<cluster_id, Array<{Category, Value}>> for all groups that have
+ * AutoTargetingCategories.Items defined.
+ */
+function buildAutotargetingPerGroup(
+  bundle: ReturnType<typeof loadCampaignFolder>
+): Record<string, Array<{ Category: string; Value: string }>> {
+  const result: Record<string, Array<{ Category: string; Value: string }>> = {};
+  for (const g of bundle.groups) {
+    const items = g.group.AutoTargetingCategories?.Items;
+    if (!items || items.length === 0) continue;
+    const clusterId = g._meta?.cluster_id ?? g.group.Name.split("_")[0] ?? g.group.Name;
+    result[clusterId] = items as Array<{ Category: string; Value: string }>;
+  }
+  return result;
+}
+
+/**
+ * Extract combinatorial headline/text pools per cluster.
+ * If the group has an explicit `combinatorial` field, use that (already capped by schema).
+ * Otherwise derive: headlines = unique([Title, Title2]) capped to 7; texts = unique([Text]) capped to 3.
+ */
+export function extractCombinatorialPools(
+  bundle: ReturnType<typeof loadCampaignFolder>
+): Record<string, { headlines: string[]; texts: string[] }> {
+  const result: Record<string, { headlines: string[]; texts: string[] }> = {};
+  for (const g of bundle.groups) {
+    const clusterId = g._meta?.cluster_id ?? g.group.Name.split("_")[0] ?? g.group.Name;
+    if (g.combinatorial) {
+      result[clusterId] = {
+        headlines: g.combinatorial.headlines.slice(0, 7),
+        texts: g.combinatorial.texts.slice(0, 3),
+      };
+    } else {
+      const headlineSet = new Set<string>();
+      const textSet = new Set<string>();
+      for (const ad of g.ads) {
+        if (ad.Type === "TEXT_AD") {
+          if (ad.TextAd?.Title) headlineSet.add(ad.TextAd.Title);
+          if (ad.TextAd?.Title2) headlineSet.add(ad.TextAd.Title2);
+          if (ad.TextAd?.Text) textSet.add(ad.TextAd.Text);
+        } else if (ad.Type === "TEXT_IMAGE_AD") {
+          if (ad.TextImageAd?.Title) headlineSet.add(ad.TextImageAd.Title);
+          if (ad.TextImageAd?.Title2) headlineSet.add(ad.TextImageAd.Title2);
+          if (ad.TextImageAd?.Text) textSet.add(ad.TextImageAd.Text);
+        }
+      }
+      result[clusterId] = {
+        headlines: Array.from(headlineSet).slice(0, 7),
+        texts: Array.from(textSet).slice(0, 3),
+      };
+    }
+  }
+  return result;
+}
+
+/**
+ * Resolve campaign_type from the bundle's TextCampaign BiddingStrategy.
+ * Returns "rsya" when Network is active (non-SERVING_OFF) and Search is SERVING_OFF.
+ * Returns "search" otherwise.
+ */
+export function resolveCampaignType(bundle: ReturnType<typeof loadCampaignFolder>): "search" | "rsya" {
+  const bs = bundle.campaign.campaign.TextCampaign?.BiddingStrategy;
+  const networkType = bs?.Network?.BiddingStrategyType;
+  const searchType = bs?.Search?.BiddingStrategyType;
+  if (searchType === "SERVING_OFF" && networkType !== undefined && networkType !== "SERVING_OFF") {
+    return "rsya";
+  }
+  return "search";
+}
+
+/** Resolve campaign_strategy from bundle upload_strategy field. */
+export function resolveCampaignStrategy(bundle: ReturnType<typeof loadCampaignFolder>): CampaignStrategy {
+  const uploadStrategy = bundle.campaign.upload_strategy ?? "one-per-cluster";
+  if (uploadStrategy === "single-campaign") {
+    return { mode: "single-campaign", campaign_name: bundle.campaign.campaign.Name };
+  }
+  return { mode: "one-per-cluster" };
 }
 
 export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>) {
@@ -79,6 +199,10 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
     const camp = bundle.campaign.campaign;
     const tc = camp.TextCampaign;
 
+    // Image keys declared in the bundle — stable at both dry-run and live time.
+    // Used as the plan_hash image input so dry and live hashes always agree.
+    const declaredImageKeys = Object.keys(bundle.campaign.images ?? {}).sort();
+
     // Derive site_url from first ad Href in YAML if not provided
     const siteUrl: string =
       parsed.site_url
@@ -88,7 +212,6 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
     // Build or use provided CSV path (required by uploadCampaignBundle)
     const csvPath = parsed.csv_path ?? await buildSyntheticCsv(bundle);
 
-    const dailyBudgetRub = Math.floor(camp.DailyBudget.Amount / 1_000_000);
     const regionIds = bundle.groups[0]?.group.RegionIds ?? [213];
     const biddingStrategyType = extractBiddingStrategy(tc);
     const counterIds = tc?.CounterIds?.Items;
@@ -97,27 +220,36 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
 
     // 2. Dry run — compute plan without creating any dependencies
     if (parsed.dry_run) {
+      const ad_templates = extractAdTemplates(bundle);
+      const campaignStrategy = resolveCampaignStrategy(bundle);
+      const campaignType = resolveCampaignType(bundle);
       // uploadCampaignBundle accepts additional Phase 3.5.D fields via its loose input type
       const result = await uploadCampaignBundle({
         csv_path: csvPath,
-        campaign_strategy: { mode: "one-per-cluster" },
-        campaign_type: "search",
+        campaign_strategy: campaignStrategy,
+        campaign_type: campaignType,
         site_url: siteUrl,
-        daily_budget_rub: dailyBudgetRub,
+        daily_budget_amount: camp.DailyBudget.Amount,
         region_ids: regionIds,
         bidding_strategy_type: biddingStrategyType,
         metrika_counter_ids: counterIds,
         metrika_goal_ids: goalIds,
         ads_per_group: adsPerGroup,
         ad_template_strategy: "agent-provided",
+        ad_templates,
         dry_run: true,
         canary_percent: 50,
         max_clusters: bundle.groups.length,
         abort_on_error_rate: 0.3,
         account: parsed.account,
+        dedupe_by_name: bundle.campaign.dedupe_by_name,
         tracking_params: tc?.TrackingParams,
         sitelinks_set: bundle.campaign.sitelinks_set,
         promo_extension: bundle.campaign.promo_extension,
+        bidding_strategy: tc?.BiddingStrategy as Record<string, unknown> | undefined,
+        declared_image_keys: declaredImageKeys.length > 0 ? declaredImageKeys : null,
+        autotargeting_per_group: buildAutotargetingPerGroup(bundle),
+        combinatorial_per_group: extractCombinatorialPools(bundle),
       } as Parameters<typeof uploadCampaignBundle>[0]); // guardian: allow — Phase 3.5.D optional fields not in base type
 
       return {
@@ -142,13 +274,173 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
       };
     }
 
-    // 3. Live mode — create dependencies first, then run pipeline
+    // 3. Live mode — gate check first, then create dependencies, then run pipeline
+    //
+    // SECURITY INVARIANT: dependency creation (sitelinks/promo/callouts/images) MUST NOT
+    // happen unless the caller has explicitly confirmed with confirm=true AND provided a
+    // plan_hash. Without these, we return the dry-run plan so they can obtain plan_hash
+    // and construct the correct acknowledge_live string — no mutations occur.
+    if (parsed.confirm !== true || !parsed.plan_hash) {
+      // Return the plan preview (same as dry_run=true) without creating any dependencies.
+      const ad_templates = extractAdTemplates(bundle);
+      const campaignStrategy = resolveCampaignStrategy(bundle);
+      const campaignType = resolveCampaignType(bundle);
+      const planResult = await uploadCampaignBundle({
+        csv_path: csvPath,
+        campaign_strategy: campaignStrategy,
+        campaign_type: campaignType,
+        site_url: siteUrl,
+        daily_budget_amount: camp.DailyBudget.Amount,
+        region_ids: regionIds,
+        bidding_strategy_type: biddingStrategyType,
+        metrika_counter_ids: counterIds,
+        metrika_goal_ids: goalIds,
+        ads_per_group: adsPerGroup,
+        ad_template_strategy: "agent-provided",
+        ad_templates,
+        dry_run: true,
+        canary_percent: 50,
+        max_clusters: bundle.groups.length,
+        abort_on_error_rate: 0.3,
+        account: parsed.account,
+        dedupe_by_name: bundle.campaign.dedupe_by_name,
+        tracking_params: tc?.TrackingParams,
+        sitelinks_set: bundle.campaign.sitelinks_set,
+        promo_extension: bundle.campaign.promo_extension,
+        bidding_strategy: tc?.BiddingStrategy as Record<string, unknown> | undefined,
+        declared_image_keys: declaredImageKeys.length > 0 ? declaredImageKeys : null,
+        autotargeting_per_group: buildAutotargetingPerGroup(bundle),
+        combinatorial_per_group: extractCombinatorialPools(bundle),
+      } as Parameters<typeof uploadCampaignBundle>[0]); // guardian: allow — Phase 3.5.D optional fields not in base type
+
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            stage: "plan_needed",
+            reason: !parsed.confirm
+              ? "confirm: true is required to run live"
+              : "plan_hash is required to run live — obtain it from this plan result",
+            yaml_validation: "OK",
+            pipeline_result: planResult,
+          }, null, 2),
+        }],
+      };
+    }
+
+    // confirm=true and plan_hash are present. Now validate acknowledge_live
+    // BEFORE creating any dependencies — a bad/missing ack must be rejected here
+    // so no orphaned sitelinks/callouts/images are created on the live account.
+    // Resolve the account to get the exact yandex_login for the ack check.
+    const liveAcc = resolveAccount(SCOPES.DIRECT_API, parsed.account);
+    const liveLogin = liveAcc.yandex_login ?? liveAcc.label;
+    if (!validateLiveAck(parsed.acknowledge_live, liveLogin, parsed.plan_hash)) {
+      const ad_templates = extractAdTemplates(bundle);
+      const campaignStrategy = resolveCampaignStrategy(bundle);
+      const campaignType = resolveCampaignType(bundle);
+      const planResult2 = await uploadCampaignBundle({
+        csv_path: csvPath,
+        campaign_strategy: campaignStrategy,
+        campaign_type: campaignType,
+        site_url: siteUrl,
+        daily_budget_amount: camp.DailyBudget.Amount,
+        region_ids: regionIds,
+        bidding_strategy_type: biddingStrategyType,
+        metrika_counter_ids: counterIds,
+        metrika_goal_ids: goalIds,
+        ads_per_group: adsPerGroup,
+        ad_template_strategy: "agent-provided",
+        ad_templates,
+        dry_run: true,
+        canary_percent: 50,
+        max_clusters: bundle.groups.length,
+        abort_on_error_rate: 0.3,
+        account: parsed.account,
+        dedupe_by_name: bundle.campaign.dedupe_by_name,
+        tracking_params: tc?.TrackingParams,
+        sitelinks_set: bundle.campaign.sitelinks_set,
+        promo_extension: bundle.campaign.promo_extension,
+        bidding_strategy: tc?.BiddingStrategy as Record<string, unknown> | undefined,
+        declared_image_keys: declaredImageKeys.length > 0 ? declaredImageKeys : null,
+        autotargeting_per_group: buildAutotargetingPerGroup(bundle),
+        combinatorial_per_group: extractCombinatorialPools(bundle),
+      } as Parameters<typeof uploadCampaignBundle>[0]); // guardian: allow — Phase 3.5.D optional fields not in base type
+
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            stage: "plan_needed",
+            reason: "acknowledge_live is missing or invalid — must be exactly I-UNDERSTAND-BUNDLE-LIVE:<login>:<plan_hash_prefix12>. Obtain the expected value from the dry_run pipeline_result.expected_ack_live.",
+            yaml_validation: "OK",
+            pipeline_result: planResult2,
+          }, null, 2),
+        }],
+      };
+    }
+
+    // Recompute the canonical plan_hash NOW (before any dep creation) by running an
+    // authoritative dry-run.  This closes the window where a caller passes a WRONG
+    // plan_hash that happens to produce a matching ack prefix: validateLiveAck above
+    // only checks the first 12 chars, so a wrong-but-prefix-matching hash would slip
+    // through without this extra gate.
+    {
+      const adTemplatesForCheck = extractAdTemplates(bundle);
+      const campaignStrategyForCheck = resolveCampaignStrategy(bundle);
+      const campaignTypeForCheck = resolveCampaignType(bundle);
+      const canonicalResult = await uploadCampaignBundle({
+        csv_path: csvPath,
+        campaign_strategy: campaignStrategyForCheck,
+        campaign_type: campaignTypeForCheck,
+        site_url: siteUrl,
+        daily_budget_amount: camp.DailyBudget.Amount,
+        region_ids: regionIds,
+        bidding_strategy_type: biddingStrategyType,
+        metrika_counter_ids: counterIds,
+        metrika_goal_ids: goalIds,
+        ads_per_group: adsPerGroup,
+        ad_template_strategy: "agent-provided",
+        ad_templates: adTemplatesForCheck,
+        dry_run: true,
+        canary_percent: 50,
+        max_clusters: bundle.groups.length,
+        abort_on_error_rate: 0.3,
+        account: parsed.account,
+        dedupe_by_name: bundle.campaign.dedupe_by_name,
+        tracking_params: tc?.TrackingParams,
+        sitelinks_set: bundle.campaign.sitelinks_set,
+        promo_extension: bundle.campaign.promo_extension,
+        bidding_strategy: tc?.BiddingStrategy as Record<string, unknown> | undefined,
+        declared_image_keys: declaredImageKeys.length > 0 ? declaredImageKeys : null,
+        autotargeting_per_group: buildAutotargetingPerGroup(bundle),
+        combinatorial_per_group: extractCombinatorialPools(bundle),
+      } as Parameters<typeof uploadCampaignBundle>[0]); // guardian: allow — Phase 3.5.D optional fields not in base type
+
+      const canonicalPlanHash = canonicalResult.plan_hash;
+      if (parsed.plan_hash !== canonicalPlanHash) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              stage: "plan_needed",
+              reason: "The supplied plan_hash is stale or invalid — it does not match the canonical plan_hash computed from the current bundle state. Please obtain a fresh dry_run result and use its plan_hash and expected_ack_live.",
+              yaml_validation: "OK",
+              pipeline_result: canonicalResult,
+            }, null, 2),
+          }],
+        };
+      }
+    }
+
+    // acknowledge_live validated and plan_hash confirmed canonical — safe to create dependencies.
 
     const context: {
       sitelinks_set_id?: number;
       promo_extension_id?: number;
+      callout_ids: number[];
       image_hashes: Record<string, string>;
-    } = { image_hashes: {} };
+      dep_errors: string[];
+    } = { callout_ids: [], image_hashes: {}, dep_errors: [] };
 
     // 3a. Sitelinks set
     if (bundle.campaign.sitelinks_set) {
@@ -158,13 +450,25 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
         body: buildSitelinksSetPayload(bundle.campaign.sitelinks_set),
         account: parsed.account,
       });
-      if (sitelinksResult.ok) {
+      if (!sitelinksResult.ok) {
+        context.dep_errors.push(`sitelinks creation failed: HTTP error`);
+      } else {
         // Direct API returns nested result; shape is opaque at this layer
         const data = sitelinksResult.data as Record<string, unknown>; // guardian: allow — Direct API response is untyped JSON
         const result = data?.["result"] as Record<string, unknown> | undefined;
         const addResults = result?.["AddResults"] as Array<Record<string, unknown>> | undefined;
-        const id = addResults?.[0]?.["Id"];
-        context.sitelinks_set_id = typeof id === "number" ? id : undefined;
+        const firstItem = addResults?.[0];
+        const errors = firstItem?.["Errors"] as Array<Record<string, unknown>> | undefined;
+        if (errors && errors.length > 0) {
+          const msg = errors.map((e) => e?.["Message"] ?? JSON.stringify(e)).join("; ");
+          context.dep_errors.push(`sitelinks creation failed: ${msg}`);
+        } else {
+          const id = firstItem?.["Id"];
+          context.sitelinks_set_id = typeof id === "number" ? id : undefined;
+          if (context.sitelinks_set_id === undefined) {
+            context.dep_errors.push("sitelinks creation: no Id returned");
+          }
+        }
       }
     }
 
@@ -176,25 +480,98 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
         body: buildPromoExtensionPayload(bundle.campaign.promo_extension.AdExtension),
         account: parsed.account,
       });
-      if (promoResult.ok) {
+      if (!promoResult.ok) {
+        context.dep_errors.push(`promo extension creation failed: HTTP error`);
+      } else {
         const data = promoResult.data as Record<string, unknown>; // guardian: allow — Direct API response is untyped JSON
         const result = data?.["result"] as Record<string, unknown> | undefined;
         const addResults = result?.["AddResults"] as Array<Record<string, unknown>> | undefined;
-        const id = addResults?.[0]?.["Id"];
-        context.promo_extension_id = typeof id === "number" ? id : undefined;
+        const firstItem = addResults?.[0];
+        const errors = firstItem?.["Errors"] as Array<Record<string, unknown>> | undefined;
+        if (errors && errors.length > 0) {
+          const msg = errors.map((e) => e?.["Message"] ?? JSON.stringify(e)).join("; ");
+          context.dep_errors.push(`promo extension creation failed: ${msg}`);
+        } else {
+          const id = firstItem?.["Id"];
+          context.promo_extension_id = typeof id === "number" ? id : undefined;
+          if (context.promo_extension_id === undefined) {
+            context.dep_errors.push("promo extension creation: no Id returned");
+          }
+        }
       }
     }
 
-    // 3c. Images
+    // 3c. Callouts (Уточнения) — per naming map §5.2: POST /json/v5/adextensions with type CALLOUT
+    //     IDs are wired at ad level via TextAd.AdExtensions.Items / TextImageAd.AdExtensions.Items
+    if (bundle.campaign.callouts && bundle.campaign.callouts.length > 0) {
+      const calloutResult = await executeApiCall({
+        apiName: "direct",
+        endpoint: "/json/v5/adextensions",
+        body: buildCalloutPayload({ callout_texts: bundle.campaign.callouts }),
+        account: parsed.account,
+      });
+      if (!calloutResult.ok) {
+        context.dep_errors.push(`callouts creation failed: HTTP error`);
+      } else {
+        const data = calloutResult.data as Record<string, unknown>; // guardian: allow — Direct API response is untyped JSON
+        const result = data?.["result"] as Record<string, unknown> | undefined;
+        const addResults = result?.["AddResults"] as Array<Record<string, unknown>> | undefined;
+        if (addResults) {
+          for (const item of addResults) {
+            const errors = item?.["Errors"] as Array<Record<string, unknown>> | undefined;
+            if (errors && errors.length > 0) {
+              const msg = errors.map((e) => e?.["Message"] ?? JSON.stringify(e)).join("; ");
+              context.dep_errors.push(`callout creation failed: ${msg}`);
+            } else {
+              const id = item?.["Id"];
+              if (typeof id === "number") {
+                context.callout_ids.push(id);
+              } else {
+                context.dep_errors.push("callout creation: item returned no Id");
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 3d. Images
+    const skippedImages: string[] = [];
     if (bundle.campaign.images) {
       for (const [name, imgDef] of Object.entries(bundle.campaign.images)) {
         // imgDef shape: { source, url?, path?, base64? } — map to runDirectUploadImage input
-        const uploadInput = {
-          url: imgDef.url,
-          file_path: imgDef.path,
-          base64: imgDef.base64,
-          account: parsed.account,
-        };
+        let uploadInput: { url?: string; file_path?: string; base64?: string; account?: string };
+
+        if (imgDef.path) {
+          // Normalize local file images (aspect ratio fix for Yandex 16:9 requirement)
+          let norm: Awaited<ReturnType<typeof normalizeAdImage>>;
+          try {
+            norm = await normalizeAdImage(imgDef.path);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.warn(`[image-normalize] skipping "${name}": normalize threw — ${msg}`); // guardian: allow
+            skippedImages.push(`${name}: normalize threw — ${msg}`);
+            continue;
+          }
+          if (norm.action === "skip") {
+            console.warn(`[image-normalize] skipping "${name}": ${norm.reason}`);
+            skippedImages.push(`${name}: ${norm.reason}`);
+            continue;
+          } else if (norm.action === "resized") {
+            uploadInput = { base64: norm.base64, account: parsed.account };
+          } else {
+            // asis
+            uploadInput = { file_path: imgDef.path, account: parsed.account };
+          }
+        } else {
+          uploadInput = {
+            url: imgDef.url,
+            file_path: imgDef.path,
+            base64: imgDef.base64,
+            account: parsed.account,
+          };
+        }
+
         const uploadResult = await runDirectUploadImage(uploadInput);
         const firstContent = uploadResult.content?.[0];
         if (firstContent && "text" in firstContent) {
@@ -202,9 +579,30 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
           const hash = parsed_img?.["ad_image_hash"];
           if (typeof hash === "string") {
             context.image_hashes[name] = hash;
+          } else {
+            context.dep_errors.push(`image upload failed for "${name}": no ad_image_hash in response`);
           }
+        } else {
+          context.dep_errors.push(`image upload failed for "${name}": unexpected response shape`);
         }
       }
+    }
+
+    // 3e. Abort on dep errors before campaign creation.
+    // The bundle declared these dependencies intentionally; creating a partial campaign
+    // (e.g. RSYA text-only if an image failed, or missing sitelinks) is worse than
+    // aborting cleanly and letting the caller fix the issue.
+    if (context.dep_errors.length > 0) {
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            stage: "dep_creation_failed",
+            reason: "One or more required dependencies failed to create. Campaign creation aborted to prevent a partial/incomplete campaign on the live account.",
+            dep_errors: context.dep_errors,
+          }, null, 2),
+        }],
+      };
     }
 
     // 4. Resolve template refs in bundle with created IDs/hashes
@@ -219,19 +617,23 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
     const resolvedTc = resolvedCamp.TextCampaign;
     const resolvedBiddingStrategy = extractBiddingStrategy(resolvedTc);
     const resolvedGoalIds = resolvedTc?.PriorityGoals?.Items?.map((g) => g.GoalId);
+    const ad_templates = extractAdTemplates(resolved);
+    const campaignStrategy = resolveCampaignStrategy(resolved);
 
+    const resolvedCampaignType = resolveCampaignType(resolved);
     const pipelineResult = await uploadCampaignBundle({
       csv_path: csvPath,
-      campaign_strategy: { mode: "one-per-cluster" },
-      campaign_type: "search",
+      campaign_strategy: campaignStrategy,
+      campaign_type: resolvedCampaignType,
       site_url: siteUrl,
-      daily_budget_rub: Math.floor(resolvedCamp.DailyBudget.Amount / 1_000_000),
+      daily_budget_amount: resolvedCamp.DailyBudget.Amount,
       region_ids: resolved.groups[0]?.group.RegionIds ?? [213],
       bidding_strategy_type: resolvedBiddingStrategy,
       metrika_counter_ids: resolvedTc?.CounterIds?.Items,
       metrika_goal_ids: resolvedGoalIds,
       ads_per_group: resolved.groups[0]?.ads.length ?? 1,
       ad_template_strategy: "agent-provided",
+      ad_templates,
       dry_run: false,
       canary_percent: 50,
       max_clusters: resolved.groups.length,
@@ -242,9 +644,21 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
       canary_passed: parsed.canary_passed,
       continuation_ack: parsed.continuation_ack,
       account: parsed.account,
+      dedupe_by_name: resolved.campaign.dedupe_by_name,
       tracking_params: resolvedTc?.TrackingParams,
       sitelinks_set: resolved.campaign.sitelinks_set,
       promo_extension: resolved.campaign.promo_extension,
+      // F6 wiring — pass pre-created IDs/hashes to the pipeline
+      image_hashes: context.image_hashes,
+      sitelinks_set_id: context.sitelinks_set_id,
+      callout_ids: context.callout_ids.length > 0 ? context.callout_ids : undefined,
+      // Pass the resolved bundle's BiddingStrategy verbatim to bypass reconstruction.
+      // Path: resolved.campaign.campaign.TextCampaign?.BiddingStrategy
+      bidding_strategy: resolvedTc?.BiddingStrategy as Record<string, unknown> | undefined,
+      // Use declared image keys (stable at both dry-run and live time) for plan_hash consistency.
+      declared_image_keys: declaredImageKeys.length > 0 ? declaredImageKeys : null,
+      autotargeting_per_group: buildAutotargetingPerGroup(resolved),
+      combinatorial_per_group: extractCombinatorialPools(resolved),
     } as Parameters<typeof uploadCampaignBundle>[0]); // guardian: allow — Phase 3.5.D optional fields not in base type
 
     return {
@@ -255,8 +669,10 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
           context_created: {
             sitelinks_set_id: context.sitelinks_set_id,
             promo_extension_id: context.promo_extension_id,
+            callout_ids: context.callout_ids,
             images_uploaded: Object.keys(context.image_hashes),
           },
+          dep_errors: context.dep_errors.length > 0 ? context.dep_errors : undefined,
           pipeline_result: pipelineResult,
         }, null, 2),
       }],

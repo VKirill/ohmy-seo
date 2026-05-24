@@ -1,0 +1,932 @@
+/**
+ * fix-direct-final-reupload.ts — Production reupload of broken draft campaigns.
+ *
+ * SAFE BY DEFAULT: no API calls are made unless RUN_LIVE=true.
+ *
+ * When RUN_LIVE=true, the script:
+ *   1. DELETE (idempotent, name-based): fetches all campaigns, selects those whose Name
+ *      EXACTLY equals SEARCH_CAMPAIGN_NAME or RSYA_CAMPAIGN_NAME.
+ *      - Non-DRAFT match → ABORT the whole run (no deletions, no uploads).
+ *      - Zero matches → fine, proceed (idempotent re-run).
+ *      - DRAFT matches → delete them, check DeleteResults for errors.
+ *   2. REUPLOAD SEARCH: uploads all 5 groups as "GCE-Поиск-Скрубберы" (dedupe_by_name=true).
+ *   3. REUPLOAD RSYA:   uploads all 5 groups as "GCE-РСЯ-Скрубберы"  (dedupe_by_name=true).
+ *   4. VERIFY: campaigns.get both, confirm names + budgets + ads exist.
+ *   5. Print final JSON { deleted: [...ids], created: [{id,name},{id,name}] }.
+ *   These campaigns STAY (production — no self-delete).
+ */
+
+// ---------------------------------------------------------------------------
+// Bootstrap: load env BEFORE any DB-dependent import
+// ---------------------------------------------------------------------------
+
+import { readFileSync, writeFileSync, mkdirSync, cpSync } from "fs";
+import * as nodePath from "path";
+import * as yaml from "js-yaml";
+
+const claudeJsonPath = nodePath.join(process.env["HOME"] ?? "/root", ".claude.json");
+const cfg = JSON.parse(readFileSync(claudeJsonPath, "utf8")) as {
+  mcpServers: Record<string, { env: Record<string, string> }>;
+};
+
+process.env["MCP_YANDEX_SEO_MASTER_KEY"] =
+  cfg.mcpServers["mcp-yandex-seo"].env["MCP_YANDEX_SEO_MASTER_KEY"];
+process.env["MCP_YANDEX_SEO_DB_PATH"] =
+  cfg.mcpServers["mcp-yandex-seo"].env["MCP_YANDEX_SEO_DB_PATH"];
+
+const LIVE = process.env["RUN_LIVE"] === "true";
+if (LIVE) {
+  process.env["OHMY_SEO_ALLOW_LIVE_MUTATIONS"] = "true";
+  process.env["YANDEX_DIRECT_ALLOW_LIVE_MUTATIONS"] = "true";
+  process.env["YANDEX_DIRECT_ALLOW_DELETE"] = "true";
+}
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const ACCOUNT = "yandex-direct-prod-main";
+
+const SEARCH_BUNDLE =
+  "/home/ubuntu/ads/gas-cleaning-equipment.com/docs/campaigns/gce-direct-5-clusters/deliverables/bundles/search";
+const RSYA_BUNDLE =
+  "/home/ubuntu/ads/gas-cleaning-equipment.com/docs/campaigns/gce-direct-5-clusters/deliverables/bundles/rsya";
+
+const SEARCH_CAMPAIGN_NAME = "GCE-Поиск-Скрубберы";
+const RSYA_CAMPAIGN_NAME   = "GCE-РСЯ-Скрубберы";
+
+/** Names that the delete phase targets (exact match, DRAFT only). */
+const TARGET_NAMES: readonly string[] = [SEARCH_CAMPAIGN_NAME, RSYA_CAMPAIGN_NAME];
+
+/** All group YAML filenames present in both bundles. */
+const GROUP_FILES = [
+  "group-cl01-skrubber-eto.yaml",
+  "group-cl04-rukavnyy-filtr.yaml",
+  "group-cl06-pyleulovitel.yaml",
+  "group-cl08-skrubber-venturi.yaml",
+  "group-cl13-skrubber-vozduh.yaml",
+];
+
+const TS = Date.now();
+
+// ---------------------------------------------------------------------------
+// Logging
+// ---------------------------------------------------------------------------
+
+function log(msg: string): void {
+  process.stdout.write(`[final-reupload] ${msg}\n`);
+}
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+type UploadFn = (
+  input: Record<string, unknown>
+) => Promise<{ content?: Array<{ type: string } & Record<string, unknown>> }>;
+
+type ExecuteApiFn = (input: {
+  apiName: string;
+  endpoint: string;
+  method?: string;
+  body?: unknown;
+  account?: string;
+}) => Promise<{ ok: boolean; data?: unknown; body?: unknown }>;
+
+interface DryRunResult {
+  plan_hash: string;
+  expected_ack_live: string;
+}
+
+interface LiveResult {
+  campaign_id: number | null;
+  ad_group_ids: number[];
+  ad_ids: number[];
+}
+
+// ---------------------------------------------------------------------------
+// Safe JSON parser
+// ---------------------------------------------------------------------------
+
+function safeJsonParse(text: string): Record<string, unknown> | null {
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Temp folder builder — copies all group files + patched _campaign.yaml
+// ---------------------------------------------------------------------------
+
+function buildTempFolder(
+  sourceBundle: string,
+  campaignName: string,
+  suffix: string
+): string {
+  const tempDir = `/tmp/gce-final-reupload-${suffix}-${TS}`;
+  mkdirSync(tempDir, { recursive: true });
+
+  // Copy _campaign.yaml and all group files
+  cpSync(
+    nodePath.join(sourceBundle, "_campaign.yaml"),
+    nodePath.join(tempDir, "_campaign.yaml")
+  );
+  for (const groupFile of GROUP_FILES) {
+    cpSync(
+      nodePath.join(sourceBundle, groupFile),
+      nodePath.join(tempDir, groupFile)
+    );
+  }
+
+  // Patch _campaign.yaml
+  const raw = readFileSync(nodePath.join(tempDir, "_campaign.yaml"), "utf8");
+  const parsed = yaml.load(raw) as Record<string, unknown>;
+  parsed["upload_strategy"] = "single-campaign";
+  parsed["dedupe_by_name"] = true;
+  const campaign = parsed["campaign"] as Record<string, unknown>;
+  campaign["Name"] = campaignName;
+  // StartDate at least 2 days from now (MSK safety margin)
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() + 2);
+  campaign["StartDate"] = startDate.toISOString().slice(0, 10);
+
+  writeFileSync(
+    nodePath.join(tempDir, "_campaign.yaml"),
+    yaml.dump(parsed, { lineWidth: 120 }),
+    "utf8"
+  );
+
+  log(`Temp folder: ${tempDir}`);
+  log(`Campaign name: ${campaignName}`);
+  return tempDir;
+}
+
+// ---------------------------------------------------------------------------
+// FIND AND DELETE BY NAME (idempotent, DRAFT-only safety)
+//
+// Fetches all campaigns with pagination, selects those whose Name exactly
+// equals one of TARGET_NAMES. Safety invariant:
+//   - If ANY match is NOT DRAFT → abort the entire run (zero deletions).
+//   - If zero matches → proceed (idempotent re-run).
+//   - If all matches are DRAFT → delete them, verify DeleteResults.
+//
+// Returns the list of IDs that were deleted (may be empty).
+// ---------------------------------------------------------------------------
+
+async function findAndDeleteByName(executeApiCall: ExecuteApiFn): Promise<number[]> {
+  log("=== DELETE (name-based, idempotent) ===");
+  log(`Target names: ${TARGET_NAMES.join(", ")}`);
+
+  type CampItem = { Id?: number; Name?: string; Status?: string };
+
+  // Paginate through all campaigns on the account.
+  const PAGE_LIMIT = 1000;
+  let offset = 0;
+  const allCampaigns: CampItem[] = [];
+
+  for (;;) {
+    const res = await executeApiCall({
+      apiName: "direct",
+      endpoint: "/json/v5/campaigns",
+      method: "POST",
+      body: {
+        method: "get",
+        params: {
+          SelectionCriteria: {},
+          FieldNames: ["Id", "Name", "Status"],
+          Page: { Limit: PAGE_LIMIT, Offset: offset },
+        },
+      },
+      account: ACCOUNT,
+    });
+
+    if (!res.ok) {
+      throw new Error(`campaigns.get (offset=${offset}) failed: ${JSON.stringify(res.body)}`);
+    }
+
+    const page = (res.data as { result?: { Campaigns?: CampItem[] } })?.result?.Campaigns ?? [];
+    log(`  Fetched ${page.length} campaigns (offset=${offset})`);
+    allCampaigns.push(...page);
+
+    if (page.length < PAGE_LIMIT) break; // last page
+    offset += PAGE_LIMIT;
+  }
+
+  log(`  Total campaigns on account: ${allCampaigns.length}`);
+
+  // Select campaigns whose Name EXACTLY matches one of TARGET_NAMES.
+  const targetSet = new Set<string>(TARGET_NAMES);
+  const matched = allCampaigns.filter((c) => c.Name != null && targetSet.has(c.Name));
+
+  if (matched.length === 0) {
+    log("  No campaigns matching target names found — nothing to delete (idempotent).");
+    return [];
+  }
+
+  log(`  Matched ${matched.length} campaign(s):`);
+  for (const c of matched) {
+    log(`    id=${c.Id} name="${c.Name}" status=${c.Status}`);
+  }
+
+  // SAFETY: if any matched campaign is NOT DRAFT → abort with zero deletions.
+  const nonDraft = matched.filter((c) => c.Status !== "DRAFT");
+  if (nonDraft.length > 0) {
+    const details = nonDraft
+      .map((c) => `id=${c.Id} name="${c.Name}" status=${c.Status}`)
+      .join("; ");
+    throw new Error(
+      `SAFETY ABORT: refusing to delete non-DRAFT campaign(s): ${details}. ` +
+      `No campaigns were deleted or uploaded.`
+    );
+  }
+
+  // All matches are DRAFT — proceed with deletion.
+  const ids = matched.map((c) => c.Id as number);
+  log(`  All ${ids.length} matched campaign(s) are DRAFT — deleting: ${ids.join(", ")}`);
+
+  const delRes = await executeApiCall({
+    apiName: "direct",
+    endpoint: "/json/v5/campaigns",
+    method: "POST",
+    body: {
+      method: "delete",
+      params: { SelectionCriteria: { Ids: ids } },
+    },
+    account: ACCOUNT,
+  });
+
+  if (!delRes.ok) {
+    throw new Error(`campaigns.delete failed: ${JSON.stringify(delRes.body)}`);
+  }
+
+  type DeleteResult = { Id?: unknown; Errors?: unknown[] };
+  type DeleteResponse = { DeleteResults?: DeleteResult[] };
+  const deleteResults = (delRes.data as { result?: DeleteResponse })?.result?.DeleteResults;
+
+  // FAIL-CLOSED: cardinality check — DeleteResults must be present and match requested ids.
+  if (!Array.isArray(deleteResults)) {
+    throw new Error(
+      `campaigns.delete returned no DeleteResults array. ` +
+      `Requested ids: [${ids.join(", ")}]. Raw result: ${JSON.stringify((delRes.data as Record<string, unknown>)?.result)}`
+    );
+  }
+  if (deleteResults.length !== ids.length) {
+    throw new Error(
+      `campaigns.delete DeleteResults cardinality mismatch: ` +
+      `requested ${ids.length} id(s) [${ids.join(", ")}] ` +
+      `but got ${deleteResults.length} result(s): ${JSON.stringify(deleteResults)}`
+    );
+  }
+
+  // FAIL-CLOSED: per-result check — each result must have a numeric Id and no Errors.
+  let hasErrors = false;
+  for (let i = 0; i < deleteResults.length; i++) {
+    const dr = deleteResults[i];
+    if (typeof dr.Id !== "number") {
+      log(`  Delete result index ${i} (requested id=${ids[i]}) has non-numeric Id: ${JSON.stringify(dr.Id)}`);
+      hasErrors = true;
+    }
+    if (dr.Errors && (dr.Errors as unknown[]).length > 0) {
+      log(`  Delete error for index ${i} (id=${ids[i]}): ${JSON.stringify(dr.Errors)}`);
+      hasErrors = true;
+    }
+  }
+  if (hasErrors) {
+    throw new Error(
+      `campaigns.delete returned errors or missing Id for one or more results. ` +
+      `Requested ids: [${ids.join(", ")}]. DeleteResults: ${JSON.stringify(deleteResults)}`
+    );
+  }
+
+  // FAIL-CLOSED: set equality — returned ids must exactly equal requested ids.
+  // Prevents silent survivors: e.g. requested [101,102] returned [101,999] would
+  // pass cardinality (length==2) but 102 survived and 999 is unexpected.
+  const requestedSet = new Set<number>(ids);
+  const returnedIds = deleteResults.map((dr) => dr.Id as number);
+  const returnedSet = new Set<number>(returnedIds);
+  const missingIds = ids.filter((id) => !returnedSet.has(id));
+  const extraIds = returnedIds.filter((id) => !requestedSet.has(id));
+  if (missingIds.length > 0 || extraIds.length > 0) {
+    throw new Error(
+      `campaigns.delete id set mismatch — delete safety check failed, aborting upload. ` +
+      `Requested: [${ids.join(", ")}]. Returned: [${returnedIds.join(", ")}]. ` +
+      `Missing from results: [${missingIds.join(", ")}]. Unexpected in results: [${extraIds.join(", ")}].`
+    );
+  }
+
+  log(`  Deleted ${ids.length} campaign(s) successfully.`);
+  return ids;
+}
+
+// ---------------------------------------------------------------------------
+// DRY RUN
+// ---------------------------------------------------------------------------
+
+async function runDryRun(
+  runDirectUploadFromYaml: UploadFn,
+  tempDir: string,
+  label: string
+): Promise<DryRunResult> {
+  log(`[${label}] Running dry-run ...`);
+  const result = await runDirectUploadFromYaml({
+    folder: tempDir,
+    account: ACCOUNT,
+    dry_run: true,
+  });
+
+  const firstContent = result.content?.[0];
+  if (!firstContent || !("text" in firstContent)) {
+    throw new Error(`[${label}] No text content in dry-run result`);
+  }
+  const rawText = String((firstContent as Record<string, unknown>)["text"]);
+  const payload = safeJsonParse(rawText);
+  if (!payload) {
+    throw new Error(`[${label}] Dry-run response is not valid JSON: ${rawText.slice(0, 200)}`);
+  }
+  if (payload["error"]) {
+    throw new Error(`[${label}] Dry-run error: ${JSON.stringify(payload)}`);
+  }
+
+  const pipelineResult = payload["pipeline_result"] as Record<string, unknown>;
+  const planHash        = String(pipelineResult?.["plan_hash"]        ?? "");
+  const expectedAckLive = String(pipelineResult?.["expected_ack_live"] ?? "");
+
+  if (!planHash || !expectedAckLive) {
+    throw new Error(
+      `[${label}] Dry-run missing plan_hash or expected_ack_live: ${JSON.stringify(pipelineResult)}`
+    );
+  }
+
+  log(`[${label}] plan_hash=${planHash}`);
+  log(`[${label}] expected_ack_live=${expectedAckLive}`);
+
+  return { plan_hash: planHash, expected_ack_live: expectedAckLive };
+}
+
+// ---------------------------------------------------------------------------
+// Parse upload response helper
+// ---------------------------------------------------------------------------
+
+function parseUploadResponse(
+  raw: { content?: Array<{ type: string } & Record<string, unknown>> },
+  label: string
+): Record<string, unknown> {
+  const content = raw.content?.[0];
+  if (!content || !("text" in content)) {
+    throw new Error(`[${label}] No text content in upload response`);
+  }
+  const rawText = String((content as Record<string, unknown>)["text"]);
+  const payload = safeJsonParse(rawText);
+  if (!payload) {
+    throw new Error(`[${label}] Upload response is not valid JSON: ${rawText.slice(0, 200)}`);
+  }
+  if (payload["error"]) {
+    throw new Error(`[${label}] Upload error: ${JSON.stringify(payload["error"])}`);
+  }
+  return payload;
+}
+
+// ---------------------------------------------------------------------------
+// LIVE UPLOAD (Stage 1 canary + optional Stage 2 continuation)
+// ---------------------------------------------------------------------------
+
+async function runLiveUpload(
+  runDirectUploadFromYaml: UploadFn,
+  tempDir: string,
+  planHash: string,
+  acknowledgeLive: string,
+  label: string,
+  onCampaignCreated?: (id: number) => void
+): Promise<LiveResult> {
+  log(`[${label}] Running LIVE Stage 1 (canary) ...`);
+
+  const stage1Raw = await runDirectUploadFromYaml({
+    folder: tempDir,
+    account: ACCOUNT,
+    dry_run: false,
+    confirm: true,
+    acknowledge_live: acknowledgeLive,
+    plan_hash: planHash,
+  });
+
+  const stage1Payload  = parseUploadResponse(stage1Raw, label);
+  const stage1Pipeline = stage1Payload["pipeline_result"] as Record<string, unknown>;
+  const stage1Stage    = String(stage1Pipeline?.["stage"] ?? "");
+
+  log(`[${label}] Stage 1 stage: ${stage1Stage}`);
+  log(`[${label}] campaigns_created: ${JSON.stringify(stage1Pipeline?.["campaigns_created"])}`);
+  log(`[${label}] ad_groups_created: ${JSON.stringify(stage1Pipeline?.["ad_groups_created"])}`);
+  log(`[${label}] ads_created:       ${JSON.stringify(stage1Pipeline?.["ads_created"])}`);
+  log(`[${label}] errors:            ${JSON.stringify(stage1Pipeline?.["errors"])}`);
+
+  if (stage1Stage === "canary_aborted") {
+    throw new Error(`[${label}] Canary aborted: ${JSON.stringify(stage1Pipeline?.["errors"])}`);
+  }
+
+  const s1Campaigns = stage1Pipeline?.["campaigns_created"] as number[] | undefined ?? [];
+  const s1Groups    = stage1Pipeline?.["ad_groups_created"] as number[] | undefined ?? [];
+  const s1Ads       = stage1Pipeline?.["ads_created"]       as number[] | undefined ?? [];
+
+  // Notify caller as early as possible (so cleanup can reference ID even if stage 2 fails)
+  if (s1Campaigns[0] != null && onCampaignCreated) {
+    onCampaignCreated(s1Campaigns[0]);
+  }
+
+  if (stage1Stage === "completed") {
+    log(`[${label}] Stage 1 completed all groups — no Stage 2 needed.`);
+    return {
+      campaign_id:    s1Campaigns[0] ?? null,
+      ad_group_ids:   s1Groups,
+      ad_ids:         s1Ads,
+    };
+  }
+
+  // canary_passed — Stage 2 needed
+  const continuationAck = String(stage1Pipeline?.["expected_continuation_ack"] ?? "");
+  if (!continuationAck) {
+    throw new Error(`[${label}] Stage 1 did not return expected_continuation_ack`);
+  }
+  log(`[${label}] Running LIVE Stage 2 (continuation_ack=${continuationAck}) ...`);
+
+  const stage2Raw = await runDirectUploadFromYaml({
+    folder: tempDir,
+    account: ACCOUNT,
+    dry_run: false,
+    confirm: true,
+    acknowledge_live: acknowledgeLive,
+    plan_hash: planHash,
+    canary_passed: true,
+    continuation_ack: continuationAck,
+  });
+
+  const stage2Payload  = parseUploadResponse(stage2Raw, label);
+  const stage2Pipeline = stage2Payload["pipeline_result"] as Record<string, unknown>;
+  const stage2Stage    = String(stage2Pipeline?.["stage"] ?? "");
+
+  log(`[${label}] Stage 2 stage: ${stage2Stage}`);
+  log(`[${label}] Stage 2 campaigns_created: ${JSON.stringify(stage2Pipeline?.["campaigns_created"])}`);
+  log(`[${label}] Stage 2 errors: ${JSON.stringify(stage2Pipeline?.["errors"])}`);
+
+  if (stage2Stage !== "completed") {
+    const campaignId = s1Campaigns[0] ?? null;
+    log(
+      `\n*** PARTIAL-STATE WARNING ***\n` +
+      `Stage 2 did not complete (stage="${stage2Stage}"). ` +
+      `A campaign${campaignId != null ? ` (id=${campaignId})` : ""} may have been created ` +
+      `but not all ad groups/ads were uploaded. ` +
+      `Operator should inspect the account. ` +
+      `Re-running with dedupe_by_name=true is safe.\n`
+    );
+    throw new Error(
+      `[${label}] Stage 2 incomplete (stage="${stage2Stage}"): ` +
+      `${JSON.stringify(stage2Pipeline?.["errors"] ?? "no error detail")}`
+    );
+  }
+
+  const s2Campaigns = stage2Pipeline?.["campaigns_created"] as number[] | undefined ?? [];
+  const s2Groups    = stage2Pipeline?.["ad_groups_created"] as number[] | undefined ?? [];
+  const s2Ads       = stage2Pipeline?.["ads_created"]       as number[] | undefined ?? [];
+
+  return {
+    campaign_id:  [...s1Campaigns, ...s2Campaigns][0] ?? null,
+    ad_group_ids: [...s1Groups,    ...s2Groups],
+    ad_ids:       [...s1Ads,       ...s2Ads],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// VERIFY: full shape assertion — campaign name, DailyBudget, group count, real ad texts
+// ---------------------------------------------------------------------------
+
+interface VerifyResult {
+  nameOk: boolean;
+  budgetPresent: boolean;
+  groupCount: number;
+  adCount: number;
+  adsWithRealText: number;  // ads whose Title length > 5
+  failures: string[];        // human-readable list of what's missing
+}
+
+async function verifyCampaign(
+  executeApiCall: ExecuteApiFn,
+  campaignId: number,
+  expectedName: string,
+  expectedGroupCount: number,
+  label: string,
+  kind: "search" | "rsya"
+): Promise<VerifyResult> {
+  log(`[${label}] Verifying campaign ${campaignId} (expect name="${expectedName}", groups=${expectedGroupCount}, kind=${kind}) ...`);
+  const failures: string[] = [];
+
+  // --- campaigns.get ---
+  type BiddingStrategyArm = {
+    BiddingStrategyType?: string;
+    WbMaximumClicks?: { WeeklySpendLimit?: number; WeeklySpendingLimit?: number };
+    [key: string]: unknown;
+  };
+  type CampItem = {
+    Id?: number; Name?: string; Status?: string;
+    DailyBudget?: { Amount?: number };
+    TextCampaign?: {
+      BiddingStrategy?: {
+        Search?: BiddingStrategyArm;
+        Network?: BiddingStrategyArm;
+      };
+    };
+  };
+  const campRes = await executeApiCall({
+    apiName: "direct",
+    endpoint: "/json/v5/campaigns",
+    method: "POST",
+    body: {
+      method: "get",
+      params: {
+        SelectionCriteria: { Ids: [campaignId] },
+        FieldNames: ["Id", "Name", "Status", "DailyBudget"],
+        TextCampaignFieldNames: ["BiddingStrategy"],
+      },
+    },
+    account: ACCOUNT,
+  });
+
+  if (!campRes.ok) {
+    throw new Error(`[${label}] campaigns.get failed: ${JSON.stringify(campRes.body)}`);
+  }
+  const campaigns = (campRes.data as { result?: { Campaigns?: CampItem[] } })?.result?.Campaigns ?? [];
+  const camp = campaigns.find((c) => c.Id === campaignId);
+  if (!camp) {
+    throw new Error(`[${label}] Campaign ${campaignId} not found in verification`);
+  }
+
+  log(`[${label}] campaign: ${JSON.stringify(camp)}`);
+  const nameOk = camp.Name === expectedName;
+
+  // Budget is present if either:
+  //   (a) a top-level DailyBudget.Amount exists (manual strategies), OR
+  //   (b) the TextCampaign.BiddingStrategy has a weekly spend limit on
+  //       Search or Network (auto strategies like WB_MAXIMUM_CLICKS).
+  //       Yandex rejects DailyBudget with auto strategies (Code 6000), so
+  //       auto-strategy campaigns must not have a top-level DailyBudget.
+  const hasWeeklyLimit = (arm?: BiddingStrategyArm): boolean => {
+    if (!arm) return false;
+    const wbc = arm.WbMaximumClicks;
+    if (!wbc) return false;
+    const limit = (wbc.WeeklySpendLimit ?? wbc.WeeklySpendingLimit) ?? 0;
+    return typeof limit === "number" && limit > 0;
+  };
+  const bs = camp.TextCampaign?.BiddingStrategy;
+  const budgetPresent =
+    camp.DailyBudget?.Amount != null ||
+    hasWeeklyLimit(bs?.Search) ||
+    hasWeeklyLimit(bs?.Network);
+
+  if (!nameOk) {
+    failures.push(`name mismatch: got "${camp.Name}", expected "${expectedName}"`);
+  }
+  if (!budgetPresent) {
+    failures.push("no DailyBudget and no strategy spend limit");
+  }
+  log(`[${label}] nameOk=${nameOk}, budgetPresent=${budgetPresent}`);
+
+  // --- adgroups.get ---
+  type GroupItem = { Id?: number; Name?: string; Status?: string };
+  const groupsRes = await executeApiCall({
+    apiName: "direct",
+    endpoint: "/json/v5/adgroups",
+    method: "POST",
+    body: {
+      method: "get",
+      params: {
+        SelectionCriteria: { CampaignIds: [campaignId] },
+        FieldNames: ["Id", "Name", "Status"],
+      },
+    },
+    account: ACCOUNT,
+  });
+
+  let groupCount = 0;
+  const realGroupIds: number[] = [];
+  if (groupsRes.ok) {
+    const groups = (groupsRes.data as { result?: { AdGroups?: GroupItem[] } })?.result?.AdGroups ?? [];
+    groupCount = groups.length;
+    for (const g of groups) {
+      log(`[${label}] group ${g.Id} name="${g.Name}" status=${g.Status}`);
+      if (typeof g.Id === "number") {
+        realGroupIds.push(g.Id);
+      }
+    }
+  } else {
+    log(`[${label}] adgroups.get failed: ${JSON.stringify(groupsRes.body)}`);
+    failures.push(`adgroups.get failed: ${JSON.stringify(groupsRes.body)}`);
+  }
+
+  if (groupCount !== expectedGroupCount) {
+    failures.push(`group count: got ${groupCount}, expected ${expectedGroupCount}`);
+  }
+  log(`[${label}] groupCount=${groupCount}`);
+
+  // --- ads.get with text fields ---
+  // AdGroupId is required so we can verify per-group ad coverage.
+  type TextAdParams = { Title?: string; Text?: string };
+  type AdItem = { Id?: number; AdGroupId?: number; Type?: string; State?: string; TextAd?: TextAdParams };
+  const adsRes = await executeApiCall({
+    apiName: "direct",
+    endpoint: "/json/v5/ads",
+    method: "POST",
+    body: {
+      method: "get",
+      params: {
+        SelectionCriteria: { CampaignIds: [campaignId] },
+        FieldNames: ["Id", "AdGroupId", "Type", "State"],
+        TextAdFieldNames: ["Title", "Text"],
+      },
+    },
+    account: ACCOUNT,
+  });
+
+  let adCount = 0;
+  let adsWithRealText = 0;
+  if (adsRes.ok) {
+    const ads = (adsRes.data as { result?: { Ads?: AdItem[] } })?.result?.Ads ?? [];
+    adCount = ads.length;
+
+    // A valid ad for a search campaign must have a TextAd with both Title and
+    // Text longer than 5 characters. RSYA/responsive ads may lack TextAd; if
+    // encountered they are treated as valid only when adGroupId is tracked
+    // (they appear in the groupAds map and avoid the zero-coverage failure).
+    // For safety, we require TextAd shape here so that placeholder ads
+    // (empty or 1-2 char titles) do not count.
+    const isValidAd = (ad: AdItem): boolean => {
+      const title = ad.TextAd?.Title ?? "";
+      const text  = ad.TextAd?.Text  ?? "";
+      return title.length > 5 && text.length > 5;
+    };
+
+    // Group ads by AdGroupId; track whether each group has at least one valid ad.
+    const groupAds = new Map<number, boolean>(); // groupId -> hasValidAd
+    for (const ad of ads) {
+      const title = ad.TextAd?.Title ?? "";
+      const valid = isValidAd(ad);
+      if (valid) adsWithRealText++;
+      log(`[${label}] ad ${ad.Id} AdGroupId=${ad.AdGroupId} Type=${ad.Type} Title="${title}" valid=${valid}`);
+
+      const gid = ad.AdGroupId ?? 0;
+      // If group already has a valid ad, keep true; otherwise set to current.
+      groupAds.set(gid, (groupAds.get(gid) ?? false) || valid);
+    }
+
+    // Verify every ad group has at least one valid ad.
+    // Use realGroupIds (from adgroups.get) as the authoritative list so that
+    // groups with ZERO ads (absent from groupAds entirely) are also flagged.
+    const groupsWithoutValidAd = realGroupIds.filter((gid) => groupAds.get(gid) !== true);
+
+    if (groupsWithoutValidAd.length > 0) {
+      failures.push(`groups without a valid ad (Title>5 && Text>5): [${groupsWithoutValidAd.join(", ")}]`);
+    }
+
+    // --- RSYA only: check every group has at least one RESPONSIVE_AD (combinatorial) ---
+    if (kind === "rsya") {
+      // Count RESPONSIVE_AD per group using the ads already fetched above.
+      const responsiveAdCountByGroup = new Map<number, number>();
+      for (const gid of realGroupIds) {
+        responsiveAdCountByGroup.set(gid, 0);
+      }
+      for (const ad of ads) {
+        if (ad.Type === "RESPONSIVE_AD") {
+          const gid = ad.AdGroupId ?? 0;
+          responsiveAdCountByGroup.set(gid, (responsiveAdCountByGroup.get(gid) ?? 0) + 1);
+        }
+      }
+      for (const gid of realGroupIds) {
+        const count = responsiveAdCountByGroup.get(gid) ?? 0;
+        log(`[${label}] group ${gid}: RESPONSIVE_AD count=${count}`);
+        if (count === 0) {
+          failures.push(`group ${gid}: no combinatorial RESPONSIVE_AD`);
+        }
+      }
+    }
+  } else {
+    log(`[${label}] ads.get failed: ${JSON.stringify(adsRes.body)}`);
+    failures.push(`ads.get failed: ${JSON.stringify(adsRes.body)}`);
+  }
+
+  if (adCount === 0) {
+    failures.push("no ads returned");
+  } else if (adsWithRealText === 0) {
+    failures.push(`all ${adCount} ads have Title/Text length <=5 (likely placeholders)`);
+  }
+  log(`[${label}] adCount=${adCount}, adsWithRealText=${adsWithRealText}`);
+
+  // --- SEARCH only: autotargeting readback via keywords.get per group ---
+  if (kind === "search") {
+    type AutotargetingCategory = { Category?: string; Value?: string };
+    type AutotargetingCategoriesWrapper = { Items?: AutotargetingCategory[] };
+    type KeywordItem = {
+      Id?: number;
+      Keyword?: string;
+      AutotargetingCategories?: AutotargetingCategoriesWrapper;
+    };
+
+    const REQUIRED_OFF: readonly string[] = ["BROADER", "ACCESSORY", "ALTERNATIVE"];
+
+    for (const gid of realGroupIds) {
+      const kwRes = await executeApiCall({
+        apiName: "direct",
+        endpoint: "/json/v5/keywords",
+        method: "POST",
+        body: {
+          method: "get",
+          params: {
+            SelectionCriteria: { AdGroupIds: [gid] },
+            FieldNames: ["Id", "Keyword", "AutotargetingCategories"],
+          },
+        },
+        account: ACCOUNT,
+      });
+
+      if (!kwRes.ok) {
+        failures.push(`group ${gid}: keywords.get failed: ${JSON.stringify(kwRes.body)}`);
+        continue;
+      }
+
+      const keywords = (kwRes.data as { result?: { Keywords?: KeywordItem[] } })?.result?.Keywords ?? [];
+      const autotargetingKw = keywords.find((kw) => kw.Keyword === "---autotargeting");
+
+      if (!autotargetingKw) {
+        failures.push(`group ${gid}: autotargeting ---autotargeting keyword missing`);
+        continue;
+      }
+
+      const items = autotargetingKw.AutotargetingCategories?.Items ?? [];
+      const categoryValueMap = new Map<string, string>();
+      for (const item of items) {
+        if (item.Category != null) {
+          categoryValueMap.set(item.Category, item.Value ?? "");
+        }
+      }
+
+      for (const cat of REQUIRED_OFF) {
+        const val = categoryValueMap.get(cat);
+        if (val !== "NO") {
+          failures.push(`group ${gid}: autotargeting ${cat} still ON (value="${val ?? "missing"}")`);
+        }
+      }
+      log(`[${label}] group ${gid}: autotargeting categories checked (${items.length} items)`);
+    }
+  }
+
+  return { nameOk, budgetPresent, groupCount, adCount, adsWithRealText, failures };
+}
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+
+async function main(): Promise<void> {
+  log("=== fix-direct-final-reupload ===");
+  log(`LIVE=${LIVE}, account=${ACCOUNT}`);
+  log(`Target campaign names: ${TARGET_NAMES.join(", ")}`);
+
+  // -------------------------------------------------------------------------
+  // GUARD: exit 0 without any API calls if not in live mode
+  // -------------------------------------------------------------------------
+  if (!LIVE) {
+    log(
+      `DRY MODE: would delete DRAFT campaigns named [${TARGET_NAMES.join(", ")}] (if present), ` +
+      `would create ${SEARCH_CAMPAIGN_NAME} + ${RSYA_CAMPAIGN_NAME}. ` +
+      "Set RUN_LIVE=true to execute."
+    );
+    process.exit(0);
+  }
+
+  // -------------------------------------------------------------------------
+  // Live path starts here — import pipeline tools
+  // -------------------------------------------------------------------------
+  const { runDirectUploadFromYaml } = await import("../src/tools/direct-upload-from-yaml.js");
+  const { executeApiCall }          = await import("../src/lib/api-gateway.js");
+
+  const executeApi = executeApiCall as unknown as ExecuteApiFn;
+  const uploadFn   = runDirectUploadFromYaml as unknown as UploadFn;
+
+  // -------------------------------------------------------------------------
+  // STEP 1: DELETE (name-based, idempotent, DRAFT-only)
+  // Throws if a non-DRAFT match is found (safety abort).
+  // Returns the list of deleted IDs (may be empty — idempotent).
+  // -------------------------------------------------------------------------
+  const deletedIds = await findAndDeleteByName(executeApi);
+
+  // -------------------------------------------------------------------------
+  // STEP 2: REUPLOAD SEARCH
+  // -------------------------------------------------------------------------
+  log("\n=== REUPLOAD SEARCH ===");
+  let searchCampaignId: number | null = null;
+
+  const searchTempDir = buildTempFolder(SEARCH_BUNDLE, SEARCH_CAMPAIGN_NAME, "search");
+  const searchDry     = await runDryRun(uploadFn, searchTempDir, "SEARCH");
+
+  const searchLive = await runLiveUpload(
+    uploadFn, searchTempDir,
+    searchDry.plan_hash, searchDry.expected_ack_live,
+    "SEARCH",
+    (id) => { searchCampaignId = id; }
+  );
+  if (searchLive.campaign_id != null) searchCampaignId = searchLive.campaign_id;
+
+  if (!searchCampaignId) {
+    throw new Error("SEARCH upload did not return a campaign ID");
+  }
+  log(`[SEARCH] campaign_id=${searchCampaignId}`);
+
+  // -------------------------------------------------------------------------
+  // STEP 3: REUPLOAD RSYA
+  // -------------------------------------------------------------------------
+  log("\n=== REUPLOAD RSYA ===");
+  let rsyaCampaignId: number | null = null;
+
+  const rsyaTempDir = buildTempFolder(RSYA_BUNDLE, RSYA_CAMPAIGN_NAME, "rsya");
+  const rsyaDry     = await runDryRun(uploadFn, rsyaTempDir, "RSYA");
+
+  const rsyaLive = await runLiveUpload(
+    uploadFn, rsyaTempDir,
+    rsyaDry.plan_hash, rsyaDry.expected_ack_live,
+    "RSYA",
+    (id) => { rsyaCampaignId = id; }
+  );
+  if (rsyaLive.campaign_id != null) rsyaCampaignId = rsyaLive.campaign_id;
+
+  if (!rsyaCampaignId) {
+    throw new Error("RSYA upload did not return a campaign ID");
+  }
+  log(`[RSYA] campaign_id=${rsyaCampaignId}`);
+
+  // -------------------------------------------------------------------------
+  // STEP 4: VERIFY — full shape assertion
+  // Each bundle has 5 clusters → expected group count = GROUP_FILES.length (5)
+  // -------------------------------------------------------------------------
+  log("\n=== VERIFY ===");
+  const expectedGroupCount = GROUP_FILES.length; // 5
+
+  const searchVerify = await verifyCampaign(
+    executeApi, searchCampaignId, SEARCH_CAMPAIGN_NAME, expectedGroupCount, "SEARCH", "search"
+  );
+  const rsyaVerify = await verifyCampaign(
+    executeApi, rsyaCampaignId, RSYA_CAMPAIGN_NAME, expectedGroupCount, "RSYA", "rsya"
+  );
+
+  const allFailures: string[] = [
+    ...searchVerify.failures.map((f) => `SEARCH: ${f}`),
+    ...rsyaVerify.failures.map((f) => `RSYA: ${f}`),
+  ];
+  const verifyOk = allFailures.length === 0;
+
+  if (!verifyOk) {
+    log("\n*** PARTIAL-STATE WARNING ***");
+    log(
+      "One or both campaigns were created but verification found missing/incomplete data. " +
+      "The account may have a campaign created but not fully populated. " +
+      "Operator should inspect the account before enabling campaigns. " +
+      "Re-running with dedupe_by_name=true is safe."
+    );
+    log("VERIFY FAILURES:");
+    for (const f of allFailures) {
+      log(`  - ${f}`);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // STEP 5: FINAL JSON
+  // -------------------------------------------------------------------------
+  const finalReport = {
+    deleted: deletedIds,
+    created: [
+      { id: searchCampaignId, name: SEARCH_CAMPAIGN_NAME },
+      { id: rsyaCampaignId,   name: RSYA_CAMPAIGN_NAME   },
+    ],
+    verify: {
+      search: searchVerify,
+      rsya:   rsyaVerify,
+    },
+    verify_ok: verifyOk,
+    verify_failures: allFailures,
+  };
+
+  log("\n=== FINAL REPORT ===");
+  log(JSON.stringify(finalReport, null, 2));
+
+  if (!verifyOk) {
+    process.exitCode = 1;
+    log(`RESULT: FAILED — ${allFailures.length} verification failure(s). See PARTIAL-STATE WARNING above.`);
+  } else {
+    log("RESULT: SUCCESS — campaigns created and fully verified.");
+  }
+}
+
+main().catch((e) => {
+  process.stderr.write(`[final-reupload] FATAL: ${String(e)}\n`);
+  if (e instanceof Error && e.stack) {
+    process.stderr.write(e.stack + "\n");
+  }
+  process.exit(1);
+});

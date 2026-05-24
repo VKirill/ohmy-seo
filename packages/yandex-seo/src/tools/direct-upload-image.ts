@@ -152,7 +152,7 @@ export async function runDirectUploadImage(input: z.infer<typeof InputSchema>) {
       body: {
         method: "add",
         params: {
-          AdImages: [{ ImageData: imageData }],
+          AdImages: [{ ImageData: imageData, Name: `img-${Date.now()}-${Math.random().toString(16).slice(2, 10)}` }],
         },
       },
       account: parsed.account,
@@ -178,6 +178,13 @@ export async function runDirectUploadImage(input: z.infer<typeof InputSchema>) {
       format,
       size_bytes: imageBuffer.length,
     };
+
+    if (adImageHash === undefined) {
+      const itemErrors = addResults?.[0]?.Errors;
+      if (itemErrors !== undefined) {
+        output.errors = itemErrors;
+      }
+    }
 
     if (originalUrl) {
       output.original_url = originalUrl;

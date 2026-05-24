@@ -163,8 +163,15 @@ export const GroupSchema = z.object({
     .object({
       cluster_id: z.string().optional(),
       intent: z.string().optional(),
+      marker_query: z.string().optional(),
     })
     .passthrough()
+    .optional(),
+  combinatorial: z
+    .object({
+      headlines: z.array(z.string()).max(7),
+      texts: z.array(z.string()).max(3),
+    })
     .optional(),
   ads: z.array(AdSchema).min(1).max(50),
 });
@@ -224,6 +231,8 @@ export const TextCampaignSchema = z.object({
 });
 
 export const CampaignSchema = z.object({
+  upload_strategy: z.enum(["one-per-cluster", "single-campaign"]).optional().default("one-per-cluster"),
+  dedupe_by_name: z.boolean().optional().default(false),
   campaign: z.object({
     Name: z.string().min(1),
     Type: CampaignType,
@@ -249,6 +258,13 @@ export const CampaignSchema = z.object({
   }),
   sitelinks_set: SitelinksSetSchema.optional(),
   promo_extension: PromoExtensionSchema.optional(),
+  /**
+   * Callouts (Уточнения) — ad extension texts attached to ads in this campaign.
+   * Each string ≤ 25 chars (API limit per §5.2 of naming map).
+   * Created via AdExtensions.add (CALLOUT type) before the pipeline runs; IDs
+   * are wired into TextAd.AdExtensions.Items / TextImageAd.AdExtensions.Items.
+   */
+  callouts: z.array(z.string().max(25)).optional(),
   images: z
     .record(
       z.string(),

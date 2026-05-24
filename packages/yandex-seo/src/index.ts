@@ -1839,23 +1839,20 @@ server.registerTool(
   {
     title: "Yandex Direct — Update Ad Group Auto-Targeting Categories",
     description:
-      "Updates auto-targeting category settings for a Yandex Direct ad group via AdGroups.update. " +
-      "Supports TEXT_AD_GROUP, UNIFIED_AD_GROUP, and MOBILE_APP_AD_GROUP — the correct sub-object " +
-      "(TextAdGroupAutoTargeting, UnifiedAdGroupAutoTargeting, MobileAppAdGroupAutoTargeting) is " +
-      "selected automatically based on group_type. " +
-      "Each category entry has a Category (TARGET_QUERIES, ALTERNATIVE_QUERIES, COMPETITOR_QUERIES, " +
-      "ACCESSORY_QUERIES, BROAD_MATCH, EXACT_MENTION) and a Value (YES or NO). " +
+      "Updates auto-targeting category settings for a TEXT_AD_GROUP via the Keywords.update " +
+      "mechanism (live-proven). Looks up the ---autotargeting keyword by ad_group_id, then " +
+      "calls Keywords.update with AutotargetingCategories as a direct array. " +
+      "Category names (API): EXACT, ALTERNATIVE, COMPETITOR, BROADER, ACCESSORY. " +
+      "Legacy names (BROAD_MATCH, ACCESSORY_QUERIES, ALTERNATIVE_QUERIES, COMPETITOR_QUERIES, " +
+      "EXACT_MENTION) are mapped automatically; TARGET_QUERIES is dropped (no equivalent). " +
       "confirm: true is required to proceed.",
     inputSchema: {
       ad_group_id: z.number().int().describe("Ad group ID to update auto-targeting for (required)"),
-      group_type: z
-        .enum(["TEXT_AD_GROUP", "UNIFIED_AD_GROUP", "MOBILE_APP_AD_GROUP"])
-        .describe("Ad group type — determines which auto-targeting sub-object is set"),
       categories: z
         .array(z.object({
           Category: z
-            .enum(["TARGET_QUERIES", "ALTERNATIVE_QUERIES", "COMPETITOR_QUERIES", "ACCESSORY_QUERIES", "BROAD_MATCH", "EXACT_MENTION"])
-            .describe("Auto-targeting category name"),
+            .string()
+            .describe("Auto-targeting category name (API: EXACT/ALTERNATIVE/COMPETITOR/BROADER/ACCESSORY; legacy names are mapped automatically)"),
           Value: z.enum(["YES", "NO"]).describe("Enable (YES) or disable (NO) this category"),
         }))
         .describe("Array of auto-targeting category settings"),
@@ -1870,7 +1867,6 @@ server.registerTool(
   async (args) =>
     runDirectUpdateAdgroupAutotargeting({
       ad_group_id: args.ad_group_id,
-      group_type: args.group_type,
       categories: args.categories,
       confirm: args.confirm,
       account: args.account,
