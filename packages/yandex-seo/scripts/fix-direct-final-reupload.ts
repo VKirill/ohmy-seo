@@ -514,9 +514,10 @@ async function verifyCampaign(
   campaignId: number,
   expectedName: string,
   expectedGroupCount: number,
-  label: string
+  label: string,
+  kind: "search" | "rsya"
 ): Promise<VerifyResult> {
-  log(`[${label}] Verifying campaign ${campaignId} (expect name="${expectedName}", groups=${expectedGroupCount}) ...`);
+  log(`[${label}] Verifying campaign ${campaignId} (expect name="${expectedName}", groups=${expectedGroupCount}, kind=${kind}) ...`);
   const failures: string[] = [];
 
   // --- campaigns.get ---
@@ -684,6 +685,28 @@ async function verifyCampaign(
     if (groupsWithoutValidAd.length > 0) {
       failures.push(`groups without a valid ad (Title>5 && Text>5): [${groupsWithoutValidAd.join(", ")}]`);
     }
+
+    // --- RSYA only: check every group has at least one RESPONSIVE_AD (combinatorial) ---
+    if (kind === "rsya") {
+      // Count RESPONSIVE_AD per group using the ads already fetched above.
+      const responsiveAdCountByGroup = new Map<number, number>();
+      for (const gid of realGroupIds) {
+        responsiveAdCountByGroup.set(gid, 0);
+      }
+      for (const ad of ads) {
+        if (ad.Type === "RESPONSIVE_AD") {
+          const gid = ad.AdGroupId ?? 0;
+          responsiveAdCountByGroup.set(gid, (responsiveAdCountByGroup.get(gid) ?? 0) + 1);
+        }
+      }
+      for (const gid of realGroupIds) {
+        const count = responsiveAdCountByGroup.get(gid) ?? 0;
+        log(`[${label}] group ${gid}: RESPONSIVE_AD count=${count}`);
+        if (count === 0) {
+          failures.push(`group ${gid}: no combinatorial RESPONSIVE_AD`);
+        }
+      }
+    }
   } else {
     log(`[${label}] ads.get failed: ${JSON.stringify(adsRes.body)}`);
     failures.push(`ads.get failed: ${JSON.stringify(adsRes.body)}`);
@@ -695,6 +718,64 @@ async function verifyCampaign(
     failures.push(`all ${adCount} ads have Title/Text length <=5 (likely placeholders)`);
   }
   log(`[${label}] adCount=${adCount}, adsWithRealText=${adsWithRealText}`);
+
+  // --- SEARCH only: autotargeting readback via keywords.get per group ---
+  if (kind === "search") {
+    type AutotargetingCategory = { Category?: string; Value?: string };
+    type AutotargetingCategoriesWrapper = { Items?: AutotargetingCategory[] };
+    type KeywordItem = {
+      Id?: number;
+      Keyword?: string;
+      AutotargetingCategories?: AutotargetingCategoriesWrapper;
+    };
+
+    const REQUIRED_OFF: readonly string[] = ["BROADER", "ACCESSORY", "ALTERNATIVE"];
+
+    for (const gid of realGroupIds) {
+      const kwRes = await executeApiCall({
+        apiName: "direct",
+        endpoint: "/json/v5/keywords",
+        method: "POST",
+        body: {
+          method: "get",
+          params: {
+            SelectionCriteria: { AdGroupIds: [gid] },
+            FieldNames: ["Id", "Keyword", "AutotargetingCategories"],
+          },
+        },
+        account: ACCOUNT,
+      });
+
+      if (!kwRes.ok) {
+        failures.push(`group ${gid}: keywords.get failed: ${JSON.stringify(kwRes.body)}`);
+        continue;
+      }
+
+      const keywords = (kwRes.data as { result?: { Keywords?: KeywordItem[] } })?.result?.Keywords ?? [];
+      const autotargetingKw = keywords.find((kw) => kw.Keyword === "---autotargeting");
+
+      if (!autotargetingKw) {
+        failures.push(`group ${gid}: autotargeting ---autotargeting keyword missing`);
+        continue;
+      }
+
+      const items = autotargetingKw.AutotargetingCategories?.Items ?? [];
+      const categoryValueMap = new Map<string, string>();
+      for (const item of items) {
+        if (item.Category != null) {
+          categoryValueMap.set(item.Category, item.Value ?? "");
+        }
+      }
+
+      for (const cat of REQUIRED_OFF) {
+        const val = categoryValueMap.get(cat);
+        if (val !== "NO") {
+          failures.push(`group ${gid}: autotargeting ${cat} still ON (value="${val ?? "missing"}")`);
+        }
+      }
+      log(`[${label}] group ${gid}: autotargeting categories checked (${items.length} items)`);
+    }
+  }
 
   return { nameOk, budgetPresent, groupCount, adCount, adsWithRealText, failures };
 }
@@ -788,10 +869,10 @@ async function main(): Promise<void> {
   const expectedGroupCount = GROUP_FILES.length; // 5
 
   const searchVerify = await verifyCampaign(
-    executeApi, searchCampaignId, SEARCH_CAMPAIGN_NAME, expectedGroupCount, "SEARCH"
+    executeApi, searchCampaignId, SEARCH_CAMPAIGN_NAME, expectedGroupCount, "SEARCH", "search"
   );
   const rsyaVerify = await verifyCampaign(
-    executeApi, rsyaCampaignId, RSYA_CAMPAIGN_NAME, expectedGroupCount, "RSYA"
+    executeApi, rsyaCampaignId, RSYA_CAMPAIGN_NAME, expectedGroupCount, "RSYA", "rsya"
   );
 
   const allFailures: string[] = [

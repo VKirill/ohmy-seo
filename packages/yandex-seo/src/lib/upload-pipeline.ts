@@ -22,6 +22,7 @@ import {
   buildAdTgoPayload,
   buildResponsiveAdPayload,
   buildAutoTargetingUpdatePayload,
+  mapAutotargetingCategoryName,
   buildImageUploadPayload,
   buildMetrikaUpdatePayload,
 } from "./payload-builder.js";
@@ -855,57 +856,6 @@ async function processCluster(opts: ClusterProcessInput): Promise<void> {
   await ledger.writeCommitted(adGroupSig, ad_group_id, campaign_id);
   state.ad_groups_created.push(ad_group_id);
 
-  // ---- Autotargeting update ----
-  // Resolve categories: use per-group override if provided, else apply search defaults,
-  // or skip entirely for RSYA when not explicitly provided.
-  {
-    const explicitCategories = input.autotargeting_per_group?.[cluster_id];
-    let categories: Array<{ Category: string; Value: "YES" | "NO" }> | null = null;
-
-    if (explicitCategories !== undefined) {
-      categories = explicitCategories;
-    } else if (input.campaign_type === "search") {
-      categories = [
-        { Category: "BROAD_MATCH", Value: "NO" },
-        { Category: "ACCESSORY_QUERIES", Value: "NO" },
-        { Category: "ALTERNATIVE_QUERIES", Value: "NO" },
-      ];
-    }
-    // For RSYA without explicit override: skip autotargeting
-
-    if (categories !== null) {
-      const atPayload = buildAutoTargetingUpdatePayload({
-        ad_group_id,
-        group_type: "TEXT_AD_GROUP",
-        categories,
-      });
-      const atResult = await executeApiCall({
-        apiName: "direct",
-        endpoint: "/json/v5/adgroups",
-        body: atPayload,
-        account: account_label,
-        client_login,
-      });
-      if (!atResult.ok) {
-        const errMsg = JSON.stringify(atResult.body);
-        console.warn(`[WARN] autotargeting update failed for cluster ${cluster_id}: ${errMsg}`); // guardian: allow
-        state.errors.push({ cluster_id, step: "autotargeting", error: errMsg });
-        // Non-fatal: continue processing
-      } else {
-        // Check item-level errors in UpdateResults
-        const updateResults = (atResult.data as { result?: { UpdateResults?: Array<{ Id?: number; Errors?: Array<{ Code: number; Message: string }> }> } })
-          ?.result?.UpdateResults;
-        const firstUpdateResult = updateResults?.[0];
-        if (firstUpdateResult?.Errors && firstUpdateResult.Errors.length > 0) {
-          const itemErrMsg = JSON.stringify(firstUpdateResult.Errors);
-          console.warn(`[WARN] autotargeting item error for cluster ${cluster_id}: ${itemErrMsg}`); // guardian: allow
-          state.errors.push({ cluster_id, step: "autotargeting", error: itemErrMsg });
-          // Non-fatal: continue processing
-        }
-      }
-    }
-  }
-
   // ---- Keywords ----
   for (const kw of validKeywords) {
     const kwSig = `keyword:${cluster_id}:${kw.query.slice(0, 80)}`;
@@ -936,6 +886,97 @@ async function processCluster(opts: ClusterProcessInput): Promise<void> {
       } catch {
         await ledger.writeFailed(kwSig, "id_extraction_failed");
         state.failed_count++;
+      }
+    }
+  }
+
+  // ---- Autotargeting update (keyword-based, after keywords are created) ----
+  // The ---autotargeting keyword is auto-created by Direct when the ad group is populated.
+  // Mechanism: GET keywords to find the ---autotargeting kw Id, then Keywords.update it.
+  {
+    const explicitCategories = input.autotargeting_per_group?.[cluster_id];
+    let rawCategories: Array<{ Category: string; Value: "YES" | "NO" }> | null = null;
+
+    if (explicitCategories !== undefined) {
+      rawCategories = explicitCategories;
+    } else if (input.campaign_type === "search") {
+      // Search default: disable broader/accessory/alternative discovery
+      rawCategories = [
+        { Category: "BROADER", Value: "NO" },
+        { Category: "ACCESSORY", Value: "NO" },
+        { Category: "ALTERNATIVE", Value: "NO" },
+      ];
+    }
+    // For RSYA without explicit override: skip autotargeting
+
+    if (rawCategories !== null) {
+      // Map legacy names to API names; drop unmappable (TARGET_QUERIES etc.)
+      const categories = rawCategories
+        .map((c) => {
+          const apiName = mapAutotargetingCategoryName(c.Category);
+          return apiName ? { Category: apiName, Value: c.Value } : null;
+        })
+        .filter((c): c is { Category: string; Value: "YES" | "NO" } => c !== null);
+
+      // GET keywords for this ad group to find the ---autotargeting keyword
+      const kwGetResult = await executeApiCall({
+        apiName: "direct",
+        endpoint: "/json/v5/keywords",
+        body: {
+          method: "get",
+          params: {
+            SelectionCriteria: { AdGroupIds: [ad_group_id] },
+            FieldNames: ["Id", "Keyword"],
+          },
+        },
+        account: account_label,
+        client_login,
+      });
+
+      if (!kwGetResult.ok) {
+        const errMsg = JSON.stringify(kwGetResult.body);
+        console.warn(`[WARN] autotargeting kw lookup failed for cluster ${cluster_id}: ${errMsg}`); // guardian: allow
+        state.errors.push({ cluster_id, step: "autotargeting", error: `kw_lookup: ${errMsg}` });
+        // Non-fatal: continue
+      } else {
+        const kwItems = (kwGetResult.data as { result?: { Keywords?: Array<{ Id: number; Keyword: string }> } })
+          ?.result?.Keywords ?? [];
+        const atKw = kwItems.find((k) => k.Keyword === "---autotargeting");
+
+        if (!atKw) {
+          console.warn(`[WARN] ---autotargeting keyword not found for ad_group ${ad_group_id} (cluster ${cluster_id})`); // guardian: allow
+          state.errors.push({ cluster_id, step: "autotargeting", error: "---autotargeting keyword not found" });
+          // Non-fatal: continue
+        } else {
+          const atPayload = buildAutoTargetingUpdatePayload({
+            autotargeting_keyword_id: atKw.Id,
+            categories,
+          });
+          const atResult = await executeApiCall({
+            apiName: "direct",
+            endpoint: "/json/v5/keywords",
+            body: atPayload,
+            account: account_label,
+            client_login,
+          });
+
+          if (!atResult.ok) {
+            const errMsg = JSON.stringify(atResult.body);
+            console.warn(`[WARN] autotargeting update failed for cluster ${cluster_id}: ${errMsg}`); // guardian: allow
+            state.errors.push({ cluster_id, step: "autotargeting", error: errMsg });
+            // Non-fatal: continue
+          } else {
+            const updateResults = (atResult.data as { result?: { UpdateResults?: Array<{ Id?: number; Errors?: Array<{ Code: number; Message: string }> }> } })
+              ?.result?.UpdateResults;
+            const firstUpdateResult = updateResults?.[0];
+            if (firstUpdateResult?.Errors && firstUpdateResult.Errors.length > 0) {
+              const itemErrMsg = JSON.stringify(firstUpdateResult.Errors);
+              console.warn(`[WARN] autotargeting item error for cluster ${cluster_id}: ${itemErrMsg}`); // guardian: allow
+              state.errors.push({ cluster_id, step: "autotargeting", error: itemErrMsg });
+              // Non-fatal: continue
+            }
+          }
+        }
       }
     }
   }

@@ -550,33 +550,59 @@ export function buildResponsiveAdPayload(input: {
 // ---------------------------------------------------------------------------
 
 /**
- * Build an AdGroups.update payload to configure auto-targeting categories.
+ * Map legacy / bundle category names to Yandex Direct API category names for
+ * the ---autotargeting keyword's AutotargetingCategories field.
  *
- * The sub-object name on AdGroup differs by group type:
- *   - TEXT_AD_GROUP         → TextAdGroupAutoTargeting
- *   - UNIFIED_AD_GROUP      → UnifiedAdGroupAutoTargeting
- *   - MOBILE_APP_AD_GROUP   → MobileAppAdGroupAutoTargeting
+ * Returns null for names that have no API equivalent (TARGET_QUERIES) so
+ * callers can drop them with a simple filter.
  *
- * Each category entry is { Category: string; Value: "YES" | "NO" }.
+ * API category names: EXACT, ALTERNATIVE, COMPETITOR, BROADER, ACCESSORY
+ */
+export function mapAutotargetingCategoryName(name: string): string | null {
+  switch (name) {
+    case "BROAD_MATCH":          return "BROADER";
+    case "ACCESSORY_QUERIES":    return "ACCESSORY";
+    case "ALTERNATIVE_QUERIES":  return "ALTERNATIVE";
+    case "COMPETITOR_QUERIES":   return "COMPETITOR";
+    case "EXACT_MENTION":        return "EXACT";
+    // Already-canonical names pass through
+    case "BROADER":              return "BROADER";
+    case "ACCESSORY":            return "ACCESSORY";
+    case "ALTERNATIVE":          return "ALTERNATIVE";
+    case "COMPETITOR":           return "COMPETITOR";
+    case "EXACT":                return "EXACT";
+    // TARGET_QUERIES has no keyword-category equivalent
+    case "TARGET_QUERIES":       return null;
+    default:                     return null;
+  }
+}
+
+/**
+ * Build a Keywords.update payload to configure auto-targeting categories on
+ * the special "---autotargeting" keyword in a TEXT_AD_GROUP.
+ *
+ * LIVE-PROVEN mechanism (canary on ki.vech):
+ *   - Endpoint: /json/v5/keywords, method "update"
+ *   - AutotargetingCategories is a DIRECT ARRAY on write (NOT wrapped in Items).
+ *     On GET the API returns { Items: [...] } — the asymmetry is intentional.
+ *
+ * Category names: EXACT, ALTERNATIVE, COMPETITOR, BROADER, ACCESSORY
  */
 export function buildAutoTargetingUpdatePayload(input: {
-  ad_group_id: number;
-  group_type: "TEXT_AD_GROUP" | "UNIFIED_AD_GROUP" | "MOBILE_APP_AD_GROUP";
+  autotargeting_keyword_id: number;
   categories: Array<{ Category: string; Value: "YES" | "NO" }>;
-}): { method: "update"; params: { AdGroups: Array<unknown> } } {
-  const autoTargeting = { Items: input.categories };
-  const adGroup: Record<string, unknown> = { Id: input.ad_group_id };
-
-  if (input.group_type === "TEXT_AD_GROUP") {
-    adGroup["TextAdGroupAutoTargeting"] = autoTargeting;
-  } else if (input.group_type === "UNIFIED_AD_GROUP") {
-    adGroup["UnifiedAdGroupAutoTargeting"] = autoTargeting;
-  } else {
-    // MOBILE_APP_AD_GROUP
-    adGroup["MobileAppAdGroupAutoTargeting"] = autoTargeting;
-  }
-
-  return { method: "update", params: { AdGroups: [adGroup] } };
+}): { method: "update"; params: { Keywords: Array<unknown> } } {
+  return {
+    method: "update",
+    params: {
+      Keywords: [
+        {
+          Id: input.autotargeting_keyword_id,
+          AutotargetingCategories: input.categories,
+        },
+      ],
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -1,9 +1,10 @@
 /**
  * autotargeting-combinatorial.test.ts
  *
- * Unit tests for TASK-4041:
+ * Unit tests for TASK-4045:
+ *   - buildAutoTargetingUpdatePayload: Keywords.update with direct AutotargetingCategories array
+ *   - mapAutotargetingCategoryName: legacy -> API name mapping
  *   - Autotargeting category resolution (search defaults, explicit override, RSYA skip)
- *   - buildAutoTargetingUpdatePayload schema correctness
  *   - Combinatorial ResponsiveAd payload via buildResponsiveAdPayload
  */
 
@@ -17,76 +18,138 @@ vi.mock("../src/lib/bundle-ledger.js", () => ({}));
 
 import {
   buildAutoTargetingUpdatePayload,
+  mapAutotargetingCategoryName,
   buildResponsiveAdPayload,
 } from "../src/lib/payload-builder.js";
 
 // ---------------------------------------------------------------------------
-// buildAutoTargetingUpdatePayload — schema correctness
+// mapAutotargetingCategoryName — name mapping
+// ---------------------------------------------------------------------------
+
+describe("mapAutotargetingCategoryName — mapping", () => {
+  it("maps BROAD_MATCH -> BROADER", () => {
+    expect(mapAutotargetingCategoryName("BROAD_MATCH")).toBe("BROADER");
+  });
+
+  it("maps ACCESSORY_QUERIES -> ACCESSORY", () => {
+    expect(mapAutotargetingCategoryName("ACCESSORY_QUERIES")).toBe("ACCESSORY");
+  });
+
+  it("maps ALTERNATIVE_QUERIES -> ALTERNATIVE", () => {
+    expect(mapAutotargetingCategoryName("ALTERNATIVE_QUERIES")).toBe("ALTERNATIVE");
+  });
+
+  it("maps COMPETITOR_QUERIES -> COMPETITOR", () => {
+    expect(mapAutotargetingCategoryName("COMPETITOR_QUERIES")).toBe("COMPETITOR");
+  });
+
+  it("maps EXACT_MENTION -> EXACT", () => {
+    expect(mapAutotargetingCategoryName("EXACT_MENTION")).toBe("EXACT");
+  });
+
+  it("returns null for TARGET_QUERIES (no equivalent)", () => {
+    expect(mapAutotargetingCategoryName("TARGET_QUERIES")).toBeNull();
+  });
+
+  it("returns null for unknown names", () => {
+    expect(mapAutotargetingCategoryName("UNKNOWN_CATEGORY")).toBeNull();
+  });
+
+  it("passes through already-canonical names", () => {
+    expect(mapAutotargetingCategoryName("BROADER")).toBe("BROADER");
+    expect(mapAutotargetingCategoryName("ACCESSORY")).toBe("ACCESSORY");
+    expect(mapAutotargetingCategoryName("ALTERNATIVE")).toBe("ALTERNATIVE");
+    expect(mapAutotargetingCategoryName("COMPETITOR")).toBe("COMPETITOR");
+    expect(mapAutotargetingCategoryName("EXACT")).toBe("EXACT");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildAutoTargetingUpdatePayload — Keywords.update schema correctness
 // ---------------------------------------------------------------------------
 
 describe("buildAutoTargetingUpdatePayload — schema", () => {
-  it("builds update payload for TEXT_AD_GROUP with given categories", () => {
+  it("builds Keywords.update payload (not AdGroups.update)", () => {
     const payload = buildAutoTargetingUpdatePayload({
-      ad_group_id: 42,
-      group_type: "TEXT_AD_GROUP",
+      autotargeting_keyword_id: 42,
       categories: [
-        { Category: "BROAD_MATCH", Value: "NO" },
-        { Category: "ACCESSORY_QUERIES", Value: "NO" },
+        { Category: "BROADER", Value: "NO" },
+        { Category: "ACCESSORY", Value: "NO" },
       ],
     });
 
     expect(payload.method).toBe("update");
-    const adGroup = payload.params.AdGroups[0] as Record<string, unknown>;
-    expect(adGroup["Id"]).toBe(42);
-    const autoTargeting = adGroup["TextAdGroupAutoTargeting"] as Record<string, unknown>;
-    expect(autoTargeting).toBeDefined();
-    expect((autoTargeting["Items"] as Array<unknown>).length).toBe(2);
-    expect(autoTargeting["Items"]).toEqual([
-      { Category: "BROAD_MATCH", Value: "NO" },
-      { Category: "ACCESSORY_QUERIES", Value: "NO" },
-    ]);
+    // Must be Keywords, NOT AdGroups
+    expect((payload.params as Record<string, unknown>)["Keywords"]).toBeDefined();
+    expect((payload.params as Record<string, unknown>)["AdGroups"]).toBeUndefined();
   });
 
-  it("sets ALTERNATIVE_QUERIES=NO for the search default set", () => {
-    // Verify the exact 3-category default set used by the pipeline for search
-    const defaultCategories = [
-      { Category: "BROAD_MATCH", Value: "NO" as const },
-      { Category: "ACCESSORY_QUERIES", Value: "NO" as const },
-      { Category: "ALTERNATIVE_QUERIES", Value: "NO" as const },
-    ];
+  it("sets Id to autotargeting_keyword_id", () => {
     const payload = buildAutoTargetingUpdatePayload({
-      ad_group_id: 99,
-      group_type: "TEXT_AD_GROUP",
-      categories: defaultCategories,
+      autotargeting_keyword_id: 99,
+      categories: [{ Category: "EXACT", Value: "YES" }],
     });
 
-    const adGroup = payload.params.AdGroups[0] as Record<string, unknown>;
-    const autoTargeting = adGroup["TextAdGroupAutoTargeting"] as Record<string, unknown>;
-    const items = autoTargeting["Items"] as Array<{ Category: string; Value: string }>;
-
-    expect(items).toHaveLength(3);
-    const categories = items.map((i) => i.Category);
-    expect(categories).toContain("BROAD_MATCH");
-    expect(categories).toContain("ACCESSORY_QUERIES");
-    expect(categories).toContain("ALTERNATIVE_QUERIES");
-    // All values are "NO"
-    expect(items.every((i) => i.Value === "NO")).toBe(true);
+    const kw = payload.params.Keywords[0] as Record<string, unknown>;
+    expect(kw["Id"]).toBe(99);
   });
 
-  it("passes explicit YES/NO values verbatim", () => {
+  it("AutotargetingCategories is a DIRECT array (no Items wrapper)", () => {
     const payload = buildAutoTargetingUpdatePayload({
-      ad_group_id: 10,
-      group_type: "TEXT_AD_GROUP",
+      autotargeting_keyword_id: 42,
       categories: [
-        { Category: "BROAD_MATCH", Value: "YES" },
-        { Category: "ACCESSORY_QUERIES", Value: "NO" },
+        { Category: "BROADER", Value: "NO" },
+        { Category: "ACCESSORY", Value: "NO" },
       ],
     });
 
-    const adGroup = payload.params.AdGroups[0] as Record<string, unknown>;
-    const items = (adGroup["TextAdGroupAutoTargeting"] as Record<string, unknown>)["Items"] as Array<{ Category: string; Value: string }>;
-    expect(items.find((i) => i.Category === "BROAD_MATCH")?.Value).toBe("YES");
-    expect(items.find((i) => i.Category === "ACCESSORY_QUERIES")?.Value).toBe("NO");
+    const kw = payload.params.Keywords[0] as Record<string, unknown>;
+    const cats = kw["AutotargetingCategories"] as unknown;
+
+    // Must be a plain array, not { Items: [...] }
+    expect(Array.isArray(cats)).toBe(true);
+    // Must NOT have an Items property (no wrapper object)
+    expect((cats as Record<string, unknown>)["Items"]).toBeUndefined();
+    expect((cats as Array<unknown>).length).toBe(2);
+  });
+
+  it("stores categories verbatim with correct Category/Value shape", () => {
+    const payload = buildAutoTargetingUpdatePayload({
+      autotargeting_keyword_id: 10,
+      categories: [
+        { Category: "BROADER", Value: "YES" },
+        { Category: "ACCESSORY", Value: "NO" },
+        { Category: "ALTERNATIVE", Value: "NO" },
+      ],
+    });
+
+    const kw = payload.params.Keywords[0] as Record<string, unknown>;
+    const cats = kw["AutotargetingCategories"] as Array<{ Category: string; Value: string }>;
+    expect(cats).toHaveLength(3);
+    expect(cats.find((c) => c.Category === "BROADER")?.Value).toBe("YES");
+    expect(cats.find((c) => c.Category === "ACCESSORY")?.Value).toBe("NO");
+    expect(cats.find((c) => c.Category === "ALTERNATIVE")?.Value).toBe("NO");
+  });
+
+  it("search default set uses API names (BROADER/ACCESSORY/ALTERNATIVE), all NO", () => {
+    const defaultCategories = [
+      { Category: "BROADER", Value: "NO" as const },
+      { Category: "ACCESSORY", Value: "NO" as const },
+      { Category: "ALTERNATIVE", Value: "NO" as const },
+    ];
+    const payload = buildAutoTargetingUpdatePayload({
+      autotargeting_keyword_id: 99,
+      categories: defaultCategories,
+    });
+
+    const kw = payload.params.Keywords[0] as Record<string, unknown>;
+    const cats = kw["AutotargetingCategories"] as Array<{ Category: string; Value: string }>;
+    expect(cats).toHaveLength(3);
+    const names = cats.map((c) => c.Category);
+    expect(names).toContain("BROADER");
+    expect(names).toContain("ACCESSORY");
+    expect(names).toContain("ALTERNATIVE");
+    expect(cats.every((c) => c.Value === "NO")).toBe(true);
   });
 });
 
@@ -98,6 +161,7 @@ describe("autotargeting category resolution — logic", () => {
   /**
    * Simulate the resolution logic from processCluster for testability.
    * Returns resolved categories or null (skip).
+   * NOTE: pipeline now uses API names (BROADER/ACCESSORY/ALTERNATIVE) for defaults.
    */
   function resolveAutoTargetingCategories(
     cluster_id: string,
@@ -110,26 +174,26 @@ describe("autotargeting category resolution — logic", () => {
     }
     if (campaign_type === "search") {
       return [
-        { Category: "BROAD_MATCH", Value: "NO" },
-        { Category: "ACCESSORY_QUERIES", Value: "NO" },
-        { Category: "ALTERNATIVE_QUERIES", Value: "NO" },
+        { Category: "BROADER", Value: "NO" },
+        { Category: "ACCESSORY", Value: "NO" },
+        { Category: "ALTERNATIVE", Value: "NO" },
       ];
     }
     // RSYA without explicit override: skip
     return null;
   }
 
-  it("search without explicit: returns 3 default categories all NO", () => {
+  it("search without explicit: returns 3 default categories (API names) all NO", () => {
     const cats = resolveAutoTargetingCategories("cl01", "search", undefined);
     expect(cats).not.toBeNull();
     expect(cats).toHaveLength(3);
     expect(cats!.every((c) => c.Value === "NO")).toBe(true);
     const catNames = cats!.map((c) => c.Category);
-    expect(catNames).toEqual(["BROAD_MATCH", "ACCESSORY_QUERIES", "ALTERNATIVE_QUERIES"]);
+    expect(catNames).toEqual(["BROADER", "ACCESSORY", "ALTERNATIVE"]);
   });
 
   it("search with explicit override: returns provided categories verbatim", () => {
-    const explicit = [{ Category: "BROAD_MATCH", Value: "YES" as const }];
+    const explicit = [{ Category: "BROADER", Value: "YES" as const }];
     const cats = resolveAutoTargetingCategories("cl01", "search", { cl01: explicit });
     expect(cats).toEqual(explicit);
   });
@@ -145,13 +209,13 @@ describe("autotargeting category resolution — logic", () => {
   });
 
   it("rsya with explicit override: returns provided categories verbatim", () => {
-    const explicit = [{ Category: "ACCESSORY_QUERIES", Value: "NO" as const }];
+    const explicit = [{ Category: "ACCESSORY", Value: "NO" as const }];
     const cats = resolveAutoTargetingCategories("cl01", "rsya", { cl01: explicit });
     expect(cats).toEqual(explicit);
   });
 
   it("search with explicit override for different cluster: falls back to defaults", () => {
-    const explicit = [{ Category: "BROAD_MATCH", Value: "YES" as const }];
+    const explicit = [{ Category: "BROADER", Value: "YES" as const }];
     // Explicit is for cl02, not cl01
     const cats = resolveAutoTargetingCategories("cl01", "search", { cl02: explicit });
     expect(cats).toHaveLength(3); // defaults

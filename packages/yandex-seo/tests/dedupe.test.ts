@@ -21,7 +21,8 @@ vi.mock("../src/lib/payload-builder.js", () => ({
   buildAdRsyaPayload: vi.fn(),
   buildImageUploadPayload: vi.fn(),
   buildMetrikaUpdatePayload: vi.fn(),
-  buildAutoTargetingUpdatePayload: vi.fn().mockReturnValue({ method: "update", params: { AdGroups: [{}] } }),
+  buildAutoTargetingUpdatePayload: vi.fn().mockReturnValue({ method: "update", params: { Keywords: [{}] } }),
+  mapAutotargetingCategoryName: vi.fn().mockImplementation((name: string) => name),
   buildResponsiveAdPayload: vi.fn(),
 }));
 vi.mock("../src/lib/api/confirm-gate.js", () => ({
@@ -174,8 +175,26 @@ describe("uploadCampaignBundle dedupe_by_name", () => {
           body: {},
         };
       }
-      // Keywords.add
+      // Keywords endpoint — differentiate by method
       if (opts.endpoint === "/json/v5/keywords") {
+        const kwBody = opts.body as Record<string, unknown> | undefined;
+        if (kwBody?.["method"] === "get") {
+          // Autotargeting keyword lookup — return ---autotargeting kw
+          return {
+            ok: true, status: 200,
+            data: { result: { Keywords: [{ Id: 9901, Keyword: "---autotargeting" }] } },
+            body: {},
+          };
+        }
+        if (kwBody?.["method"] === "update") {
+          // Autotargeting update
+          return {
+            ok: true, status: 200,
+            data: { result: { UpdateResults: [{ Id: 9901, Errors: [] }] } },
+            body: {},
+          };
+        }
+        // Keywords.add
         return {
           ok: true, status: 200,
           data: { result: { AddResults: [{ Id: 6001 }] } },
@@ -246,6 +265,13 @@ describe("uploadCampaignBundle dedupe_by_name", () => {
         return { ok: true, status: 200, data: { result: { AddResults: [{ Id: 5010 }] } }, body: {} };
       }
       if (opts.endpoint === "/json/v5/keywords") {
+        const kwBody2 = opts.body as Record<string, unknown> | undefined;
+        if (kwBody2?.["method"] === "get") {
+          return { ok: true, status: 200, data: { result: { Keywords: [{ Id: 9910, Keyword: "---autotargeting" }] } }, body: {} };
+        }
+        if (kwBody2?.["method"] === "update") {
+          return { ok: true, status: 200, data: { result: { UpdateResults: [{ Id: 9910, Errors: [] }] } }, body: {} };
+        }
         return { ok: true, status: 200, data: { result: { AddResults: [{ Id: 6010 }] } }, body: {} };
       }
       if (opts.endpoint === "/json/v5/ads") {
@@ -288,6 +314,13 @@ describe("uploadCampaignBundle dedupe_by_name", () => {
         return { ok: true, status: 200, data: { result: { AddResults: [{ Id: 5011 }] } }, body: {} };
       }
       if (opts.endpoint === "/json/v5/keywords") {
+        const kwBody3 = opts.body as Record<string, unknown> | undefined;
+        if (kwBody3?.["method"] === "get") {
+          return { ok: true, status: 200, data: { result: { Keywords: [{ Id: 9911, Keyword: "---autotargeting" }] } }, body: {} };
+        }
+        if (kwBody3?.["method"] === "update") {
+          return { ok: true, status: 200, data: { result: { UpdateResults: [{ Id: 9911, Errors: [] }] } }, body: {} };
+        }
         return { ok: true, status: 200, data: { result: { AddResults: [{ Id: 6011 }] } }, body: {} };
       }
       if (opts.endpoint === "/json/v5/ads") {
@@ -324,6 +357,13 @@ describe("uploadCampaignBundle dedupe_by_name", () => {
         return { ok: true, status: 200, data: { result: { AddResults: [{ Id: 5002 }] } }, body: {} };
       }
       if (endpoint === "/json/v5/keywords") {
+        const kwBody4 = opts.body as Record<string, unknown> | undefined;
+        if (kwBody4?.["method"] === "get") {
+          return { ok: true, status: 200, data: { result: { Keywords: [{ Id: 9902, Keyword: "---autotargeting" }] } }, body: {} };
+        }
+        if (kwBody4?.["method"] === "update") {
+          return { ok: true, status: 200, data: { result: { UpdateResults: [{ Id: 9902, Errors: [] }] } }, body: {} };
+        }
         return { ok: true, status: 200, data: { result: { AddResults: [{ Id: 6002 }] } }, body: {} };
       }
       if (endpoint === "/json/v5/ads") {
@@ -505,6 +545,13 @@ describe("uploadCampaignBundle — ad errors surfaced in result.errors", () => {
         return { ok: true, status: 200, data: { result: { AddResults: [{ Id: 5100 }] } }, body: {} };
       }
       if (opts.endpoint === "/json/v5/keywords") {
+        const kwBodyTgo = opts.body as Record<string, unknown> | undefined;
+        if (kwBodyTgo?.["method"] === "get") {
+          return { ok: true, status: 200, data: { result: { Keywords: [{ Id: 9100, Keyword: "---autotargeting" }] } }, body: {} };
+        }
+        if (kwBodyTgo?.["method"] === "update") {
+          return { ok: true, status: 200, data: { result: { UpdateResults: [{ Id: 9100, Errors: [] }] } }, body: {} };
+        }
         return { ok: true, status: 200, data: { result: { AddResults: [{ Id: 6100 }] } }, body: {} };
       }
       // TGO ad fails with code 8000
@@ -607,6 +654,13 @@ describe("uploadCampaignBundle — Stage 2 aborts on error rate", () => {
           return { ok: true, status: 200, data: { result: { AddResults: [{ Id: 5200 }] } }, body: {} };
         }
         if (opts.endpoint === "/json/v5/keywords") {
+          const kwBodyS2 = opts.body as Record<string, unknown> | undefined;
+          if (kwBodyS2?.["method"] === "get") {
+            return { ok: true, status: 200, data: { result: { Keywords: [{ Id: 9200, Keyword: "---autotargeting" }] } }, body: {} };
+          }
+          if (kwBodyS2?.["method"] === "update") {
+            return { ok: true, status: 200, data: { result: { UpdateResults: [{ Id: 9200, Errors: [] }] } }, body: {} };
+          }
           return { ok: true, status: 200, data: { result: { AddResults: [{ Id: 6200 }] } }, body: {} };
         }
         if (opts.endpoint === "/json/v5/ads") {
