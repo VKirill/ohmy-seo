@@ -23,6 +23,7 @@ import {
   buildResponsiveAdPayload,
   buildAutoTargetingUpdatePayload,
   mapAutotargetingCategoryName,
+  sanitizeAutotargetingCategories,
   buildImageUploadPayload,
   buildMetrikaUpdatePayload,
 } from "./payload-builder.js";
@@ -911,12 +912,15 @@ async function processCluster(opts: ClusterProcessInput): Promise<void> {
 
     if (rawCategories !== null) {
       // Map legacy names to API names; drop unmappable (TARGET_QUERIES etc.)
-      const categories = rawCategories
-        .map((c) => {
-          const apiName = mapAutotargetingCategoryName(c.Category);
-          return apiName ? { Category: apiName, Value: c.Value } : null;
-        })
-        .filter((c): c is { Category: string; Value: "YES" | "NO" } => c !== null);
+      // Then sanitize: drop {EXACT,NO} and guard against all-off (Yandex Code 5005)
+      const categories = sanitizeAutotargetingCategories(
+        rawCategories
+          .map((c) => {
+            const apiName = mapAutotargetingCategoryName(c.Category);
+            return apiName ? { Category: apiName, Value: c.Value } : null;
+          })
+          .filter((c): c is { Category: string; Value: "YES" | "NO" } => c !== null),
+      );
 
       // GET keywords for this ad group to find the ---autotargeting keyword
       const kwGetResult = await executeApiCall({

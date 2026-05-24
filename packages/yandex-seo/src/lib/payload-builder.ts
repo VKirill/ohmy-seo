@@ -578,6 +578,49 @@ export function mapAutotargetingCategoryName(name: string): string | null {
 }
 
 /**
+ * Sanitize autotargeting categories before sending to Yandex Direct.
+ *
+ * Yandex Direct Code 5005: "Запрещено выключать все категории в автотаргетинге"
+ * — at least one category must remain ON. Additionally, EXACT (целевые) is the
+ * safest category to keep enabled; disabling it is almost never desired and
+ * causes confusing rejections when other categories are also disabled.
+ *
+ * Rules applied:
+ *   1. Drop any entry where Category === "EXACT" and Value === "NO"
+ *      (never send a request to disable EXACT targeting).
+ *   2. If an EXACT:NO entry WAS present (and was dropped), AND the resulting
+ *      list has no Value === "YES" entry, append { Category: "EXACT", Value: "YES" }
+ *      as a guard so the update never leaves all categories OFF.
+ *
+ * The search default [BROADER:NO, ACCESSORY:NO, ALTERNATIVE:NO] passes through
+ * unchanged because it has no EXACT:NO entry — EXACT/COMPETITOR implicitly
+ * stay ON (not listed = remain at their current Direct state).
+ *
+ * @see Yandex Direct API error Code 5005
+ */
+export function sanitizeAutotargetingCategories(
+  categories: Array<{ Category: string; Value: "YES" | "NO" }>,
+): Array<{ Category: string; Value: "YES" | "NO" }> {
+  // Rule 1: drop {EXACT, NO} — never disable EXACT targeting
+  const hadExactNo = categories.some(
+    (c) => c.Category === "EXACT" && c.Value === "NO",
+  );
+  const filtered = categories.filter(
+    (c) => !(c.Category === "EXACT" && c.Value === "NO"),
+  );
+
+  // Rule 2: if EXACT:NO was removed AND nothing else is YES, append EXACT:YES
+  // to prevent Code 5005 (all categories disabled). Only fires when EXACT was
+  // explicitly in the input — the 3-default (BROADER/ACCESSORY/ALTERNATIVE all NO)
+  // is unaffected because it never includes EXACT:NO.
+  if (hadExactNo && filtered.length > 0 && !filtered.some((c) => c.Value === "YES")) {
+    filtered.push({ Category: "EXACT", Value: "YES" });
+  }
+
+  return filtered;
+}
+
+/**
  * Build a Keywords.update payload to configure auto-targeting categories on
  * the special "---autotargeting" keyword in a TEXT_AD_GROUP.
  *

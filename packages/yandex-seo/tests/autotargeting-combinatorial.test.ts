@@ -19,6 +19,7 @@ vi.mock("../src/lib/bundle-ledger.js", () => ({}));
 import {
   buildAutoTargetingUpdatePayload,
   mapAutotargetingCategoryName,
+  sanitizeAutotargetingCategories,
   buildResponsiveAdPayload,
 } from "../src/lib/payload-builder.js";
 
@@ -61,6 +62,87 @@ describe("mapAutotargetingCategoryName — mapping", () => {
     expect(mapAutotargetingCategoryName("ALTERNATIVE")).toBe("ALTERNATIVE");
     expect(mapAutotargetingCategoryName("COMPETITOR")).toBe("COMPETITOR");
     expect(mapAutotargetingCategoryName("EXACT")).toBe("EXACT");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sanitizeAutotargetingCategories — Code 5005 guard
+// ---------------------------------------------------------------------------
+
+describe("sanitizeAutotargetingCategories — Code 5005 guard", () => {
+  it("all-NO input (5 categories): drops {EXACT,NO} and appends {EXACT,YES} guard", () => {
+    // Scenario: bundle declares ALL 5 categories as NO → rejected by Yandex Code 5005
+    const input = [
+      { Category: "EXACT", Value: "NO" as const },
+      { Category: "BROADER", Value: "NO" as const },
+      { Category: "ACCESSORY", Value: "NO" as const },
+      { Category: "ALTERNATIVE", Value: "NO" as const },
+      { Category: "COMPETITOR", Value: "NO" as const },
+    ];
+    const result = sanitizeAutotargetingCategories(input);
+    // {EXACT,NO} must be gone
+    expect(result.find((c) => c.Category === "EXACT" && c.Value === "NO")).toBeUndefined();
+    // At least one YES must exist (the EXACT guard)
+    expect(result.some((c) => c.Value === "YES")).toBe(true);
+    expect(result.find((c) => c.Category === "EXACT")?.Value).toBe("YES");
+  });
+
+  it("all-NO input: result has no {EXACT,NO}", () => {
+    const input = [
+      { Category: "EXACT", Value: "NO" as const },
+      { Category: "BROADER", Value: "NO" as const },
+    ];
+    const result = sanitizeAutotargetingCategories(input);
+    expect(result.find((c) => c.Category === "EXACT" && c.Value === "NO")).toBeUndefined();
+  });
+
+  it("search default [BROADER:NO, ACCESSORY:NO, ALTERNATIVE:NO] passes through unchanged", () => {
+    // No EXACT:NO in the list — guard does NOT fire.
+    // EXACT and COMPETITOR implicitly stay ON in Direct (not touched by this update).
+    const input = [
+      { Category: "BROADER", Value: "NO" as const },
+      { Category: "ACCESSORY", Value: "NO" as const },
+      { Category: "ALTERNATIVE", Value: "NO" as const },
+    ];
+    const result = sanitizeAutotargetingCategories(input);
+    // Passed through unchanged — no EXACT entry added
+    expect(result).toHaveLength(3);
+    expect(result.find((c) => c.Category === "EXACT")).toBeUndefined();
+    expect(result.find((c) => c.Category === "BROADER")?.Value).toBe("NO");
+    expect(result.find((c) => c.Category === "ACCESSORY")?.Value).toBe("NO");
+    expect(result.find((c) => c.Category === "ALTERNATIVE")?.Value).toBe("NO");
+  });
+
+  it("empty input returns empty (no guard on empty list)", () => {
+    const result = sanitizeAutotargetingCategories([]);
+    expect(result).toHaveLength(0);
+  });
+
+  it("input with EXACT:YES is preserved and no duplicate guard appended", () => {
+    const input = [
+      { Category: "EXACT", Value: "YES" as const },
+      { Category: "BROADER", Value: "NO" as const },
+    ];
+    const result = sanitizeAutotargetingCategories(input);
+    const exactEntries = result.filter((c) => c.Category === "EXACT");
+    expect(exactEntries).toHaveLength(1);
+    expect(exactEntries[0].Value).toBe("YES");
+  });
+
+  it("EXACT:NO + another YES category: drops EXACT:NO, no guard (YES already present)", () => {
+    const input = [
+      { Category: "COMPETITOR", Value: "YES" as const },
+      { Category: "BROADER", Value: "NO" as const },
+      { Category: "EXACT", Value: "NO" as const },
+    ];
+    const result = sanitizeAutotargetingCategories(input);
+    // {EXACT,NO} is dropped
+    expect(result.find((c) => c.Category === "EXACT" && c.Value === "NO")).toBeUndefined();
+    // COMPETITOR:YES still present → no guard needed
+    expect(result.find((c) => c.Category === "COMPETITOR")?.Value).toBe("YES");
+    // Guard NOT appended since YES already exists — no EXACT:YES injected
+    const exactYesCount = result.filter((c) => c.Category === "EXACT" && c.Value === "YES").length;
+    expect(exactYesCount).toBe(0);
   });
 });
 

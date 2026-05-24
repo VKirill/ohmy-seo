@@ -23,6 +23,8 @@ vi.mock("../src/lib/payload-builder.js", () => ({
   buildMetrikaUpdatePayload: vi.fn(),
   buildAutoTargetingUpdatePayload: vi.fn().mockReturnValue({ method: "update", params: { Keywords: [{}] } }),
   mapAutotargetingCategoryName: vi.fn().mockImplementation((name: string) => name),
+  // sanitizeAutotargetingCategories: identity — tests rely on real category flow; sanitization is unit-tested separately
+  sanitizeAutotargetingCategories: vi.fn().mockImplementation((cats: Array<{ Category: string; Value: "YES" | "NO" }>) => cats),
   buildResponsiveAdPayload: vi.fn(),
 }));
 vi.mock("../src/lib/api/confirm-gate.js", () => ({

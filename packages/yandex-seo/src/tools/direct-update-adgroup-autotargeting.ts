@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { executeApiCall } from "../lib/api-gateway.js";
-import { buildAutoTargetingUpdatePayload, mapAutotargetingCategoryName } from "../lib/payload-builder.js";
+import { buildAutoTargetingUpdatePayload, mapAutotargetingCategoryName, sanitizeAutotargetingCategories } from "../lib/payload-builder.js";
 import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
 
 const InputSchema = z.object({
@@ -19,12 +19,15 @@ export async function runDirectUpdateAdgroupAutotargeting(input: z.infer<typeof 
     if (parsed.confirm !== true) throw new Error("confirm: true required");
 
     // Map legacy names to API names; drop unmappable (TARGET_QUERIES etc.)
-    const categories = parsed.categories
-      .map((c) => {
-        const apiName = mapAutotargetingCategoryName(c.Category);
-        return apiName ? { Category: apiName, Value: c.Value } : null;
-      })
-      .filter((c): c is { Category: string; Value: "YES" | "NO" } => c !== null);
+    // Then sanitize: drop {EXACT,NO} and guard against all-off (Yandex Code 5005)
+    const categories = sanitizeAutotargetingCategories(
+      parsed.categories
+        .map((c) => {
+          const apiName = mapAutotargetingCategoryName(c.Category);
+          return apiName ? { Category: apiName, Value: c.Value } : null;
+        })
+        .filter((c): c is { Category: string; Value: "YES" | "NO" } => c !== null),
+    );
 
     // GET keywords for this ad group to find the ---autotargeting keyword
     const kwGetResult = await executeApiCall({
