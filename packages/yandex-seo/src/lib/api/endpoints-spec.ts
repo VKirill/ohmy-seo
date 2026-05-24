@@ -7,6 +7,7 @@ export interface ApiSpec {
   authPrefix: "OAuth" | "Bearer";
   requiredScope: Scope;
   supportsClientLogin: boolean;
+  defaultMethod: "GET" | "POST" | "PUT" | "DELETE";
 }
 
 const DIRECT_BASE_URL =
@@ -20,18 +21,21 @@ const SPECS: Record<ApiName, ApiSpec> = {
     authPrefix: "OAuth",
     requiredScope: SCOPES.METRIKA_READ,
     supportsClientLogin: false,
+    defaultMethod: "GET",
   },
   webmaster: {
     baseUrl: "https://api.webmaster.yandex.net",
     authPrefix: "OAuth",
     requiredScope: SCOPES.WEBMASTER_HOSTINFO,
     supportsClientLogin: false,
+    defaultMethod: "GET",
   },
   direct: {
     baseUrl: DIRECT_BASE_URL,
     authPrefix: "Bearer",
     requiredScope: SCOPES.DIRECT_API,
     supportsClientLogin: true,
+    defaultMethod: "POST",
   },
 };
 

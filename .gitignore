@@ -12,3 +12,16 @@ data/*
 .worktrees/
 **/.claude/orchestrator-*.jsonl
 **/.claude/memory/
+
+# Google OAuth client secrets — никогда не коммитим
+client_secret_*.json
+*.apps.googleusercontent.com.json
+
+# Phase 3.5.D YAML campaign drafts (local working files)
+campaigns-draft/
+
+# Vendored reference snapshots (own git repos / large, recoverable separately)
+vendor/
+
+# Local gitnexus impact cache (regenerated)
+.claude/state/

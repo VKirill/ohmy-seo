@@ -10,7 +10,7 @@ import { invalidateOnWrite } from "./api/invalidation.js";
 export interface ExecuteOpts {
   apiName: ApiName;
   endpoint: string;
-  method: "GET" | "POST" | "PUT" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "DELETE";
   params?: Record<string, unknown>;
   body?: unknown;
   account?: string;
@@ -37,19 +37,20 @@ function tryJson(raw: string): unknown {
  */
 export async function executeApiCall(opts: ExecuteOpts): Promise<ExecuteResult> {
   const spec = getApiSpec(opts.apiName);
+  const method = opts.method ?? spec.defaultMethod;
 
   // Resolve account: explicit label from opts.account, or implicit by requiredScope
   const acc = resolveAccount(spec.requiredScope, opts.account);
 
   const token = await getAccessToken(acc.id);
 
-  const url = buildUrl(spec.baseUrl, opts.endpoint, opts.params, opts.method);
+  const url = buildUrl(spec.baseUrl, opts.endpoint, opts.params, method);
 
   const headers: Record<string, string> = {
     Authorization: `${spec.authPrefix} ${token}`,
   };
 
-  if (opts.method === "POST" || opts.method === "PUT") {
+  if (method === "POST" || method === "PUT") {
     headers["Content-Type"] = "application/json; charset=utf-8";
   }
 
@@ -58,10 +59,10 @@ export async function executeApiCall(opts: ExecuteOpts): Promise<ExecuteResult> 
   }
 
   const init: Parameters<typeof request>[1] = {
-    method: opts.method,
+    method,
     headers,
     ...(opts.body !== undefined &&
-    (opts.method === "POST" || opts.method === "PUT")
+    (method === "POST" || method === "PUT")
       ? { body: JSON.stringify(opts.body) }
       : {}),
   };
@@ -80,7 +81,7 @@ export async function executeApiCall(opts: ExecuteOpts): Promise<ExecuteResult> 
     }
   };
 
-  const isGet = opts.method === "GET";
+  const isGet = method === "GET";
 
   if (!isGet) {
     const result = await doFetch();
@@ -94,7 +95,7 @@ export async function executeApiCall(opts: ExecuteOpts): Promise<ExecuteResult> 
   const toolName = `yandex_${opts.apiName}_api` as CacheableTool;
   const cacheArgs: Record<string, unknown> = {
     endpoint: opts.endpoint,
-    method: opts.method,
+    method,
     params: opts.params ?? null,
     body: opts.body ?? null,
   };

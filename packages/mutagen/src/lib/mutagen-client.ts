@@ -2,20 +2,66 @@ import { request } from "@ohmy-seo/mcp-core/http";
 
 const BASE_URL = "http://api.mutagen.ru/json";
 
-// Methods that require async polling: submit via .new, then poll via .get
-// All other methods (balance, progects, progect.keywords, parser.get, serp.report) are synchronous.
-const ASYNC_METHODS = new Set<string>(["check_key", "parser.mass"]);
-
 function getApiKey(): string {
   const k = process.env.MUTAGEN_API_KEY;
   if (!k) throw new Error("MUTAGEN_API_KEY is required for mutagen_competition tool");
   return k;
 }
 
+// ---------------------------------------------------------------------------
+// Async method configuration
+// Each async method has its own ID field, poll method name, poll param name,
+// and terminal status sets.  check_key and parser.mass differ in ALL four.
+// ---------------------------------------------------------------------------
+
+interface AsyncConfig {
+  newField: string;           // field in .new response containing the ID
+  pollMethod: string;         // method suffix to call for polling (appended after "mutagen.")
+  pollParam: string;          // query param name for the ID
+  terminalSuccess: string[];  // status values meaning "done with data"
+  terminalFail: string[];     // status values meaning "failed"
+}
+
+const ASYNC_CONFIG: Record<string, AsyncConfig> = {
+  "check_key": {
+    newField: "task_id",
+    pollMethod: "check_key.get",
+    pollParam: "task_id",
+    terminalSuccess: ["completed"],
+    terminalFail: ["rejected", "error"],
+  },
+  "parser.mass": {
+    newField: "id",
+    pollMethod: "parser.mass.id",
+    pollParam: "mass_id",
+    terminalSuccess: ["finish"],
+    terminalFail: ["error"],
+  },
+};
+
+// ---------------------------------------------------------------------------
+// POST vs GET routing
+// ---------------------------------------------------------------------------
+
+function shouldUsePost(method: string, params: Record<string, unknown>): boolean {
+  if (method === "serp.report") return true;
+  for (const v of Object.values(params)) {
+    if (Array.isArray(v) || (typeof v === "object" && v !== null)) return true;
+  }
+  return false;
+}
+
 /**
  * Generic Mutagen method executor.
- * Sync methods: GET → return JSON data directly.
- * Async methods (ASYNC_METHODS): POST to .new → poll .get until status=completed or timeout.
+ *
+ * Sync methods:
+ *   - GET if all param values are scalars (default for most methods)
+ *   - POST with JSON body if method is serp.report OR any param is array/object
+ *
+ * Async methods (check_key, parser.mass):
+ *   - POST to .new → read the per-method ID field → poll via per-method poll method.
+ *   - check_key : .new returns task_id, polls check_key.get?task_id=N
+ *   - parser.mass: .new returns id,      polls parser.mass.id?mass_id=N
  */
 export async function executeMutagenMethod(
   method: string,
@@ -23,21 +69,31 @@ export async function executeMutagenMethod(
   pollTimeoutSec = 60,
 ): Promise<unknown> {
   const token = getApiKey();
-  const isAsync = ASYNC_METHODS.has(method);
+  const asyncConfig = ASYNC_CONFIG[method];
 
-  if (!isAsync) {
-    // Synchronous: build GET URL with params
-    const qs = new URLSearchParams();
-    for (const [k, v] of Object.entries(params)) {
-      qs.set(k, String(v));
+  if (!asyncConfig) {
+    // Synchronous method
+    if (shouldUsePost(method, params)) {
+      const url = `${BASE_URL}/${token}/mutagen.${method}/`;
+      const res = await request(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+        body: JSON.stringify(params),
+      });
+      return res.data;
+    } else {
+      const qs = new URLSearchParams();
+      for (const [k, v] of Object.entries(params)) {
+        qs.set(k, String(v));
+      }
+      const qsPart = qs.toString() ? "?" + qs.toString() : "";
+      const url = `${BASE_URL}/${token}/mutagen.${method}/${qsPart}`;
+      const res = await request(url);
+      return res.data;
     }
-    const qsPart = qs.toString() ? "?" + qs.toString() : "";
-    const url = `${BASE_URL}/${token}/mutagen.${method}/${qsPart}`;
-    const res = await request(url);
-    return res.data;
   }
 
-  // Async: POST to .new, then poll .get
+  // Async method: POST to .new, then poll
   const startUrl = `${BASE_URL}/${token}/mutagen.${method}.new/`;
   const startRes = await request(startUrl, {
     method: "POST",
@@ -45,9 +101,11 @@ export async function executeMutagenMethod(
     body: JSON.stringify(params),
   });
   const startData = startRes.data as Record<string, unknown>;
-  const taskId = startData?.["task_id"];
-  if (!taskId) {
-    throw new Error(`Mutagen ${method}.new: missing task_id in response`);
+  const taskId = startData?.[asyncConfig.newField];
+  if (taskId === undefined || taskId === null) {
+    throw new Error(
+      `Mutagen ${method}.new: missing '${asyncConfig.newField}' in response: ${JSON.stringify(startData)}`,
+    );
   }
 
   const deadline = Date.now() + pollTimeoutSec * 1000;
@@ -58,16 +116,16 @@ export async function executeMutagenMethod(
     await new Promise(r => setTimeout(r, delay));
     delay = Math.min(delay * 1.5, maxDelay);
 
-    const getUrl = `${BASE_URL}/${token}/mutagen.${method}.get/?task_id=${taskId}`;
-    const pollRes = await request(getUrl);
+    const pollUrl = `${BASE_URL}/${token}/mutagen.${asyncConfig.pollMethod}/?${asyncConfig.pollParam}=${taskId}`;
+    const pollRes = await request(pollUrl);
     const d = pollRes.data as Record<string, unknown>;
     const status = d?.["status"] as string | undefined;
 
-    if (status === "completed") return d;
-    if (status === "rejected" || status === "error") {
+    if (asyncConfig.terminalSuccess.includes(status ?? "")) return d;
+    if (asyncConfig.terminalFail.includes(status ?? "")) {
       throw new Error(`Mutagen ${method} task ${taskId} terminal status: ${status}`);
     }
-    // created | processed → keep polling
+    // pending statuses → keep polling
   }
 
   throw new Error(`Mutagen ${method} task ${taskId} timed out after ${pollTimeoutSec}s`);
