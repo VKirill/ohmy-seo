@@ -120,37 +120,6 @@ function safeJsonParse(text: string): Record<string, unknown> | null {
 // Temp folder builder — copies all group files + patched _campaign.yaml
 // ---------------------------------------------------------------------------
 
-/** Build cluster_id -> marker_query map from the clusters CSV (delimiter ";"). */
-function buildMarkerQueryMap(csvPath: string): Map<string, string> {
-  const result = new Map<string, string>();
-  const raw = readFileSync(csvPath, "utf8");
-  // Strip BOM if present
-  const text = raw.startsWith("﻿") ? raw.slice(1) : raw;
-  const lines = text.split(/\r?\n/);
-  if (lines.length === 0) return result;
-
-  const header = lines[0].split(";");
-  const clusterIdx = header.indexOf("Кластер");
-  const markerIdx  = header.indexOf("Маркерный запрос");
-  if (clusterIdx === -1 || markerIdx === -1) return result;
-
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
-    const cells = line.split(";");
-    const clusterId = cells[clusterIdx]?.trim() ?? "";
-    const marker    = cells[markerIdx]?.trim()  ?? "";
-    // First row per cluster wins
-    if (clusterId && marker && !result.has(clusterId)) {
-      result.set(clusterId, marker);
-    }
-  }
-  return result;
-}
-
-const CLUSTERS_CSV =
-  "/home/ubuntu/ads/gas-cleaning-equipment.com/docs/campaigns/gce-direct-5-clusters/deliverables/campaign/clusters-5.csv";
-
 function buildTempFolder(
   sourceBundle: string,
   campaignName: string,
@@ -159,28 +128,16 @@ function buildTempFolder(
   const tempDir = `/tmp/gce-final-reupload-${suffix}-${TS}`;
   mkdirSync(tempDir, { recursive: true });
 
-  // Build marker_query map from clusters CSV
-  const markerMap = buildMarkerQueryMap(CLUSTERS_CSV);
-
   // Copy _campaign.yaml and all group files
   cpSync(
     nodePath.join(sourceBundle, "_campaign.yaml"),
     nodePath.join(tempDir, "_campaign.yaml")
   );
   for (const groupFile of GROUP_FILES) {
-    const srcPath = nodePath.join(sourceBundle, groupFile);
-    const dstPath = nodePath.join(tempDir, groupFile);
-    // Parse group YAML, inject _meta.marker_query, re-dump
-    const rawGroup = readFileSync(srcPath, "utf8");
-    const parsedGroup = yaml.load(rawGroup) as Record<string, unknown>;
-    const meta = (parsedGroup["_meta"] ?? {}) as Record<string, unknown>;
-    const clusterId = String(meta["cluster_id"] ?? "");
-    const markerQuery = clusterId ? (markerMap.get(clusterId) ?? "") : "";
-    if (markerQuery) {
-      meta["marker_query"] = markerQuery;
-      parsedGroup["_meta"] = meta;
-    }
-    writeFileSync(dstPath, yaml.dump(parsedGroup, { lineWidth: 120 }), "utf8");
+    cpSync(
+      nodePath.join(sourceBundle, groupFile),
+      nodePath.join(tempDir, groupFile)
+    );
   }
 
   // Patch _campaign.yaml

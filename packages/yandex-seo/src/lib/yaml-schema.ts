@@ -163,8 +163,15 @@ export const GroupSchema = z.object({
     .object({
       cluster_id: z.string().optional(),
       intent: z.string().optional(),
+      marker_query: z.string().optional(),
     })
     .passthrough()
+    .optional(),
+  combinatorial: z
+    .object({
+      headlines: z.array(z.string()).max(7),
+      texts: z.array(z.string()).max(3),
+    })
     .optional(),
   ads: z.array(AdSchema).min(1).max(50),
 });

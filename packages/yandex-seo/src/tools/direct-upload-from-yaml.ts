@@ -98,6 +98,63 @@ export function extractAdTemplates(bundle: ReturnType<typeof loadCampaignFolder>
 }
 
 /**
+ * Build autotargeting_per_group from bundle group AutoTargetingCategories.
+ * Returns Record<cluster_id, Array<{Category, Value}>> for all groups that have
+ * AutoTargetingCategories.Items defined.
+ */
+function buildAutotargetingPerGroup(
+  bundle: ReturnType<typeof loadCampaignFolder>
+): Record<string, Array<{ Category: string; Value: string }>> {
+  const result: Record<string, Array<{ Category: string; Value: string }>> = {};
+  for (const g of bundle.groups) {
+    const items = g.group.AutoTargetingCategories?.Items;
+    if (!items || items.length === 0) continue;
+    const clusterId = g._meta?.cluster_id ?? g.group.Name.split("_")[0] ?? g.group.Name;
+    result[clusterId] = items as Array<{ Category: string; Value: string }>;
+  }
+  return result;
+}
+
+/**
+ * Extract combinatorial headline/text pools per cluster.
+ * If the group has an explicit `combinatorial` field, use that (already capped by schema).
+ * Otherwise derive: headlines = unique([Title, Title2]) capped to 7; texts = unique([Text]) capped to 3.
+ */
+export function extractCombinatorialPools(
+  bundle: ReturnType<typeof loadCampaignFolder>
+): Record<string, { headlines: string[]; texts: string[] }> {
+  const result: Record<string, { headlines: string[]; texts: string[] }> = {};
+  for (const g of bundle.groups) {
+    const clusterId = g._meta?.cluster_id ?? g.group.Name.split("_")[0] ?? g.group.Name;
+    if (g.combinatorial) {
+      result[clusterId] = {
+        headlines: g.combinatorial.headlines.slice(0, 7),
+        texts: g.combinatorial.texts.slice(0, 3),
+      };
+    } else {
+      const headlineSet = new Set<string>();
+      const textSet = new Set<string>();
+      for (const ad of g.ads) {
+        if (ad.Type === "TEXT_AD") {
+          if (ad.TextAd?.Title) headlineSet.add(ad.TextAd.Title);
+          if (ad.TextAd?.Title2) headlineSet.add(ad.TextAd.Title2);
+          if (ad.TextAd?.Text) textSet.add(ad.TextAd.Text);
+        } else if (ad.Type === "TEXT_IMAGE_AD") {
+          if (ad.TextImageAd?.Title) headlineSet.add(ad.TextImageAd.Title);
+          if (ad.TextImageAd?.Title2) headlineSet.add(ad.TextImageAd.Title2);
+          if (ad.TextImageAd?.Text) textSet.add(ad.TextImageAd.Text);
+        }
+      }
+      result[clusterId] = {
+        headlines: Array.from(headlineSet).slice(0, 7),
+        texts: Array.from(textSet).slice(0, 3),
+      };
+    }
+  }
+  return result;
+}
+
+/**
  * Resolve campaign_type from the bundle's TextCampaign BiddingStrategy.
  * Returns "rsya" when Network is active (non-SERVING_OFF) and Search is SERVING_OFF.
  * Returns "search" otherwise.
@@ -191,6 +248,8 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
         promo_extension: bundle.campaign.promo_extension,
         bidding_strategy: tc?.BiddingStrategy as Record<string, unknown> | undefined,
         declared_image_keys: declaredImageKeys.length > 0 ? declaredImageKeys : null,
+        autotargeting_per_group: buildAutotargetingPerGroup(bundle),
+        combinatorial_per_group: extractCombinatorialPools(bundle),
       } as Parameters<typeof uploadCampaignBundle>[0]); // guardian: allow — Phase 3.5.D optional fields not in base type
 
       return {
@@ -250,6 +309,8 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
         promo_extension: bundle.campaign.promo_extension,
         bidding_strategy: tc?.BiddingStrategy as Record<string, unknown> | undefined,
         declared_image_keys: declaredImageKeys.length > 0 ? declaredImageKeys : null,
+        autotargeting_per_group: buildAutotargetingPerGroup(bundle),
+        combinatorial_per_group: extractCombinatorialPools(bundle),
       } as Parameters<typeof uploadCampaignBundle>[0]); // guardian: allow — Phase 3.5.D optional fields not in base type
 
       return {
@@ -301,6 +362,8 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
         promo_extension: bundle.campaign.promo_extension,
         bidding_strategy: tc?.BiddingStrategy as Record<string, unknown> | undefined,
         declared_image_keys: declaredImageKeys.length > 0 ? declaredImageKeys : null,
+        autotargeting_per_group: buildAutotargetingPerGroup(bundle),
+        combinatorial_per_group: extractCombinatorialPools(bundle),
       } as Parameters<typeof uploadCampaignBundle>[0]); // guardian: allow — Phase 3.5.D optional fields not in base type
 
       return {
@@ -349,6 +412,8 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
         promo_extension: bundle.campaign.promo_extension,
         bidding_strategy: tc?.BiddingStrategy as Record<string, unknown> | undefined,
         declared_image_keys: declaredImageKeys.length > 0 ? declaredImageKeys : null,
+        autotargeting_per_group: buildAutotargetingPerGroup(bundle),
+        combinatorial_per_group: extractCombinatorialPools(bundle),
       } as Parameters<typeof uploadCampaignBundle>[0]); // guardian: allow — Phase 3.5.D optional fields not in base type
 
       const canonicalPlanHash = canonicalResult.plan_hash;
@@ -592,6 +657,8 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
       bidding_strategy: resolvedTc?.BiddingStrategy as Record<string, unknown> | undefined,
       // Use declared image keys (stable at both dry-run and live time) for plan_hash consistency.
       declared_image_keys: declaredImageKeys.length > 0 ? declaredImageKeys : null,
+      autotargeting_per_group: buildAutotargetingPerGroup(resolved),
+      combinatorial_per_group: extractCombinatorialPools(resolved),
     } as Parameters<typeof uploadCampaignBundle>[0]); // guardian: allow — Phase 3.5.D optional fields not in base type
 
     return {
