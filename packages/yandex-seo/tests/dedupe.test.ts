@@ -21,6 +21,8 @@ vi.mock("../src/lib/payload-builder.js", () => ({
   buildAdRsyaPayload: vi.fn(),
   buildImageUploadPayload: vi.fn(),
   buildMetrikaUpdatePayload: vi.fn(),
+  buildAutoTargetingUpdatePayload: vi.fn().mockReturnValue({ method: "update", params: { AdGroups: [{}] } }),
+  buildResponsiveAdPayload: vi.fn(),
 }));
 vi.mock("../src/lib/api/confirm-gate.js", () => ({
   requireConfirmGate: vi.fn(),

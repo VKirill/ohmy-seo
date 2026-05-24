@@ -21,6 +21,7 @@ import {
   buildKeywordPayload,
   buildAdTgoPayload,
   buildResponsiveAdPayload,
+  buildAutoTargetingUpdatePayload,
   buildImageUploadPayload,
   buildMetrikaUpdatePayload,
 } from "./payload-builder.js";
@@ -165,6 +166,13 @@ export interface UploadCampaignBundleInput {
   };
   tracking_params?: string;
   autotargeting_per_group?: Record<string, Array<{ Category: string; Value: "YES" | "NO" }>>;
+  /**
+   * Per-group headline/text pools for combinatorial ResponsiveAd creation (RSYA).
+   * Key = cluster_id. When present for a group, ONE ResponsiveAd is created using
+   * pool.headlines (≤7) + pool.texts (≤3) instead of deriving from ad templates.
+   * Set by direct-upload-from-yaml.ts from extractCombinatorialPools(bundle).
+   */
+  combinatorial_per_group?: Record<string, { headlines: string[]; texts: string[] }>;
   ad_format_mix?: Array<"TEXT_AD" | "TEXT_IMAGE_AD" | "RESPONSIVE_AD">;
   campaign_types?: Array<"TEXT_CAMPAIGN" | "UNIFIED_PERFORMANCE_CAMPAIGN">;
 }
@@ -847,6 +855,57 @@ async function processCluster(opts: ClusterProcessInput): Promise<void> {
   await ledger.writeCommitted(adGroupSig, ad_group_id, campaign_id);
   state.ad_groups_created.push(ad_group_id);
 
+  // ---- Autotargeting update ----
+  // Resolve categories: use per-group override if provided, else apply search defaults,
+  // or skip entirely for RSYA when not explicitly provided.
+  {
+    const explicitCategories = input.autotargeting_per_group?.[cluster_id];
+    let categories: Array<{ Category: string; Value: "YES" | "NO" }> | null = null;
+
+    if (explicitCategories !== undefined) {
+      categories = explicitCategories;
+    } else if (input.campaign_type === "search") {
+      categories = [
+        { Category: "BROAD_MATCH", Value: "NO" },
+        { Category: "ACCESSORY_QUERIES", Value: "NO" },
+        { Category: "ALTERNATIVE_QUERIES", Value: "NO" },
+      ];
+    }
+    // For RSYA without explicit override: skip autotargeting
+
+    if (categories !== null) {
+      const atPayload = buildAutoTargetingUpdatePayload({
+        ad_group_id,
+        group_type: "TEXT_AD_GROUP",
+        categories,
+      });
+      const atResult = await executeApiCall({
+        apiName: "direct",
+        endpoint: "/json/v5/adgroups",
+        body: atPayload,
+        account: account_label,
+        client_login,
+      });
+      if (!atResult.ok) {
+        const errMsg = JSON.stringify(atResult.body);
+        console.warn(`[WARN] autotargeting update failed for cluster ${cluster_id}: ${errMsg}`); // guardian: allow
+        state.errors.push({ cluster_id, step: "autotargeting", error: errMsg });
+        // Non-fatal: continue processing
+      } else {
+        // Check item-level errors in UpdateResults
+        const updateResults = (atResult.data as { result?: { UpdateResults?: Array<{ Id?: number; Errors?: Array<{ Code: number; Message: string }> }> } })
+          ?.result?.UpdateResults;
+        const firstUpdateResult = updateResults?.[0];
+        if (firstUpdateResult?.Errors && firstUpdateResult.Errors.length > 0) {
+          const itemErrMsg = JSON.stringify(firstUpdateResult.Errors);
+          console.warn(`[WARN] autotargeting item error for cluster ${cluster_id}: ${itemErrMsg}`); // guardian: allow
+          state.errors.push({ cluster_id, step: "autotargeting", error: itemErrMsg });
+          // Non-fatal: continue processing
+        }
+      }
+    }
+  }
+
   // ---- Keywords ----
   for (const kw of validKeywords) {
     const kwSig = `keyword:${cluster_id}:${kw.query.slice(0, 80)}`;
@@ -1027,64 +1086,70 @@ async function processCluster(opts: ClusterProcessInput): Promise<void> {
       }
     }
 
-    // RSYA ResponsiveAd with images (if ≥1 hash succeeded), via /json/v501/ads
-    // One ResponsiveAd per distinct template variant starting at tgoCount (offset past TGO ads),
-    // so each variant is used at most once across TGO + ResponsiveAd ads.
+    // RSYA combinatorial ResponsiveAd — ONE per group, via /json/v501/ads.
+    // Titles/Texts sourced from combinatorial_per_group pool when present;
+    // falls back to deriving from the template (title, title2, text) when no pool.
     if (collectedHashes.length > 0) {
-      // tgoCount = number of TGO ads already created above (1 for RSYA)
-      const tgoCount = adCount;
-      const rsyaCount = Math.max(0, Math.min(adsPerGroup - tgoCount, adTemplates.length - tgoCount));
-      for (let i = 0; i < rsyaCount; i++) {
-        const rsyaTmpl = adTemplates[tgoCount + i];
-        // Build Titles: use title as first entry; add title2 as second if present
-        const titles: string[] = [rsyaTmpl.title];
-        if (rsyaTmpl.title2) titles.push(rsyaTmpl.title2);
-        const rsyaSig = `ad_rsya:${cluster_id}:v${tgoCount + i}`;
-        const rsyaPayload = buildResponsiveAdPayload({
-          ad_group_id,
-          Titles: titles,
-          Texts: [rsyaTmpl.text],
-          Href: rsyaTmpl.href ?? input.site_url,
-          AdImageHashes: collectedHashes,
-          SitelinkSetId: input.sitelinks_set_id,
-          AdExtensionIds: input.callout_ids,
-        });
+      // Resolve titles/texts from pool or fall back to template-derived
+      const pool = input.combinatorial_per_group?.[cluster_id];
+      let rsyaTitles: string[];
+      let rsyaTexts: string[];
 
-        await ledger.writePending({ op: "ad_rsya", signature: rsyaSig, cluster_id, parent_id: ad_group_id });
-        state.attempted++;
+      if (pool && pool.headlines.length > 0 && pool.texts.length > 0) {
+        rsyaTitles = pool.headlines.slice(0, 7);
+        rsyaTexts = pool.texts.slice(0, 3);
+      } else {
+        // Fallback: derive from the first template beyond TGO slot, or first template
+        const tgoCount = adCount;
+        const fallbackTmpl = adTemplates[tgoCount] ?? adTemplates[0];
+        rsyaTitles = [fallbackTmpl.title];
+        if (fallbackTmpl.title2) rsyaTitles.push(fallbackTmpl.title2);
+        rsyaTexts = [fallbackTmpl.text];
+      }
 
-        const rsyaResult = await executeApiCall({
-          apiName: "direct",
-          endpoint: "/json/v501/ads",
-          body: rsyaPayload,
-          account: account_label,
-          client_login,
-        });
+      const rsyaCombSig = `ad_rsya_comb:${cluster_id}`;
+      const rsyaPayload = buildResponsiveAdPayload({
+        ad_group_id,
+        Titles: rsyaTitles,
+        Texts: rsyaTexts,
+        Href: (pool ? adTemplates[0]?.href : adTemplates[adCount]?.href ?? adTemplates[0]?.href) ?? input.site_url,
+        AdImageHashes: collectedHashes,
+        SitelinkSetId: input.sitelinks_set_id,
+        AdExtensionIds: input.callout_ids,
+      });
 
-        if (!rsyaResult.ok) {
-          const errMsg = JSON.stringify(rsyaResult.body);
-          await ledger.writeFailed(rsyaSig, errMsg);
+      await ledger.writePending({ op: "ad_rsya", signature: rsyaCombSig, cluster_id, parent_id: ad_group_id });
+      state.attempted++;
+
+      const rsyaResult = await executeApiCall({
+        apiName: "direct",
+        endpoint: "/json/v501/ads",
+        body: rsyaPayload,
+        account: account_label,
+        client_login,
+      });
+
+      if (!rsyaResult.ok) {
+        const errMsg = JSON.stringify(rsyaResult.body);
+        await ledger.writeFailed(rsyaCombSig, errMsg);
+        state.failed_count++;
+        state.errors.push({ cluster_id, step: "ad_rsya_create", error: errMsg });
+      } else {
+        const rsyaAddResults = (rsyaResult.data as { result?: { AddResults?: Array<{ Id?: number; Errors?: Array<{ Code: number; Message: string }> }> } })
+          ?.result?.AddResults;
+        const rsyaFirstResult = rsyaAddResults?.[0];
+        if (rsyaFirstResult?.Id !== undefined) {
+          const ad_id = rsyaFirstResult.Id;
+          await ledger.writeCommitted(rsyaCombSig, ad_id, ad_group_id);
+          state.ads_created.push(ad_id);
+        } else if (rsyaFirstResult?.Errors && rsyaFirstResult.Errors.length > 0) {
+          const itemErrMsg = JSON.stringify(rsyaFirstResult.Errors);
+          await ledger.writeFailed(rsyaCombSig, itemErrMsg);
           state.failed_count++;
-          // Surface HTTP-level errors in state.errors (mirroring TGO path)
-          state.errors.push({ cluster_id, step: "ad_rsya_create", error: errMsg });
+          state.errors.push({ cluster_id, step: "ad_rsya_create", error: itemErrMsg });
         } else {
-          const rsyaAddResults = (rsyaResult.data as { result?: { AddResults?: Array<{ Id?: number; Errors?: Array<{ Code: number; Message: string }> }> } })
-            ?.result?.AddResults;
-          const rsyaFirstResult = rsyaAddResults?.[0];
-          if (rsyaFirstResult?.Id !== undefined) {
-            const ad_id = rsyaFirstResult.Id;
-            await ledger.writeCommitted(rsyaSig, ad_id, ad_group_id);
-            state.ads_created.push(ad_id);
-          } else if (rsyaFirstResult?.Errors && rsyaFirstResult.Errors.length > 0) {
-            // Surface item-level Direct API errors (HTTP 200 but item failed)
-            const itemErrMsg = JSON.stringify(rsyaFirstResult.Errors);
-            await ledger.writeFailed(rsyaSig, itemErrMsg);
-            state.failed_count++;
-            state.errors.push({ cluster_id, step: "ad_rsya_create", error: itemErrMsg });
-          } else {
-            await ledger.writeFailed(rsyaSig, "id_extraction_failed");
-            state.failed_count++;
-          }
+          await ledger.writeFailed(rsyaCombSig, "id_extraction_failed");
+          state.failed_count++;
         }
       }
     }
