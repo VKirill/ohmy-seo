@@ -18,7 +18,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@ohmy-seo/mcp-core": "workspace:*",
-    "better-sqlite3": "^11.7.0",
+    "better-sqlite3": "^12.11.1",
     "dotenv": "^16.4.5",
     "exceljs": "^4.4.0",
     "jimp": "^1.6.1",
