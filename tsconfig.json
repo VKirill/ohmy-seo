@@ -1,0 +1,12 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/core" },
+    { "path": "./packages/yandex-seo" },
+    { "path": "./packages/mutagen" },
+    { "path": "./packages/xmlstock" },
+    { "path": "./packages/google-search-console" },
+    { "path": "./packages/ga4" },
+    { "path": "./packages/gtm" }
+  ]
+}
