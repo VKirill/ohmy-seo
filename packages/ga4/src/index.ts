@@ -60,26 +60,44 @@ const server = new McpServer(
   },
 );
 
+// Local non-generic wrapper around registerTool to avoid the SDK's expensive
+// generic ShapeOutput<> instantiation (zod 3.25 + TS 5.9 => TS2589 / V8 OOM).
+type RegToolConfig = {
+  title?: string;
+  description?: string;
+  inputSchema?: z.ZodRawShape;
+  outputSchema?: z.ZodRawShape;
+  annotations?: Record<string, unknown>;
+};
+const reg = (
+  name: string,
+  config: RegToolConfig,
+  cb: (args: any, extra: any) => unknown,
+): void => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (server.registerTool as any)(name, config, cb);
+};
+
 function validateRequiredEnv(): void {
   try { resolvePackageConfig("ga4"); }
   catch (err) { console.error("FATAL: " + (err as Error).message); process.exit(1); }
 }
 
 const LBL = z.string().min(1).max(64)
-  .regex(/^[a-z0-9_-]+$/i, { error: () => "label must be alphanumeric, dash or underscore" });
+  .regex(/^[a-z0-9_-]+$/i, "label must be alphanumeric, dash or underscore");
 const ACCT = z.string().min(1).optional()
   .describe("Account label (optional when a default is set)");
 const PROP = z.string().min(1).describe("GA4 property ID or 'properties/NNNNNN'");
 
 // --- OAuth management (9) ---
 
-server.registerTool("list_google_oauth_apps",
+reg("list_google_oauth_apps",
   { title: "Google OAuth — List Apps",
     description: "List all registered Google OAuth apps. Client secrets are never returned.",
     inputSchema: {}, annotations: RO },
   async () => runListGoogleOauthApps());
 
-server.registerTool("register_google_oauth_app",
+reg("register_google_oauth_app",
   { title: "Google OAuth — Register App",
     description: "Register a Google OAuth app. client_secret is AES-256 encrypted at rest. Use a loopback redirect_uri.",
     inputSchema: {
@@ -91,19 +109,19 @@ server.registerTool("register_google_oauth_app",
     }, annotations: RO },
   async (args) => runRegisterGoogleOauthApp(args));
 
-server.registerTool("delete_google_oauth_app",
+reg("delete_google_oauth_app",
   { title: "Google OAuth — Delete App",
     description: "Delete an OAuth app by label. Blocked if accounts are attached — delete those first.",
     inputSchema: { app_label: LBL.describe("Label of the app to delete") }, annotations: RO },
   async (args) => runDeleteGoogleOauthApp(args));
 
-server.registerTool("list_google_accounts",
+reg("list_google_accounts",
   { title: "Google OAuth — List Accounts",
     description: "List all connected Google accounts. Tokens are never returned in plain text.",
     inputSchema: {}, annotations: RO },
   async () => runListGoogleAccounts());
 
-server.registerTool("start_google_oauth_flow",
+reg("start_google_oauth_flow",
   { title: "Google OAuth — Start Flow",
     description: "Start a Google OAuth loopback flow. Opens a local listener, waits up to 5 min for browser callback, then stores tokens.",
     inputSchema: {
@@ -113,7 +131,7 @@ server.registerTool("start_google_oauth_flow",
     }, annotations: RO },
   async (args) => runStartGoogleOauthFlow(args));
 
-server.registerTool("complete_google_oauth_flow",
+reg("complete_google_oauth_flow",
   { title: "Google OAuth — Complete Flow (Deprecated)",
     description: "Deprecated — OOB OAuth removed by Google 2023-01-31. Use start_google_oauth_flow instead.",
     inputSchema: {
@@ -124,19 +142,19 @@ server.registerTool("complete_google_oauth_flow",
     }, annotations: RO },
   async (args) => runCompleteGoogleOauthFlow(args));
 
-server.registerTool("delete_google_account",
+reg("delete_google_account",
   { title: "Google OAuth — Delete Account",
     description: "Delete a connected Google account by label, permanently removing encrypted tokens.",
     inputSchema: { account_label: LBL.describe("Account label to delete") }, annotations: RO },
   async (args) => runDeleteGoogleAccount(args));
 
-server.registerTool("set_default_google_account",
+reg("set_default_google_account",
   { title: "Google OAuth — Set Default Account",
     description: "Mark an account as default for all GA4 tools. Clears the previous default.",
     inputSchema: { account_label: LBL.describe("Account label to set as default") }, annotations: RO },
   async (args) => runSetDefaultGoogleAccount(args));
 
-server.registerTool("register_google_service_account",
+reg("register_google_service_account",
   { title: "Google Service Account — Register",
     description: "Register a service account from a JSON key file. Verifies by exchanging JWT for access token before storing.",
     inputSchema: {
@@ -148,25 +166,25 @@ server.registerTool("register_google_service_account",
 
 // --- Read tools (4) — cached 24 h (MCP_GA4_CACHE_TTL_META) ---
 
-server.registerTool("ga4_list_properties",
+reg("ga4_list_properties",
   { title: "GA4 — List Properties",
     description: "List GA4 account summaries and properties via Admin API. Cached 24 h (MCP_GA4_CACHE_TTL_META).",
     inputSchema: { account: ACCT }, annotations: RO },
   async (args) => runGa4ListProperties({ account: args.account }));
 
-server.registerTool("ga4_get_metadata",
+reg("ga4_get_metadata",
   { title: "GA4 — Get Metadata",
     description: "Get all dimensions and metrics for a property (Data API v1beta/{property}/metadata). Cached 24 h.",
     inputSchema: { account: ACCT, property: PROP }, annotations: RO },
   async (args) => runGa4GetMetadata({ account: args.account, property: args.property }));
 
-server.registerTool("ga4_list_custom_dimensions",
+reg("ga4_list_custom_dimensions",
   { title: "GA4 — List Custom Dimensions",
     description: "List custom dimensions for a property (Admin API v1beta/{property}/customDimensions). Cached 24 h.",
     inputSchema: { account: ACCT, property: PROP }, annotations: RO },
   async (args) => runGa4ListCustomDimensions({ account: args.account, property: args.property }));
 
-server.registerTool("ga4_list_conversion_events",
+reg("ga4_list_conversion_events",
   { title: "GA4 — List Key Events (Conversion Events)",
     description: "List key events (formerly conversion events) via Admin API v1beta/{property}/keyEvents. Cached 24 h.",
     inputSchema: { account: ACCT, property: PROP }, annotations: RO },
@@ -174,7 +192,7 @@ server.registerTool("ga4_list_conversion_events",
 
 // --- Report tools (3) — cached 1 h (MCP_GA4_CACHE_TTL_REPORT) ---
 
-server.registerTool("ga4_run_report",
+reg("ga4_run_report",
   { title: "GA4 — Run Report",
     description: "Run a standard GA4 report (Data API v1beta/{property}:runReport). Cached 1 h (MCP_GA4_CACHE_TTL_REPORT).",
     inputSchema: {
@@ -202,7 +220,7 @@ server.registerTool("ga4_run_report",
 
 // --- Realtime report — NOT cached ---
 
-server.registerTool("ga4_run_realtime_report",
+reg("ga4_run_realtime_report",
   { title: "GA4 — Run Realtime Report",
     description: "Run a GA4 realtime report (Data API v1beta/{property}:runRealtimeReport, last 30 min). Not cached.",
     inputSchema: {
@@ -230,7 +248,7 @@ server.registerTool("ga4_run_realtime_report",
     returnPropertyQuota: args.returnPropertyQuota,
   }));
 
-server.registerTool("ga4_batch_run_reports",
+reg("ga4_batch_run_reports",
   { title: "GA4 — Batch Run Reports",
     description: "Run up to 5 GA4 reports in one call (Data API v1beta/{property}:batchRunReports). Cached 1 h.",
     inputSchema: {
@@ -241,7 +259,7 @@ server.registerTool("ga4_batch_run_reports",
     account: args.account, property: args.property, requests: args.requests as object[],
   }));
 
-server.registerTool("ga4_run_pivot_report",
+reg("ga4_run_pivot_report",
   { title: "GA4 — Run Pivot Report",
     description: "Run a GA4 pivot report (Data API v1beta/{property}:runPivotReport). Cached 1 h. Requires at least one pivot.",
     inputSchema: {

@@ -40,6 +40,24 @@ const server = new McpServer(
   },
 );
 
+// Local non-generic wrapper around registerTool to avoid the SDK's expensive
+// generic ShapeOutput<> instantiation (zod 3.25 + TS 5.9 => TS2589 / V8 OOM).
+type RegToolConfig = {
+  title?: string;
+  description?: string;
+  inputSchema?: z.ZodRawShape;
+  outputSchema?: z.ZodRawShape;
+  annotations?: Record<string, unknown>;
+};
+const reg = (
+  name: string,
+  config: RegToolConfig,
+  cb: (args: any, extra: any) => unknown,
+): void => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (server.registerTool as any)(name, config, cb);
+};
+
 function validateRequiredEnv(): void {
   try {
     resolvePackageConfig("xmlstock");
@@ -77,7 +95,7 @@ registerCacheableTool("xmlstock_google_serp", {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyResult = any;
 
-server.registerTool(
+reg(
   "xmlstock_yandex_serp",
   {
     title: "XMLStock — Yandex SERP",
@@ -97,7 +115,7 @@ server.registerTool(
     }),
 );
 
-server.registerTool(
+reg(
   "xmlstock_google_serp",
   {
     title: "XMLStock — Google SERP",
@@ -118,7 +136,7 @@ server.registerTool(
     }),
 );
 
-server.registerTool(
+reg(
   "xmlstock_usage_stats",
   {
     title: "XMLStock — Usage Stats",
@@ -137,7 +155,7 @@ const archiveSearchSchema = z.object({
   limit:     z.number().int().min(1).max(500).default(50),
 });
 
-server.registerTool(
+reg(
   "xmlstock_archive_search",
   {
     title: "XMLStock — Archive Search",
@@ -164,7 +182,7 @@ const archiveGetSchema = z.object({
   id: z.number().int().positive(),
 });
 
-server.registerTool(
+reg(
   "xmlstock_archive_get",
   {
     title: "XMLStock — Archive Get",

@@ -58,6 +58,24 @@ const server = new McpServer(
   },
 );
 
+// Local non-generic wrapper around registerTool to avoid the SDK's expensive
+// generic ShapeOutput<> instantiation (zod 3.25 + TS 5.9 => TS2589 / V8 OOM).
+type RegToolConfig = {
+  title?: string;
+  description?: string;
+  inputSchema?: z.ZodRawShape;
+  outputSchema?: z.ZodRawShape;
+  annotations?: Record<string, unknown>;
+};
+const reg = (
+  name: string,
+  config: RegToolConfig,
+  cb: (args: any, extra: any) => unknown,
+): void => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (server.registerTool as any)(name, config, cb);
+};
+
 function validateRequiredEnv(): void {
   try {
     resolvePackageConfig("google-search-console");
@@ -97,7 +115,7 @@ registerCacheableTool("gsc_list_sitemaps", {
 // OAuth management tools (9)
 // ---------------------------------------------------------------------------
 
-server.registerTool(
+reg(
   "list_google_oauth_apps",
   {
     title: "Google OAuth — List Registered Apps",
@@ -112,7 +130,7 @@ server.registerTool(
   async () => runListGoogleOauthApps(),
 );
 
-server.registerTool(
+reg(
   "register_google_oauth_app",
   {
     title: "Google OAuth — Register New App",
@@ -141,7 +159,7 @@ server.registerTool(
     }),
 );
 
-server.registerTool(
+reg(
   "delete_google_oauth_app",
   {
     title: "Google OAuth — Delete App",
@@ -156,7 +174,7 @@ server.registerTool(
   async (args) => runDeleteGoogleOauthApp({ app_label: args.app_label as string }),
 );
 
-server.registerTool(
+reg(
   "list_google_accounts",
   {
     title: "Google OAuth — List Connected Accounts",
@@ -170,7 +188,7 @@ server.registerTool(
   async () => runListGoogleAccounts(),
 );
 
-server.registerTool(
+reg(
   "start_google_oauth_flow",
   {
     title: "Google OAuth — Start Authorization Flow",
@@ -194,7 +212,7 @@ server.registerTool(
     }),
 );
 
-server.registerTool(
+reg(
   "complete_google_oauth_flow",
   {
     title: "Google OAuth — Complete Authorization Flow (Deprecated)",
@@ -218,7 +236,7 @@ server.registerTool(
     }),
 );
 
-server.registerTool(
+reg(
   "delete_google_account",
   {
     title: "Google OAuth — Delete Account",
@@ -233,7 +251,7 @@ server.registerTool(
   async (args) => runDeleteGoogleAccount({ account_label: args.account_label as string }),
 );
 
-server.registerTool(
+reg(
   "set_default_google_account",
   {
     title: "Google OAuth — Set Default Account",
@@ -248,7 +266,7 @@ server.registerTool(
   async (args) => runSetDefaultGoogleAccount({ account_label: args.account_label as string }),
 );
 
-server.registerTool(
+reg(
   "register_google_service_account",
   {
     title: "Google — Register Service Account",
@@ -283,7 +301,7 @@ function toMcpContent(data: unknown) {
 // Read tools (4) — cacheable
 // ---------------------------------------------------------------------------
 
-server.registerTool(
+reg(
   "gsc_list_sites",
   {
     title: "GSC — List Sites",
@@ -296,7 +314,7 @@ server.registerTool(
   async (args) => toMcpContent(await runGscListSites({ account: args.account })),
 );
 
-server.registerTool(
+reg(
   "gsc_search_analytics",
   {
     title: "GSC — Search Analytics",
@@ -320,7 +338,7 @@ server.registerTool(
   async (args) => toMcpContent(await runGscSearchAnalytics(args)),
 );
 
-server.registerTool(
+reg(
   "gsc_url_inspection",
   {
     title: "GSC — URL Inspection",
@@ -344,7 +362,7 @@ server.registerTool(
     ),
 );
 
-server.registerTool(
+reg(
   "gsc_list_sitemaps",
   {
     title: "GSC — List Sitemaps",
@@ -362,7 +380,7 @@ server.registerTool(
 // Write tools (3)
 // ---------------------------------------------------------------------------
 
-server.registerTool(
+reg(
   "gsc_submit_sitemap",
   {
     title: "GSC — Submit Sitemap",
@@ -380,7 +398,7 @@ server.registerTool(
     ),
 );
 
-server.registerTool(
+reg(
   "gsc_delete_sitemap",
   {
     title: "GSC — Delete Sitemap",
@@ -398,7 +416,7 @@ server.registerTool(
     ),
 );
 
-server.registerTool(
+reg(
   "gsc_indexing_publish",
   {
     title: "GSC — Indexing API Publish",
