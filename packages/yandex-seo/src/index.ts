@@ -50,6 +50,7 @@ import { runDirectCreateSitelinksSet } from "./tools/direct-create-sitelinks-set
 import { runDirectCreatePromoExtension } from "./tools/direct-create-promo-extension.js";
 import { runDirectUpdateAdgroupAutotargeting } from "./tools/direct-update-adgroup-autotargeting.js";
 import { runDirectUploadFromYaml } from "./tools/direct-upload-from-yaml.js";
+import { runYandexDirectAccountBalance } from "./tools/yandex-direct-account-balance.js";
 
 const READ_ONLY = { readOnlyHint: true, openWorldHint: true, idempotentHint: false };
 
@@ -1929,6 +1930,29 @@ server.registerTool(
     },
   },
   async (args) => runDirectUploadFromYaml(args),
+);
+
+server.registerTool(
+  "yandex_direct_account_balance",
+  {
+    title: "Yandex Direct — Get Account Balance (v4 Live)",
+    description:
+      "Get real-time balance (Amount) for a Yandex Direct client account. Uses Live v4 API because v5 does not return Amount for shared accounts. Returns amount in the client's currency plus notification settings.",
+    inputSchema: {
+      account_id: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Numeric account id from the accounts table. If omitted, resolves the DIRECT_API default account."),
+      client_login: z
+        .string()
+        .min(1)
+        .describe("Client login, e.g. porg-nqhs6wbe. Required."),
+    },
+    annotations: READ_ONLY,
+  },
+  async (args) => runYandexDirectAccountBalance(args),
 );
 
 async function main(): Promise<void> {
