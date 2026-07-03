@@ -87,7 +87,7 @@ yandex_webmaster_api({
 
 You can omit `account` if only one account exists or one is marked as default.
 
-## All 19 tools
+## All 20 tools
 
 ### OAuth management (8 tools)
 
@@ -125,14 +125,21 @@ returns immediately with the stale rows and triggers an async refresh in the bac
 **force_refresh:** every cacheable tool accepts `force_refresh: true` to bypass cache read and
 overwrite the entry. Use when upstream data is known to have changed.
 
-### Yandex API (4 tools)
+### Yandex API (5 tools)
 
 | Tool | What it does |
 |---|---|
 | `yandex_metrika_api` | Generic gateway to any Yandex Metrika endpoint (GET cached, POST/PUT/DELETE invalidate) |
 | `yandex_webmaster_api` | Generic gateway to any Yandex Webmaster endpoint |
 | `yandex_direct_api` | Generic gateway to any Yandex Direct v5 endpoint (Bearer auth + optional `client_login`) |
+| `yandex_direct_account_balance` | Real-time balance (Amount) for a Yandex Direct client account via v4 Live API (v5 does not return Amount for shared accounts) |
 | `mutagen_competition` | Keyword competition score 1–25 + CPC estimate for phrases via Mutagen |
+
+**Usage example — `yandex_direct_account_balance`:**
+```
+yandex_direct_account_balance({ client_login: "porg-nqhs6wbe" })
+```
+Returns `{ login, account_id, amount, amount_available_for_transfer, currency, agency_name, email_notification, sms_notification, account_day_budget, raw }`.
 
 All three generic tools accept `endpoint`, `method` (default GET), `params`, `body`,
 `account`, and `force_refresh`. `yandex_direct_api` additionally accepts `client_login` for
