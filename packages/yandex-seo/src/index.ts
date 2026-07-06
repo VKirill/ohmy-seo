@@ -16,10 +16,11 @@ import { registerDirectWrite } from "./registry/direct-write.js";
 import { registerDirectBundle } from "./registry/direct-bundle.js";
 
 const server = new McpServer(
-  { name: "mcp-yandex-seo", version: "0.7.0" },
+  { name: "mcp-yandex-seo", version: "0.8.0" },
   {
     instructions:
-      "You have access to mcp-yandex-seo: 17 tools for Russian SEO analytics and Yandex API access. " +
+      "You have access to mcp-yandex-seo: 40+ tools for Russian SEO analytics and Yandex API automation (Direct, Metrika, Webmaster, OAuth). " +
+      "Yandex Direct is combinatorial-ЕПК-only: create/point-edit campaigns, groups and combinatorial RESPONSIVE_AD; typed bidding strategies (manual + auto conversion); bid adjustments (корректировки); negative keywords; excluded sites; product feeds; Metrika counter + goals + conversion value. Mutating tools are gated behind confirm + OHMY_SEO_ALLOW_LIVE_MUTATIONS + YANDEX_DIRECT_ALLOW_LIVE_MUTATIONS env flags. See the ohmy-seo-mcp skill for the full playbook. " +
       "Generic API gateways (use these for full API coverage): " +
       "yandex_metrika_api — any Yandex Metrika endpoint; see skill yandex-metrica (cookbook.md) for examples. " +
       "yandex_webmaster_api — any Yandex Webmaster endpoint; see skill yandex-webmaster (cookbook.md). " +
@@ -54,7 +55,7 @@ async function main(): Promise<void> {
   validateRequiredEnv();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("mcp-yandex-seo v0.7.0 running via stdio");
+  console.error("mcp-yandex-seo v0.8.0 running via stdio");
 }
 
 main().catch((err: Error) => {

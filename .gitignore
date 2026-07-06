@@ -25,3 +25,9 @@ vendor/
 
 # Local gitnexus impact cache (regenerated)
 .claude/state/
+
+# Local working artifacts / ad-hoc probes / data exports — never in the public repo
+reports/
+scripts/
+**/docs/plans/*/runs/
+docs/plans/*/runs/
