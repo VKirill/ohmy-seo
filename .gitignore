@@ -31,3 +31,6 @@ reports/
 scripts/
 **/docs/plans/*/runs/
 docs/plans/*/runs/
+
+# Local Claude Code agent config / tooling (not part of the public product)
+.claude/

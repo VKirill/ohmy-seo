@@ -116,6 +116,17 @@ Pick a strategy without hand‑building JSON. `strategy: { type, placement?, wee
 | Frequency capping (частота показов) | — | ❌ not exposed by the API for ЕПК |
 | Anything not surfaced | `yandex_direct_api` / `raw_fields` | ✅ (raw) |
 
+## Beyond Direct — Metrika, Webmaster, inventory & cache
+
+The same server also fronts the other Yandex APIs and some housekeeping tools:
+
+- **`yandex_metrika_api`** — raw gateway to any Yandex Metrika endpoint (e.g. `/stat/v1/data` for traffic, goals, conversions). Same shape as `yandex_direct_api`: `{ endpoint, method?, params?, body?, account? }`. GET responses are cached.
+- **`yandex_webmaster_api`** — raw gateway to any Yandex Webmaster endpoint (e.g. `/user/{id}/hosts`, indexing, query analytics). Same call shape.
+- **Inventory** (cached, cross‑account): `list_sites` (Webmaster hosts), `list_counters` (Metrika counters), `find_property` (resolve a domain/counter name → canonical id, `kind: site|counter`), `refresh_inventory` (force a re‑fetch). Use `find_property` to turn a human name into the id a Direct/Metrika call needs.
+- **Cache**: `cache_stats` (size + top tools), `invalidate_cache` (clear entries by tool/account/age). GET results are cached with TTL `MCP_YANDEX_SEO_CACHE_TTL_API` (default 3600 s); mutating calls auto‑invalidate related GETs.
+
+These read/gateway tools need no live‑mutation flags. For write endpoints reached through the Metrika/Webmaster gateways, apply the same caution as any live mutation.
+
 ## Safety gate
 
 1. `OHMY_SEO_ALLOW_LIVE_MUTATIONS=true` — global; no writes without it.
