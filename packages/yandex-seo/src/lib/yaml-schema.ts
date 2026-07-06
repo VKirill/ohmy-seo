@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { strategySpecSchema } from "./strategy-schema.js";
 
 // ============= Enums =============
 export const CampaignType = z.enum([
@@ -90,7 +91,9 @@ const TextImageAdSchema = z.object({
 });
 
 const ResponsiveAdSchema = z.object({
-  Titles: z.array(z.string()).min(1).max(5),
+  // Direct combinatorial RESPONSIVE_AD packs use up to 7 main titles in the
+  // marketing pipeline; the renderer below already slices/exports 7.
+  Titles: z.array(z.string()).min(1).max(7),
   Title2s: z.array(z.string()).max(5).optional(),
   Texts: z.array(z.string()).min(1).max(3),
   Hrefs: z.array(z.string()).min(1),
@@ -141,6 +144,17 @@ export const AdSchema = z.discriminatedUnion("Type", [
   }),
 ]);
 
+// ============= SitelinksSet =============
+export const SitelinkSchema = z.object({
+  Title: z.string().max(30),
+  Description: z.string().max(60).optional(),
+  Href: z.string(),
+});
+
+export const SitelinksSetSchema = z.object({
+  Sitelinks: z.array(SitelinkSchema).min(1).max(8),
+});
+
 // ============= Group =============
 export const KeywordSchema = z.object({ Keyword: z.string().min(1) });
 
@@ -173,18 +187,17 @@ export const GroupSchema = z.object({
       texts: z.array(z.string()).max(3),
     })
     .optional(),
+  /**
+   * Per-group sitelinks override. When set, ads in this group use THIS set
+   * instead of the campaign-level `sitelinks_set`.
+   */
+  sitelinks_set: SitelinksSetSchema.optional(),
+  /**
+   * Per-group callouts override (each ≤ 25 chars, API limit per §5.2).
+   * When set, ads in this group use these instead of campaign-level `callouts`.
+   */
+  callouts: z.array(z.string().max(25)).optional(),
   ads: z.array(AdSchema).min(1).max(50),
-});
-
-// ============= SitelinksSet =============
-export const SitelinkSchema = z.object({
-  Title: z.string().max(30),
-  Description: z.string().max(60).optional(),
-  Href: z.string(),
-});
-
-export const SitelinksSetSchema = z.object({
-  Sitelinks: z.array(SitelinkSchema).min(1).max(8),
 });
 
 // ============= PromoExtension =============
@@ -233,6 +246,7 @@ export const TextCampaignSchema = z.object({
 export const CampaignSchema = z.object({
   upload_strategy: z.enum(["one-per-cluster", "single-campaign"]).optional().default("one-per-cluster"),
   dedupe_by_name: z.boolean().optional().default(false),
+  client_login: z.string().optional(),
   campaign: z.object({
     Name: z.string().min(1),
     Type: CampaignType,
@@ -275,6 +289,41 @@ export const CampaignSchema = z.object({
         base64: z.string().optional(),
       })
     )
+    .optional(),
+  /**
+   * Optional ЕПК campaign settings applied POST-CREATE to each campaign the bundle
+   * creates (via a single Campaigns.update + bidmodifiers.add). Everything here is
+   * additive to the combinatorial upload — see lib/epk-settings.ts. On ЕПК only device
+   * (mobile/desktop/desktop_only) + video bid adjustments apply; frequency capping is
+   * not settable via the API.
+   */
+  epk_settings: z
+    .object({
+      excluded_sites: z.array(z.string().min(1)).max(1000).optional(),
+      negative_keywords: z.array(z.string().min(1)).optional(),
+      attribution_model: z.enum(["LC", "LSC", "FC", "LYDC", "LSCCD", "FCCD", "LYDCCD", "AUTO"]).optional(),
+      time_targeting: z.record(z.string(), z.unknown()).optional(),
+      notification: z.record(z.string(), z.unknown()).optional(),
+      settings: z.array(z.object({ Option: z.string(), Value: z.enum(["YES", "NO"]) })).optional(),
+      tracking_params: z.string().optional(),
+      counter_ids: z.array(z.number().int()).optional(),
+      priority_goals: z.array(z.object({ goal_id: z.number().int().positive(), value: z.number().int().nonnegative().optional() })).optional(),
+      strategy: strategySpecSchema.optional(),
+      bid_modifiers: z
+        .array(
+          z.object({
+            type: z.enum(["mobile", "desktop", "desktop_only", "video", "demographics", "regional", "retargeting", "raw"]),
+            bid_modifier: z.number().int().min(0).max(1300).optional(),
+            operating_system_type: z.enum(["ANDROID", "IOS"]).optional(),
+            age: z.string().optional(),
+            gender: z.enum(["GENDER_MALE", "GENDER_FEMALE"]).optional(),
+            region_id: z.number().int().optional(),
+            retargeting_condition_id: z.number().int().optional(),
+            raw_adjustment: z.record(z.string(), z.unknown()).optional(),
+          }),
+        )
+        .optional(),
+    })
     .optional(),
 });
 

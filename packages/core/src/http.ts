@@ -1,6 +1,7 @@
 import { fetch, type RequestInit } from "undici";
 import { AuthError, RateLimitError, ApiError } from "./errors.js";
 import { sanitizeForOutput } from "./errors.js";
+import { parseJsonSafe } from "./json-safe.js";
 
 export type HttpResponse = {
   data: unknown;
@@ -51,7 +52,10 @@ export async function request(url: string, init?: RequestInit): Promise<HttpResp
     throw new ApiError(status, body);
   }
 
-  const data = await response.json();
+  // Parse the body big-int-safe: Yandex ad Ids exceed 2^53 and response.json()
+  // would silently round them. parseJsonSafe keeps such Ids as exact strings.
+  const rawBody = await response.text();
+  const data = rawBody.length > 0 ? parseJsonSafe(rawBody) : undefined;
   const respHeaders = Object.fromEntries(
     [...response.headers.entries()].filter(([k]) => k.toLowerCase() !== "authorization")
   );

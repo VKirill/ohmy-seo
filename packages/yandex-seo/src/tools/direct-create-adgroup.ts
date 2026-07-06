@@ -6,16 +6,13 @@ const InputSchema = z.object({
   campaign_id: z.number().int().positive().describe("Parent campaign ID"),
   name: z.string().min(1).describe("Ad group name"),
   region_ids: z.array(z.number()).default([213]).describe("Target region IDs (default [213] = Moscow)"),
-  type: z
-    .enum(["TEXT_AD_GROUP", "MOBILE_APP_AD_GROUP", "DYNAMIC_TEXT_AD_GROUP"])
-    .default("TEXT_AD_GROUP")
-    .describe("Ad group type (default TEXT_AD_GROUP — implied by campaign type, not sent in body)"),
   negative_keywords: z
     .object({ Items: z.array(z.string()) })
     .optional()
     .describe("Negative keywords list (optional)"),
   confirm: z.boolean().describe("Must be true — explicit intent confirmation required to create an ad group"),
   account: z.string().min(1).optional().describe("Account label from list_accounts (optional if a default account is configured)"),
+  client_login: z.string().min(1).optional().describe("Agency client login (Client-Login header) for sub-client cabinets"),
 });
 
 type AdGroupInput = z.infer<typeof InputSchema>;
@@ -46,7 +43,7 @@ export async function runDirectCreateAdGroup(input: AdGroupInput) {
 
     const result = await executeApiCall({
       apiName: "direct",
-      endpoint: "/json/v5/adgroups",
+      endpoint: "/json/v501/adgroups", // ЕПК ad groups live on v501; Type is inherited (never sent)
       method: "POST",
       body: {
         method: "add",
@@ -55,6 +52,7 @@ export async function runDirectCreateAdGroup(input: AdGroupInput) {
         },
       },
       account: parsed.account,
+      client_login: parsed.client_login,
     });
 
     if (!result.ok) {

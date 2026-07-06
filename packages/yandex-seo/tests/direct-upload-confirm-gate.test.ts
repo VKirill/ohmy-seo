@@ -198,6 +198,39 @@ describe("runDirectUploadFromYaml — confirm gate invariant", () => {
     expect(text.stage).toBe("dry_run");
   });
 
+  it("dry_run=true: forwards explicit client_login to pipeline", async () => {
+    await runDirectUploadFromYaml({
+      folder: "/fake/folder",
+      dry_run: true,
+      client_login: "client-from-args",
+    });
+
+    expect(mockUploadCampaignBundle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dry_run: true,
+        client_login: "client-from-args",
+      })
+    );
+  });
+
+  it("dry_run=true: falls back to top-level _campaign.yaml client_login", async () => {
+    const bundle = makeBundle();
+    bundle.campaign.client_login = "client-from-yaml";
+    mockLoadCampaignFolder.mockReturnValue(bundle);
+
+    await runDirectUploadFromYaml({
+      folder: "/fake/folder",
+      dry_run: true,
+    });
+
+    expect(mockUploadCampaignBundle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dry_run: true,
+        client_login: "client-from-yaml",
+      })
+    );
+  });
+
   it("dry_run=false but confirm missing: ZERO dependency API calls, returns plan_needed", async () => {
     const result = await runDirectUploadFromYaml({
       folder: "/fake/folder",

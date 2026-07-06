@@ -3,7 +3,7 @@ import { Jimp } from "jimp";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { normalizeAdImage } from "../src/lib/image-normalize.js";
+import { normalizeAdImage, normalizeAdImageBuffer } from "../src/lib/image-normalize.js";
 
 /** Write a solid-colour PNG at the given path and return the path. */
 async function writePng(filePath: string, width: number, height: number): Promise<string> {
@@ -79,5 +79,51 @@ describe("normalizeAdImage", () => {
     const p = await writePng(path.join(tmpDir, "portrait.png"), 768, 1024);
     const result = await normalizeAdImage(p);
     expect(result.action).toBe("skip");
+  });
+});
+
+describe("normalizeAdImageBuffer", () => {
+  it("resizes a synthetic 1536x1024 image to 1920x1080 PNG", async () => {
+    // Generate a 1536x1024 image buffer
+    const img = new Jimp({ width: 1536, height: 1024, color: 0x00ff00ff });
+    const buffer = await img.getBuffer("image/png");
+
+    const result = await normalizeAdImageBuffer(buffer);
+    expect(result.action).toBe("resized");
+    if (result.action === "resized") {
+      expect(result.width).toBe(1920);
+      expect(result.height).toBe(1080);
+      expect(result.format).toBe("PNG");
+      expect(typeof result.base64).toBe("string");
+      expect(result.base64.length).toBeGreaterThan(0);
+
+      // Verify the base64 decodes back to 1920x1080 PNG
+      const decodedBuf = Buffer.from(result.base64, "base64");
+      const decoded = await Jimp.fromBuffer(decodedBuf);
+      expect(decoded.width).toBe(1920);
+      expect(decoded.height).toBe(1080);
+    }
+  });
+
+  it("resizes a landscape 1470x1000 image (ratio 1.47, slightly below 1.5) to 1920x1080 PNG", async () => {
+    // Generate a 1470x1000 image buffer
+    const img = new Jimp({ width: 1470, height: 1000, color: 0x00ff00ff });
+    const buffer = await img.getBuffer("image/png");
+
+    const result = await normalizeAdImageBuffer(buffer);
+    expect(result.action).toBe("resized");
+    if (result.action === "resized") {
+      expect(result.width).toBe(1920);
+      expect(result.height).toBe(1080);
+      expect(result.format).toBe("PNG");
+      expect(typeof result.base64).toBe("string");
+      expect(result.base64.length).toBeGreaterThan(0);
+
+      // Verify the base64 decodes back to 1920x1080 PNG
+      const decodedBuf = Buffer.from(result.base64, "base64");
+      const decoded = await Jimp.fromBuffer(decodedBuf);
+      expect(decoded.width).toBe(1920);
+      expect(decoded.height).toBe(1080);
+    }
   });
 });

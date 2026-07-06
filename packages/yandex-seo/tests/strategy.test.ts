@@ -13,8 +13,8 @@ vi.mock("@ohmy-seo/mcp-core/errors", () => ({
   errorToMcpContent: (e: unknown) => ({ content: [{ type: "text", text: String(e) }] }),
 }));
 
-// payload-builder is NOT mocked — we test its real buildCampaignPayload
-import { buildCampaignPayload } from "../src/lib/payload-builder.js";
+// payload-builder is NOT mocked — we test its real buildUnifiedCampaignPayload
+import { buildUnifiedCampaignPayload } from "../src/lib/payload-builder.js";
 import { resolveCampaignStrategy, resolveCampaignType } from "../src/tools/direct-upload-from-yaml.js";
 import { pickAdTemplate, computePlanHash } from "../src/lib/upload-pipeline.js";
 
@@ -149,165 +149,129 @@ describe("resolveCampaignStrategy", () => {
 });
 
 // ---------------------------------------------------------------------------
-// buildCampaignPayload — bidding_strategy passthrough
+// buildUnifiedCampaignPayload — ЕПК (UNIFIED_CAMPAIGN) shape
 // ---------------------------------------------------------------------------
 
-/** The rsya bundle's BiddingStrategy as it appears in _campaign.yaml after YAML parse. */
-const rsyaBiddingStrategy = {
-  Search: { BiddingStrategyType: "SERVING_OFF" },
-  Network: {
-    BiddingStrategyType: "WB_MAXIMUM_CLICKS",
-    WbMaximumClicks: { WeeklySpendLimit: 59500000 },
-  },
-};
-
-const searchBiddingStrategy = {
-  Search: { BiddingStrategyType: "HIGHEST_POSITION" },
-  Network: { BiddingStrategyType: "SERVING_OFF" },
-};
-
-function extractTextCampaign(payload: ReturnType<typeof buildCampaignPayload>) {
-  const campaign = payload.params.Campaigns[0] as Record<string, unknown>;
-  return campaign["TextCampaign"] as Record<string, unknown>;
-}
-
-describe("buildCampaignPayload — bidding_strategy passthrough", () => {
-  it("rsya bundle: passes WB_MAXIMUM_CLICKS and WeeklySpendLimit=59500000 verbatim", () => {
-    const payload = buildCampaignPayload({
-      type: "rsya",
-      name: "test-rsya-campaign",
-      daily_budget_rub: 300,
-      bidding_strategy_type: "WB_DAILY_BUDGET",
-      bidding_strategy: rsyaBiddingStrategy,
-    });
-
-    const tc = extractTextCampaign(payload);
-    const bs = tc["BiddingStrategy"] as typeof rsyaBiddingStrategy;
-
-    // Network must use WB_MAXIMUM_CLICKS — not WB_DAILY_BUDGET
-    expect(bs.Network.BiddingStrategyType).toBe("WB_MAXIMUM_CLICKS");
-    // WeeklySpendLimit (not WeeklySpendingLimit)
-    expect(bs.Network.WbMaximumClicks.WeeklySpendLimit).toBe(59500000);
-    // Search must be SERVING_OFF
-    expect(bs.Search.BiddingStrategyType).toBe("SERVING_OFF");
-  });
-
-  it("search bundle: passes Search.HIGHEST_POSITION and Network.SERVING_OFF verbatim", () => {
-    const payload = buildCampaignPayload({
-      type: "search",
-      name: "test-search-campaign",
-      daily_budget_rub: 300,
-      bidding_strategy_type: "HIGHEST_POSITION",
-      bidding_strategy: searchBiddingStrategy,
-    });
-
-    const tc = extractTextCampaign(payload);
-    const bs = tc["BiddingStrategy"] as typeof searchBiddingStrategy;
-
-    expect(bs.Search.BiddingStrategyType).toBe("HIGHEST_POSITION");
-    expect(bs.Network.BiddingStrategyType).toBe("SERVING_OFF");
-  });
-
-  it("bidding_strategy omitted → rsya reconstruction produces WB_DAILY_BUDGET (fallback preserved)", () => {
-    const payload = buildCampaignPayload({
-      type: "rsya",
-      name: "test-rsya-fallback",
-      daily_budget_rub: 300,
-      bidding_strategy_type: "WB_DAILY_BUDGET",
-      // bidding_strategy intentionally omitted
-    });
-
-    const tc = extractTextCampaign(payload);
-    const bs = tc["BiddingStrategy"] as Record<string, Record<string, unknown>>;
-
-    // Old reconstruction path: WB_DAILY_BUDGET on Network
-    expect(bs["Network"]["BiddingStrategyType"]).toBe("WB_DAILY_BUDGET");
-    expect(bs["Search"]["BiddingStrategyType"]).toBe("SERVING_OFF");
-  });
-
-  it("bidding_strategy omitted → search reconstruction produces HIGHEST_POSITION (fallback preserved)", () => {
-    const payload = buildCampaignPayload({
-      type: "search",
-      name: "test-search-fallback",
-      daily_budget_rub: 300,
-      bidding_strategy_type: "HIGHEST_POSITION",
-      // bidding_strategy intentionally omitted
-    });
-
-    const tc = extractTextCampaign(payload);
-    const bs = tc["BiddingStrategy"] as Record<string, Record<string, unknown>>;
-
-    expect(bs["Search"]["BiddingStrategyType"]).toBe("HIGHEST_POSITION");
-    expect(bs["Network"]["BiddingStrategyType"]).toBe("SERVING_OFF");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// buildCampaignPayload — top-level DailyBudget field
-// ---------------------------------------------------------------------------
-
-function extractCampaign(payload: ReturnType<typeof buildCampaignPayload>) {
+function extractCampaign(payload: ReturnType<typeof buildUnifiedCampaignPayload>) {
   return payload.params.Campaigns[0] as Record<string, unknown>;
 }
 
-// Yandex rejects DailyBudget with auto strategies (Code 6000). Budget is governed
-// by the strategy's WeeklySpendLimit / WeeklySpendingLimit inside BiddingStrategy.
-describe("buildCampaignPayload — DailyBudget top-level field", () => {
-  it("does NOT emit top-level DailyBudget for rsya bundle with auto strategy (WB_MAXIMUM_CLICKS)", () => {
-    const payload = buildCampaignPayload({
-      type: "rsya",
-      name: "test-rsya-no-daily-budget",
-      daily_budget_rub: 8.5,
-      bidding_strategy_type: "WB_DAILY_BUDGET",
-      bidding_strategy: rsyaBiddingStrategy,
-    });
+function extractUnified(payload: ReturnType<typeof buildUnifiedCampaignPayload>) {
+  return extractCampaign(payload)["UnifiedCampaign"] as Record<string, unknown>;
+}
 
+describe("buildUnifiedCampaignPayload — envelope + DailyBudget", () => {
+  it("method is 'add' and Campaign carries Name + StartDate", () => {
+    const payload = buildUnifiedCampaignPayload({
+      name: "test-unified-campaign",
+      daily_budget_micros: 300_000_000,
+      start_date: "2026-01-01",
+    });
+    expect(payload.method).toBe("add");
     const campaign = extractCampaign(payload);
-    expect(campaign["DailyBudget"]).toBeUndefined();
+    expect(campaign["Name"]).toBe("test-unified-campaign");
+    expect(campaign["StartDate"]).toBe("2026-01-01");
   });
 
-  it("does NOT emit top-level DailyBudget for search bundle with HIGHEST_POSITION", () => {
-    const payload = buildCampaignPayload({
-      type: "search",
-      name: "test-search-no-daily-budget",
-      daily_budget_rub: 300,
-      bidding_strategy_type: "HIGHEST_POSITION",
+  it("DailyBudget sits at the Campaign level (not inside UnifiedCampaign)", () => {
+    const payload = buildUnifiedCampaignPayload({
+      name: "test-daily-budget-level",
+      daily_budget_micros: 300_000_000,
     });
-
     const campaign = extractCampaign(payload);
-    expect(campaign["DailyBudget"]).toBeUndefined();
+    const unified = extractUnified(payload);
+    expect(campaign["DailyBudget"]).toEqual({ Amount: 300_000_000, Mode: "STANDARD" });
+    expect(unified["DailyBudget"]).toBeUndefined();
   });
 
-  it("does NOT emit top-level DailyBudget even when daily_budget_rub is 0", () => {
-    const payload = buildCampaignPayload({
-      type: "rsya",
-      name: "test-zero-budget",
-      daily_budget_rub: 0,
-      bidding_strategy_type: "WB_DAILY_BUDGET",
+  it("DailyBudget carries NO Currency sub-field (currency follows the account)", () => {
+    const payload = buildUnifiedCampaignPayload({
+      name: "test-no-currency",
+      daily_budget_micros: 8_500_000,
     });
-
-    const campaign = extractCampaign(payload);
-    expect(campaign["DailyBudget"]).toBeUndefined();
+    const daily = extractCampaign(payload)["DailyBudget"] as Record<string, unknown>;
+    expect(daily["Currency"]).toBeUndefined();
+    expect(daily["Mode"]).toBe("STANDARD");
   });
 
-  it("BiddingStrategy is present inside TextCampaign even without top-level DailyBudget", () => {
-    const payload = buildCampaignPayload({
-      type: "rsya",
-      name: "test-strategy-present",
-      daily_budget_rub: 8.5,
-      bidding_strategy_type: "WB_DAILY_BUDGET",
-      bidding_strategy: rsyaBiddingStrategy,
+  it("passes daily_budget_micros through as-is (no ×1e6 conversion)", () => {
+    const payload = buildUnifiedCampaignPayload({
+      name: "test-passthrough",
+      daily_budget_micros: 42_000_000,
     });
+    const daily = extractCampaign(payload)["DailyBudget"] as Record<string, unknown>;
+    expect(daily["Amount"]).toBe(42_000_000);
+  });
+});
 
-    const campaign = extractCampaign(payload);
-    const tc = campaign["TextCampaign"] as Record<string, unknown>;
+describe("buildUnifiedCampaignPayload — verbatim bidding_strategy, weekly budget, TimeTargeting", () => {
+  it("uses a verbatim bidding_strategy as-is (weekly WB + BidCeiling)", () => {
+    const bs = {
+      Search: { BiddingStrategyType: "WB_MAXIMUM_CLICKS", WbMaximumClicks: { WeeklySpendLimit: 10_000_000, BidCeiling: 5_000_000 } },
+      Network: { BiddingStrategyType: "SERVING_OFF" },
+    };
+    const payload = buildUnifiedCampaignPayload({ name: "wb", bidding_strategy: bs });
+    expect(extractUnified(payload)["BiddingStrategy"]).toEqual(bs);
+  });
 
-    // No top-level DailyBudget
-    expect(campaign["DailyBudget"]).toBeUndefined();
-    // Budget governed by WeeklySpendLimit inside BiddingStrategy
-    expect(tc["BiddingStrategy"]).toBeDefined();
-    const bs = tc["BiddingStrategy"] as typeof rsyaBiddingStrategy;
-    expect(bs.Network.WbMaximumClicks.WeeklySpendLimit).toBe(59500000);
+  it("OMITS DailyBudget for an auto (non-manual) search strategy", () => {
+    const payload = buildUnifiedCampaignPayload({
+      name: "auto-no-daily",
+      daily_budget_micros: 10_000_000, // must be ignored for auto strategies
+      bidding_strategy: {
+        Search: { BiddingStrategyType: "WB_MAXIMUM_CLICKS", WbMaximumClicks: { WeeklySpendLimit: 10_000_000 } },
+        Network: { BiddingStrategyType: "SERVING_OFF" },
+      },
+    });
+    expect(extractCampaign(payload)["DailyBudget"]).toBeUndefined();
+  });
+
+  it("keeps DailyBudget for a manual (HIGHEST_POSITION) verbatim strategy", () => {
+    const payload = buildUnifiedCampaignPayload({
+      name: "manual-keeps-daily",
+      daily_budget_micros: 10_000_000,
+      bidding_strategy: { Search: { BiddingStrategyType: "HIGHEST_POSITION" }, Network: { BiddingStrategyType: "SERVING_OFF" } },
+    });
+    expect(extractCampaign(payload)["DailyBudget"]).toEqual({ Amount: 10_000_000, Mode: "STANDARD" });
+  });
+
+  it("puts TimeTargeting at the Campaign level (sibling of UnifiedCampaign)", () => {
+    const tt = { Schedule: { Items: ["1,100,100"] }, ConsiderWorkingWeekends: "YES" };
+    const payload = buildUnifiedCampaignPayload({ name: "tt", daily_budget_micros: 10_000_000, time_targeting: tt });
+    expect(extractCampaign(payload)["TimeTargeting"]).toEqual(tt);
+    expect(extractUnified(payload)["TimeTargeting"]).toBeUndefined();
+  });
+});
+
+describe("buildUnifiedCampaignPayload — BiddingStrategy + Settings", () => {
+  it("defaults search_strategy_type to HIGHEST_POSITION and Network to SERVING_OFF", () => {
+    const payload = buildUnifiedCampaignPayload({
+      name: "test-default-strategy",
+      daily_budget_micros: 300_000_000,
+    });
+    const bs = extractUnified(payload)["BiddingStrategy"] as Record<string, Record<string, unknown>>;
+    expect(bs["Search"]["BiddingStrategyType"]).toBe("HIGHEST_POSITION");
+    expect(bs["Network"]["BiddingStrategyType"]).toBe("SERVING_OFF");
+  });
+
+  it("passes an explicit search_strategy_type through to the Search strategy", () => {
+    const payload = buildUnifiedCampaignPayload({
+      name: "test-explicit-strategy",
+      daily_budget_micros: 300_000_000,
+      search_strategy_type: "AVERAGE_CPC",
+    });
+    const bs = extractUnified(payload)["BiddingStrategy"] as Record<string, Record<string, unknown>>;
+    expect(bs["Search"]["BiddingStrategyType"]).toBe("AVERAGE_CPC");
+    expect(bs["Network"]["BiddingStrategyType"]).toBe("SERVING_OFF");
+  });
+
+  it("always emits the ADD_METRICA_TAG setting", () => {
+    const payload = buildUnifiedCampaignPayload({
+      name: "test-metrica-setting",
+      daily_budget_micros: 300_000_000,
+    });
+    const unified = extractUnified(payload);
+    expect(unified["Settings"]).toEqual([{ Option: "ADD_METRICA_TAG", Value: "YES" }]);
   });
 });
 
@@ -376,10 +340,18 @@ describe("computePlanHash — determinism and content binding", () => {
     expect(h1).not.toBe(h2);
   });
 
-  it("changing callout_ids produces a different hash", () => {
-    const h1 = computePlanHash({ ...basePlanInput, callout_ids: [1, 2, 3] });
-    const h2 = computePlanHash({ ...basePlanInput, callout_ids: [1, 2, 99] });
+  it("changing campaign callout CONTENT produces a different hash (fail-closed)", () => {
+    const h1 = computePlanHash({ ...basePlanInput, callouts: ["Гарантия 2 года", "Доставка"] });
+    const h2 = computePlanHash({ ...basePlanInput, callouts: ["Гарантия 2 года", "Монтаж"] });
     expect(h1).not.toBe(h2);
+  });
+
+  it("live-created callout_ids do NOT affect the hash (dry-run/live must agree)", () => {
+    // callout_ids are created between dry-run and live by direct-upload-from-yaml;
+    // binding them would make EVERY live run with callouts fail stage-1 hash validation.
+    const dryInput = { ...basePlanInput, callouts: ["Гарантия 2 года", "Доставка"] };
+    const liveInput = { ...dryInput, callout_ids: [201, 202] };
+    expect(computePlanHash(liveInput)).toBe(computePlanHash(dryInput));
   });
 
   it("changing image_hashes_keys produces a different hash", () => {

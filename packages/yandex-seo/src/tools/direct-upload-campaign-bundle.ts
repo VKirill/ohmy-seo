@@ -13,7 +13,8 @@ const InputSchema = z.object({
 
   campaign_type: z.enum(["search", "rsya", "rsya-only"]),
   site_url: z.string(),
-  daily_budget_rub: z.number().int().min(100),
+  daily_budget_amount: z.number().int().positive().optional(), // ACCOUNT-currency micros (preferred, currency-agnostic)
+  daily_budget_rub: z.number().int().min(100).optional(),       // deprecated RUB fallback (× 1e6 by resolveDailyBudgetMicros)
   region_ids: z.array(z.number().int()).min(1),
   bidding_strategy_type: z.enum(["WB_DAILY_BUDGET", "HIGHEST_POSITION", "AVERAGE_CPC"]),
 

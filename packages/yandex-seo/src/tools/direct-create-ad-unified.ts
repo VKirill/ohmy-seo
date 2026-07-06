@@ -1,57 +1,53 @@
 import { executeApiCall } from "../lib/api-gateway.js";
 import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
+import { buildResponsiveAdPayload } from "../lib/payload-builder.js";
 import { z } from "zod";
 
+// Combinatorial ad (ЕПК RESPONSIVE_AD). One ad carries a POOL of 1–7 titles and
+// 1–3 texts; Yandex assembles the best combination. Created on /json/v501/ads —
+// v5 returns error 3500. Classic single-title TextAd / РСЯ TextImageAd are retired.
 const InputSchema = z.object({
-  ad_group_id: z.number().int().positive().describe("Parent ad group ID"),
-  title: z.string().min(1).max(56).describe("Main headline (≤56 chars including punctuation)"),
-  title2: z.string().max(30).optional().describe("Secondary headline (≤30 chars, optional)"),
-  text: z.string().min(1).max(81).describe("Ad text (≤81 chars including punctuation)"),
-  href: z.string().min(1).describe("Target URL"),
-  ad_image_hash: z.string().min(1).describe("AdImageHash from the Direct AdImages library (use direct_upload_image to obtain)"),
-  display_url_path: z.string().max(20).optional().describe("Display URL path (≤20 chars, optional)"),
-  sitelinks_set_id: z.number().int().positive().optional().describe("Sitelinks set ID from Direct Sitelinks API (optional)"),
-  vcard_id: z.number().int().positive().optional().describe("VCard ID (optional)"),
-  ad_extensions: z.array(z.number().int().positive()).optional().describe("Callout extension IDs (optional)"),
-  video_extension_id: z.number().int().positive().optional().describe("Video creative ID for VideoExtension (optional)"),
+  ad_group_id: z.number().int().positive().describe("Parent ad group ID (must belong to a UNIFIED_CAMPAIGN / ЕПК)"),
+  titles: z
+    .array(z.string().min(1).max(56))
+    .min(1)
+    .max(7)
+    .describe("Headline pool: 1–7 titles, each ≤56 chars (each word ≤22). Yandex combines them."),
+  texts: z
+    .array(z.string().min(1).max(81))
+    .min(1)
+    .max(3)
+    .describe("Text pool: 1–3 texts, each ≤81 chars (each word ≤23)."),
+  href: z.string().min(1).max(1024).describe("Target URL (single Href)"),
+  image_hashes: z
+    .array(z.string().min(1))
+    .max(5)
+    .optional()
+    .describe("1–5 AdImageHashes from direct_upload_image (optional; text-only combinatorial ads are allowed)"),
+  sitelinks_set_id: z.number().int().positive().optional().describe("Sitelinks set ID (optional)"),
+  ad_extensions: z
+    .array(z.number().int().positive())
+    .max(50)
+    .optional()
+    .describe("Callout extension IDs (≤50, optional)"),
+  video_extension_ids: z
+    .array(z.number().int().positive())
+    .min(1)
+    .max(6)
+    .optional()
+    .describe("1–6 VideoExtension IDs (optional)"),
+  business_id: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Yandex.Business organization ID to attach to the ad (optional)"),
   confirm: z.boolean().describe("Must be true — explicit intent confirmation required to create an ad"),
   account: z.string().min(1).optional().describe("Account label from list_accounts (optional if a default account is configured)"),
+  client_login: z.string().min(1).optional().describe("Agency client login (Client-Login header) for sub-client cabinets"),
 });
 
 type AdUnifiedInput = z.infer<typeof InputSchema>;
-
-function buildAdPayload(input: AdUnifiedInput): Record<string, unknown> {
-  const textImageAd: Record<string, unknown> = {
-    AdImageHash: input.ad_image_hash,
-    Title: input.title,
-    Text: input.text,
-    Href: input.href,
-  };
-
-  if (input.title2 !== undefined) {
-    textImageAd.Title2 = input.title2;
-  }
-  if (input.display_url_path !== undefined) {
-    textImageAd.DisplayUrlPath = input.display_url_path;
-  }
-  if (input.sitelinks_set_id !== undefined) {
-    textImageAd.SitelinksSetId = input.sitelinks_set_id;
-  }
-  if (input.vcard_id !== undefined) {
-    textImageAd.VCardId = input.vcard_id;
-  }
-  if (input.ad_extensions !== undefined && input.ad_extensions.length > 0) {
-    textImageAd.AdExtensions = { Items: input.ad_extensions };
-  }
-  if (input.video_extension_id !== undefined) {
-    textImageAd.VideoExtension = { CreativeId: input.video_extension_id };
-  }
-
-  return {
-    AdGroupId: input.ad_group_id,
-    TextImageAd: textImageAd,
-  };
-}
 
 export async function runDirectCreateAdUnified(input: AdUnifiedInput) {
   const parsed = InputSchema.parse(input);
@@ -61,19 +57,25 @@ export async function runDirectCreateAdUnified(input: AdUnifiedInput) {
   }
 
   try {
-    const adPayload = buildAdPayload(parsed);
+    const payload = buildResponsiveAdPayload({
+      ad_group_id: parsed.ad_group_id,
+      Titles: parsed.titles,
+      Texts: parsed.texts,
+      Href: parsed.href,
+      AdImageHashes: parsed.image_hashes,
+      VideoExtensionIds: parsed.video_extension_ids,
+      SitelinkSetId: parsed.sitelinks_set_id,
+      AdExtensionIds: parsed.ad_extensions,
+      BusinessId: parsed.business_id,
+    });
 
     const result = await executeApiCall({
       apiName: "direct",
-      endpoint: "/json/v5/ads",
+      endpoint: "/json/v501/ads", // combinatorial RESPONSIVE_AD is v501-only
       method: "POST",
-      body: {
-        method: "add",
-        params: {
-          Ads: [adPayload],
-        },
-      },
+      body: payload,
       account: parsed.account,
+      client_login: parsed.client_login,
     });
 
     if (!result.ok) {
@@ -91,7 +93,8 @@ export async function runDirectCreateAdUnified(input: AdUnifiedInput) {
     const apiResult = (data?.result as Record<string, unknown>) ?? {};
     const addResults = apiResult.AddResults as Array<Record<string, unknown>> | undefined;
     const first = addResults?.[0];
-    const adId = first?.Id as number | undefined;
+    // Ad Ids exceed 2^53 — parseJsonSafe keeps them as exact strings. Never cast to number.
+    const adId = first?.Id as string | number | undefined;
     const errors = first?.Errors as unknown[] | undefined;
 
     if (errors && errors.length > 0) {
@@ -111,11 +114,13 @@ export async function runDirectCreateAdUnified(input: AdUnifiedInput) {
           type: "text" as const,
           text: JSON.stringify(
             {
-              ad_id: adId ?? null,
+              ad_id: adId != null ? String(adId) : null,
               ad_group_id: parsed.ad_group_id,
-              ad_image_hash: parsed.ad_image_hash,
-              has_video: parsed.video_extension_id !== undefined,
+              titles: parsed.titles.length,
+              texts: parsed.texts.length,
+              images: parsed.image_hashes?.length ?? 0,
               has_sitelinks: parsed.sitelinks_set_id !== undefined,
+              type: "RESPONSIVE_AD",
               status: "DRAFT",
             },
             null,

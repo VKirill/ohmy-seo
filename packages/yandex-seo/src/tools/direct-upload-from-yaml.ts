@@ -10,6 +10,7 @@ import type { AdSchema } from "../lib/yaml-schema.js";
 import { validateLiveAck } from "../lib/api/confirm-gate.js";
 import { resolveAccount } from "../lib/account-resolver.js";
 import { SCOPES } from "../lib/scopes.js";
+import { applyEpkCampaignSettings, hasEpkSettings, type EpkSettings } from "../lib/epk-settings.js";
 
 /** Narrow the first ad in a group to extract Href for site_url fallback. */
 function extractFirstHref(ad: z.infer<typeof AdSchema> | undefined): string | undefined {
@@ -28,6 +29,7 @@ const InputSchema = z.object({
   canary_passed: z.boolean().optional().describe("Set to true in Stage 2 after reviewing canary results"),
   continuation_ack: z.string().optional().describe("Continuation ack required for Stage 2"),
   account: z.string().optional().describe("Account label from list_accounts (optional if a default account is configured)"),
+  client_login: z.string().optional().describe("Yandex Direct agency client login for sub-client access (optional)"),
   csv_path: z.string().optional().describe("Absolute path to a Key Collector CSV; if omitted, a synthetic CSV is derived from YAML group keywords"),
   site_url: z.string().optional().describe("Default site URL for ads; if omitted, derived from the first ad's Href in the YAML bundle"),
 });
@@ -116,6 +118,205 @@ function buildAutotargetingPerGroup(
 }
 
 /**
+ * Resolve the pipeline cluster key for a bundle group — same derivation as
+ * buildAutotargetingPerGroup / extractCombinatorialPools use for their maps.
+ */
+function groupClusterKey(
+  g: ReturnType<typeof loadCampaignFolder>["groups"][number]
+): string {
+  return g._meta?.cluster_id ?? g.group.Name.split("_")[0] ?? g.group.Name;
+}
+
+/**
+ * Per-group sitelinks CONTENT map (cluster key → SitelinksSet) for groups that
+ * declare a sitelinks_set override. Fed into computePlanHash so editing a group's
+ * sitelinks invalidates a stale plan_hash. Returns undefined when no group has
+ * an override (keeps plan_hash identical to pre-override bundles).
+ */
+export function extractSitelinksPerGroup(
+  bundle: ReturnType<typeof loadCampaignFolder>
+): Record<string, { Sitelinks: Array<{ Title: string; Description?: string; Href: string }> }> | undefined {
+  const result: Record<string, { Sitelinks: Array<{ Title: string; Description?: string; Href: string }> }> = {};
+  for (const g of bundle.groups) {
+    if (!g.sitelinks_set) continue;
+    result[groupClusterKey(g)] = g.sitelinks_set;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/**
+ * Per-group callout texts (cluster key → string[]) for groups that declare a
+ * callouts override. Plan_hash input, same contract as extractSitelinksPerGroup.
+ */
+export function extractCalloutsPerGroup(
+  bundle: ReturnType<typeof loadCampaignFolder>
+): Record<string, string[]> | undefined {
+  const result: Record<string, string[]> = {};
+  for (const g of bundle.groups) {
+    if (!g.callouts || g.callouts.length === 0) continue;
+    result[groupClusterKey(g)] = g.callouts;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/**
+ * Per-group AdImageHashes (cluster key → hash[]) for the combinatorial ad.
+ * Each group's ads[].ResponsiveAd.ImageHashes carries `${img_key}` refs; resolveRefs
+ * does NOT touch these, so we resolve them here against the live-uploaded image map
+ * (imageHashes: key → AdImageHash). Up to 5 images per group.
+ */
+export function extractImageHashesPerGroup(
+  bundle: ReturnType<typeof loadCampaignFolder>,
+  imageHashes: Record<string, string>
+): Record<string, string[]> | undefined {
+  const result: Record<string, string[]> = {};
+  for (const g of bundle.groups) {
+    const ad = g.ads?.[0] as { ResponsiveAd?: { ImageHashes?: unknown[] } } | undefined; // guardian: allow — ads is a discriminated union
+    const refs = ad?.ResponsiveAd?.ImageHashes;
+    if (!Array.isArray(refs) || refs.length === 0) continue;
+    const hashes: string[] = [];
+    for (const ref of refs) {
+      if (typeof ref !== "string") continue;
+      const m = ref.match(/^\$\{(.+)\}$/);
+      const resolved = m ? imageHashes[m[1]] : ref; // ${key} → hash, or a literal hash
+      if (resolved && !hashes.includes(resolved)) hashes.push(resolved);
+      if (hashes.length >= 5) break;
+    }
+    if (hashes.length > 0) result[groupClusterKey(g)] = hashes;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/**
+ * Summarize per-group sitelinks/callouts overrides for the dry-run plan:
+ * which groups override, and how many UNIQUE sets live mode will create
+ * (campaign-level set + deduplicated group contents, dedupe by JSON content).
+ */
+export function summarizePerGroupExtensions(
+  bundle: ReturnType<typeof loadCampaignFolder>
+): {
+  groups_with_sitelinks_override: string[];
+  groups_with_callouts_override: string[];
+  unique_sitelinks_sets: number;
+  unique_callout_sets: number;
+} {
+  const slContents = new Set<string>();
+  const coContents = new Set<string>();
+  if (bundle.campaign.sitelinks_set) slContents.add(JSON.stringify(bundle.campaign.sitelinks_set));
+  if (bundle.campaign.callouts && bundle.campaign.callouts.length > 0) {
+    coContents.add(JSON.stringify(bundle.campaign.callouts));
+  }
+  const groupsWithSitelinks: string[] = [];
+  const groupsWithCallouts: string[] = [];
+  for (const g of bundle.groups) {
+    if (g.sitelinks_set) {
+      groupsWithSitelinks.push(g.group.Name);
+      slContents.add(JSON.stringify(g.sitelinks_set));
+    }
+    if (g.callouts && g.callouts.length > 0) {
+      groupsWithCallouts.push(g.group.Name);
+      coContents.add(JSON.stringify(g.callouts));
+    }
+  }
+  return {
+    groups_with_sitelinks_override: groupsWithSitelinks,
+    groups_with_callouts_override: groupsWithCallouts,
+    unique_sitelinks_sets: slContents.size,
+    unique_callout_sets: coContents.size,
+  };
+}
+
+/** Yandex Direct returns HTTP 200 with a top-level {error} body for request-level failures
+ *  (auth, units, malformed request). Surface it so callers don't report a generic "no Id returned". */
+function topLevelApiError(data: Record<string, unknown> | undefined): string | undefined {
+  const err = data?.["error"] as Record<string, unknown> | undefined;
+  if (!err) return undefined;
+  const detail = err["error_detail"];
+  return `Direct API error ${String(err["error_code"])}: ${String(err["error_string"])}${detail ? ` — ${String(detail)}` : ""}`;
+}
+
+/** Create one sitelinks set via Sitelinks.add; returns the new Id or an error string. */
+async function createSitelinksSetLive(
+  sitelinks_set: { Sitelinks: Array<{ Title: string; Description?: string; Href: string }> },
+  account: string | undefined,
+  client_login: string | undefined
+): Promise<{ id?: number; error?: string }> {
+  const sitelinksResult = await executeApiCall({
+    apiName: "direct",
+    endpoint: "/json/v5/sitelinks",
+    body: buildSitelinksSetPayload(sitelinks_set),
+    account,
+    client_login,
+  });
+  if (!sitelinksResult.ok) {
+    return { error: "sitelinks creation failed: HTTP error" };
+  }
+  // Direct API returns nested result; shape is opaque at this layer
+  const data = sitelinksResult.data as Record<string, unknown>; // guardian: allow — Direct API response is untyped JSON
+  const apiErr = topLevelApiError(data);
+  if (apiErr) {
+    return { error: `sitelinks creation failed: ${apiErr}` };
+  }
+  const result = data?.["result"] as Record<string, unknown> | undefined;
+  const addResults = result?.["AddResults"] as Array<Record<string, unknown>> | undefined;
+  const firstItem = addResults?.[0];
+  const errors = firstItem?.["Errors"] as Array<Record<string, unknown>> | undefined;
+  if (errors && errors.length > 0) {
+    const msg = errors.map((e) => e?.["Message"] ?? JSON.stringify(e)).join("; ");
+    return { error: `sitelinks creation failed: ${msg}` };
+  }
+  const id = firstItem?.["Id"];
+  if (typeof id !== "number") {
+    return { error: "sitelinks creation: no Id returned" };
+  }
+  return { id };
+}
+
+/** Create CALLOUT ad extensions via AdExtensions.add; returns created Ids + item errors. */
+async function createCalloutsLive(
+  callout_texts: string[],
+  account: string | undefined,
+  client_login: string | undefined
+): Promise<{ ids: number[]; errors: string[] }> {
+  const ids: number[] = [];
+  const errors: string[] = [];
+  const calloutResult = await executeApiCall({
+    apiName: "direct",
+    endpoint: "/json/v5/adextensions",
+    body: buildCalloutPayload({ callout_texts }),
+    account,
+    client_login,
+  });
+  if (!calloutResult.ok) {
+    return { ids, errors: ["callouts creation failed: HTTP error"] };
+  }
+  const data = calloutResult.data as Record<string, unknown>; // guardian: allow — Direct API response is untyped JSON
+  const calloutApiErr = topLevelApiError(data);
+  if (calloutApiErr) {
+    return { ids, errors: [`callouts creation failed: ${calloutApiErr}`] };
+  }
+  const result = data?.["result"] as Record<string, unknown> | undefined;
+  const addResults = result?.["AddResults"] as Array<Record<string, unknown>> | undefined;
+  if (addResults) {
+    for (const item of addResults) {
+      const itemErrors = item?.["Errors"] as Array<Record<string, unknown>> | undefined;
+      if (itemErrors && itemErrors.length > 0) {
+        const msg = itemErrors.map((e) => e?.["Message"] ?? JSON.stringify(e)).join("; ");
+        errors.push(`callout creation failed: ${msg}`);
+      } else {
+        const id = item?.["Id"];
+        if (typeof id === "number") {
+          ids.push(id);
+        } else {
+          errors.push("callout creation: item returned no Id");
+        }
+      }
+    }
+  }
+  return { ids, errors };
+}
+
+/**
  * Extract combinatorial headline/text pools per cluster.
  * If the group has an explicit `combinatorial` field, use that (already capped by schema).
  * Otherwise derive: headlines = unique([Title, Title2]) capped to 7; texts = unique([Text]) capped to 3.
@@ -178,12 +379,67 @@ export function resolveCampaignStrategy(bundle: ReturnType<typeof loadCampaignFo
   return { mode: "one-per-cluster" };
 }
 
+/**
+ * Build the shared uploadCampaignBundle input for a dry-run preview from a
+ * bundle-or-resolved source object (both share the same shape). Every field is
+ * computed EXACTLY as the inline call sites did, so the resulting plan_hash is
+ * unchanged. The live call spreads this and overrides dry_run + adds live-only
+ * fields (plan_hash, confirm, image_hashes, per-group id maps, ...).
+ *
+ * `csvPath`, `siteUrl` and `declaredImageKeys` are computed once at the top of
+ * runDirectUploadFromYaml and passed in so they stay identical across every site
+ * (csvPath especially — a synthetic CSV must not be regenerated per call).
+ */
+function buildBundleUploadInput(
+  src: ReturnType<typeof loadCampaignFolder>,
+  parsed: z.infer<typeof InputSchema>,
+  clientLogin: string | undefined,
+  csvPath: string,
+  siteUrl: string,
+  declaredImageKeys: string[],
+) {
+  const camp = src.campaign.campaign;
+  const tc = camp.TextCampaign;
+  return {
+    csv_path: csvPath,
+    campaign_strategy: resolveCampaignStrategy(src),
+    campaign_type: resolveCampaignType(src),
+    site_url: siteUrl,
+    daily_budget_amount: camp.DailyBudget.Amount,
+    region_ids: src.groups[0]?.group.RegionIds ?? [213],
+    bidding_strategy_type: extractBiddingStrategy(tc),
+    metrika_counter_ids: tc?.CounterIds?.Items,
+    metrika_goal_ids: tc?.PriorityGoals?.Items?.map((g) => g.GoalId),
+    ads_per_group: src.groups[0]?.ads.length ?? 1,
+    ad_template_strategy: "agent-provided",
+    ad_templates: extractAdTemplates(src),
+    dry_run: true,
+    canary_percent: 50,
+    max_clusters: src.groups.length,
+    abort_on_error_rate: 0.3,
+    account: parsed.account,
+    client_login: clientLogin,
+    dedupe_by_name: src.campaign.dedupe_by_name ?? true,
+    tracking_params: tc?.TrackingParams,
+    sitelinks_set: src.campaign.sitelinks_set,
+    callouts: src.campaign.callouts,
+    promo_extension: src.campaign.promo_extension,
+    bidding_strategy: tc?.BiddingStrategy as Record<string, unknown> | undefined,
+    declared_image_keys: declaredImageKeys.length > 0 ? declaredImageKeys : null,
+    autotargeting_per_group: buildAutotargetingPerGroup(src),
+    combinatorial_per_group: extractCombinatorialPools(src),
+    sitelinks_set_per_group: extractSitelinksPerGroup(src),
+    callouts_per_group: extractCalloutsPerGroup(src),
+  };
+}
+
 export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>) {
   try {
     const parsed = InputSchema.parse(input);
 
     // 1. Load and validate YAML bundle
     const bundle = loadCampaignFolder(parsed.folder);
+    const clientLogin = parsed.client_login ?? bundle.campaign.client_login;
     if (bundle.validation_errors.length > 0) {
       return {
         content: [{
@@ -197,7 +453,6 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
     }
 
     const camp = bundle.campaign.campaign;
-    const tc = camp.TextCampaign;
 
     // Image keys declared in the bundle — stable at both dry-run and live time.
     // Used as the plan_hash image input so dry and live hashes always agree.
@@ -209,49 +464,22 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
       ?? extractFirstHref(bundle.groups[0]?.ads[0])
       ?? "https://example.com";
 
-    // Build or use provided CSV path (required by uploadCampaignBundle)
+    // Build or use provided CSV path (required by uploadCampaignBundle). The SAME
+    // csvPath value is reused across every buildBundleUploadInput call site — a
+    // synthetic CSV must never be regenerated per call (would change csv_hash).
     const csvPath = parsed.csv_path ?? await buildSyntheticCsv(bundle);
 
-    const regionIds = bundle.groups[0]?.group.RegionIds ?? [213];
-    const biddingStrategyType = extractBiddingStrategy(tc);
-    const counterIds = tc?.CounterIds?.Items;
-    const goalIds = tc?.PriorityGoals?.Items?.map((g) => g.GoalId);
-    const adsPerGroup = bundle.groups[0]?.ads.length ?? 1;
+    // Per-call region_ids / bidding_strategy_type / metrika ids / ads_per_group are
+    // derived inside buildBundleUploadInput from the passed source (bundle | resolved).
 
     // 2. Dry run — compute plan without creating any dependencies
     if (parsed.dry_run) {
-      const ad_templates = extractAdTemplates(bundle);
-      const campaignStrategy = resolveCampaignStrategy(bundle);
-      const campaignType = resolveCampaignType(bundle);
       // uploadCampaignBundle accepts additional Phase 3.5.D fields via its loose input type
-      const result = await uploadCampaignBundle({
-        csv_path: csvPath,
-        campaign_strategy: campaignStrategy,
-        campaign_type: campaignType,
-        site_url: siteUrl,
-        daily_budget_amount: camp.DailyBudget.Amount,
-        region_ids: regionIds,
-        bidding_strategy_type: biddingStrategyType,
-        metrika_counter_ids: counterIds,
-        metrika_goal_ids: goalIds,
-        ads_per_group: adsPerGroup,
-        ad_template_strategy: "agent-provided",
-        ad_templates,
-        dry_run: true,
-        canary_percent: 50,
-        max_clusters: bundle.groups.length,
-        abort_on_error_rate: 0.3,
-        account: parsed.account,
-        dedupe_by_name: bundle.campaign.dedupe_by_name,
-        tracking_params: tc?.TrackingParams,
-        sitelinks_set: bundle.campaign.sitelinks_set,
-        promo_extension: bundle.campaign.promo_extension,
-        bidding_strategy: tc?.BiddingStrategy as Record<string, unknown> | undefined,
-        declared_image_keys: declaredImageKeys.length > 0 ? declaredImageKeys : null,
-        autotargeting_per_group: buildAutotargetingPerGroup(bundle),
-        combinatorial_per_group: extractCombinatorialPools(bundle),
-      } as Parameters<typeof uploadCampaignBundle>[0]); // guardian: allow — Phase 3.5.D optional fields not in base type
+      const result = await uploadCampaignBundle(
+        buildBundleUploadInput(bundle, parsed, clientLogin, csvPath, siteUrl, declaredImageKeys) as Parameters<typeof uploadCampaignBundle>[0], // guardian: allow — Phase 3.5.D optional fields not in base type
+      );
 
+      const perGroupSummary = summarizePerGroupExtensions(bundle);
       return {
         content: [{
           type: "text" as const,
@@ -264,9 +492,15 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
               groups: bundle.groups.length,
               total_ads: bundle.groups.reduce((s, g) => s + g.ads.length, 0),
               total_keywords: bundle.groups.reduce((s, g) => s + g.keywords.length, 0),
-              has_sitelinks: !!bundle.campaign.sitelinks_set,
+              has_sitelinks: !!bundle.campaign.sitelinks_set
+                || perGroupSummary.groups_with_sitelinks_override.length > 0,
               has_promo: !!bundle.campaign.promo_extension,
               has_images: !!bundle.campaign.images && Object.keys(bundle.campaign.images).length > 0,
+              has_epk_settings: hasEpkSettings(bundle.campaign.epk_settings as EpkSettings | undefined),
+              groups_with_sitelinks_override: perGroupSummary.groups_with_sitelinks_override,
+              groups_with_callouts_override: perGroupSummary.groups_with_callouts_override,
+              unique_sitelinks_sets_to_create: perGroupSummary.unique_sitelinks_sets,
+              unique_callout_sets_to_create: perGroupSummary.unique_callout_sets,
             },
             pipeline_result: result,
           }, null, 2),
@@ -282,36 +516,9 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
     // and construct the correct acknowledge_live string — no mutations occur.
     if (parsed.confirm !== true || !parsed.plan_hash) {
       // Return the plan preview (same as dry_run=true) without creating any dependencies.
-      const ad_templates = extractAdTemplates(bundle);
-      const campaignStrategy = resolveCampaignStrategy(bundle);
-      const campaignType = resolveCampaignType(bundle);
-      const planResult = await uploadCampaignBundle({
-        csv_path: csvPath,
-        campaign_strategy: campaignStrategy,
-        campaign_type: campaignType,
-        site_url: siteUrl,
-        daily_budget_amount: camp.DailyBudget.Amount,
-        region_ids: regionIds,
-        bidding_strategy_type: biddingStrategyType,
-        metrika_counter_ids: counterIds,
-        metrika_goal_ids: goalIds,
-        ads_per_group: adsPerGroup,
-        ad_template_strategy: "agent-provided",
-        ad_templates,
-        dry_run: true,
-        canary_percent: 50,
-        max_clusters: bundle.groups.length,
-        abort_on_error_rate: 0.3,
-        account: parsed.account,
-        dedupe_by_name: bundle.campaign.dedupe_by_name,
-        tracking_params: tc?.TrackingParams,
-        sitelinks_set: bundle.campaign.sitelinks_set,
-        promo_extension: bundle.campaign.promo_extension,
-        bidding_strategy: tc?.BiddingStrategy as Record<string, unknown> | undefined,
-        declared_image_keys: declaredImageKeys.length > 0 ? declaredImageKeys : null,
-        autotargeting_per_group: buildAutotargetingPerGroup(bundle),
-        combinatorial_per_group: extractCombinatorialPools(bundle),
-      } as Parameters<typeof uploadCampaignBundle>[0]); // guardian: allow — Phase 3.5.D optional fields not in base type
+      const planResult = await uploadCampaignBundle(
+        buildBundleUploadInput(bundle, parsed, clientLogin, csvPath, siteUrl, declaredImageKeys) as Parameters<typeof uploadCampaignBundle>[0], // guardian: allow — Phase 3.5.D optional fields not in base type
+      );
 
       return {
         content: [{
@@ -333,38 +540,13 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
     // so no orphaned sitelinks/callouts/images are created on the live account.
     // Resolve the account to get the exact yandex_login for the ack check.
     const liveAcc = resolveAccount(SCOPES.DIRECT_API, parsed.account);
-    const liveLogin = liveAcc.yandex_login ?? liveAcc.label;
+    // Ack names the TARGET cabinet: sub-client login when uploading via agency Client-Login,
+    // the account's own login otherwise. Keep in sync with expectedAckLive in upload-pipeline.ts.
+    const liveLogin = parsed.client_login ?? (liveAcc.yandex_login ?? liveAcc.label);
     if (!validateLiveAck(parsed.acknowledge_live, liveLogin, parsed.plan_hash)) {
-      const ad_templates = extractAdTemplates(bundle);
-      const campaignStrategy = resolveCampaignStrategy(bundle);
-      const campaignType = resolveCampaignType(bundle);
-      const planResult2 = await uploadCampaignBundle({
-        csv_path: csvPath,
-        campaign_strategy: campaignStrategy,
-        campaign_type: campaignType,
-        site_url: siteUrl,
-        daily_budget_amount: camp.DailyBudget.Amount,
-        region_ids: regionIds,
-        bidding_strategy_type: biddingStrategyType,
-        metrika_counter_ids: counterIds,
-        metrika_goal_ids: goalIds,
-        ads_per_group: adsPerGroup,
-        ad_template_strategy: "agent-provided",
-        ad_templates,
-        dry_run: true,
-        canary_percent: 50,
-        max_clusters: bundle.groups.length,
-        abort_on_error_rate: 0.3,
-        account: parsed.account,
-        dedupe_by_name: bundle.campaign.dedupe_by_name,
-        tracking_params: tc?.TrackingParams,
-        sitelinks_set: bundle.campaign.sitelinks_set,
-        promo_extension: bundle.campaign.promo_extension,
-        bidding_strategy: tc?.BiddingStrategy as Record<string, unknown> | undefined,
-        declared_image_keys: declaredImageKeys.length > 0 ? declaredImageKeys : null,
-        autotargeting_per_group: buildAutotargetingPerGroup(bundle),
-        combinatorial_per_group: extractCombinatorialPools(bundle),
-      } as Parameters<typeof uploadCampaignBundle>[0]); // guardian: allow — Phase 3.5.D optional fields not in base type
+      const planResult2 = await uploadCampaignBundle(
+        buildBundleUploadInput(bundle, parsed, clientLogin, csvPath, siteUrl, declaredImageKeys) as Parameters<typeof uploadCampaignBundle>[0], // guardian: allow — Phase 3.5.D optional fields not in base type
+      );
 
       return {
         content: [{
@@ -385,36 +567,9 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
     // only checks the first 12 chars, so a wrong-but-prefix-matching hash would slip
     // through without this extra gate.
     {
-      const adTemplatesForCheck = extractAdTemplates(bundle);
-      const campaignStrategyForCheck = resolveCampaignStrategy(bundle);
-      const campaignTypeForCheck = resolveCampaignType(bundle);
-      const canonicalResult = await uploadCampaignBundle({
-        csv_path: csvPath,
-        campaign_strategy: campaignStrategyForCheck,
-        campaign_type: campaignTypeForCheck,
-        site_url: siteUrl,
-        daily_budget_amount: camp.DailyBudget.Amount,
-        region_ids: regionIds,
-        bidding_strategy_type: biddingStrategyType,
-        metrika_counter_ids: counterIds,
-        metrika_goal_ids: goalIds,
-        ads_per_group: adsPerGroup,
-        ad_template_strategy: "agent-provided",
-        ad_templates: adTemplatesForCheck,
-        dry_run: true,
-        canary_percent: 50,
-        max_clusters: bundle.groups.length,
-        abort_on_error_rate: 0.3,
-        account: parsed.account,
-        dedupe_by_name: bundle.campaign.dedupe_by_name,
-        tracking_params: tc?.TrackingParams,
-        sitelinks_set: bundle.campaign.sitelinks_set,
-        promo_extension: bundle.campaign.promo_extension,
-        bidding_strategy: tc?.BiddingStrategy as Record<string, unknown> | undefined,
-        declared_image_keys: declaredImageKeys.length > 0 ? declaredImageKeys : null,
-        autotargeting_per_group: buildAutotargetingPerGroup(bundle),
-        combinatorial_per_group: extractCombinatorialPools(bundle),
-      } as Parameters<typeof uploadCampaignBundle>[0]); // guardian: allow — Phase 3.5.D optional fields not in base type
+      const canonicalResult = await uploadCampaignBundle(
+        buildBundleUploadInput(bundle, parsed, clientLogin, csvPath, siteUrl, declaredImageKeys) as Parameters<typeof uploadCampaignBundle>[0], // guardian: allow — Phase 3.5.D optional fields not in base type
+      );
 
       const canonicalPlanHash = canonicalResult.plan_hash;
       if (parsed.plan_hash !== canonicalPlanHash) {
@@ -438,38 +593,47 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
       sitelinks_set_id?: number;
       promo_extension_id?: number;
       callout_ids: number[];
+      sitelinks_set_id_per_group: Record<string, number>;
+      callout_ids_per_group: Record<string, number[]>;
       image_hashes: Record<string, string>;
       dep_errors: string[];
-    } = { callout_ids: [], image_hashes: {}, dep_errors: [] };
+    } = {
+      callout_ids: [],
+      sitelinks_set_id_per_group: {},
+      callout_ids_per_group: {},
+      image_hashes: {},
+      dep_errors: [],
+    };
 
-    // 3a. Sitelinks set
+    // 3a. Sitelinks sets — campaign-level first, then per-group overrides.
+    //     Each UNIQUE sitelinks content (dedupe by JSON.stringify) is created exactly once;
+    //     groups sharing content (incl. content identical to campaign-level) reuse the Id.
+    const sitelinksIdByContent = new Map<string, number>();
     if (bundle.campaign.sitelinks_set) {
-      const sitelinksResult = await executeApiCall({
-        apiName: "direct",
-        endpoint: "/json/v5/sitelinks",
-        body: buildSitelinksSetPayload(bundle.campaign.sitelinks_set),
-        account: parsed.account,
-      });
-      if (!sitelinksResult.ok) {
-        context.dep_errors.push(`sitelinks creation failed: HTTP error`);
+      const created = await createSitelinksSetLive(bundle.campaign.sitelinks_set, parsed.account, clientLogin);
+      if (created.id === undefined) {
+        context.dep_errors.push(created.error ?? "sitelinks creation: no Id returned");
       } else {
-        // Direct API returns nested result; shape is opaque at this layer
-        const data = sitelinksResult.data as Record<string, unknown>; // guardian: allow — Direct API response is untyped JSON
-        const result = data?.["result"] as Record<string, unknown> | undefined;
-        const addResults = result?.["AddResults"] as Array<Record<string, unknown>> | undefined;
-        const firstItem = addResults?.[0];
-        const errors = firstItem?.["Errors"] as Array<Record<string, unknown>> | undefined;
-        if (errors && errors.length > 0) {
-          const msg = errors.map((e) => e?.["Message"] ?? JSON.stringify(e)).join("; ");
-          context.dep_errors.push(`sitelinks creation failed: ${msg}`);
-        } else {
-          const id = firstItem?.["Id"];
-          context.sitelinks_set_id = typeof id === "number" ? id : undefined;
-          if (context.sitelinks_set_id === undefined) {
-            context.dep_errors.push("sitelinks creation: no Id returned");
-          }
-        }
+        context.sitelinks_set_id = created.id;
+        sitelinksIdByContent.set(JSON.stringify(bundle.campaign.sitelinks_set), created.id);
       }
+    }
+    for (const g of bundle.groups) {
+      if (!g.sitelinks_set) continue;
+      const contentKey = JSON.stringify(g.sitelinks_set);
+      let sitelinksId = sitelinksIdByContent.get(contentKey);
+      if (sitelinksId === undefined) {
+        const created = await createSitelinksSetLive(g.sitelinks_set, parsed.account, clientLogin);
+        if (created.id === undefined) {
+          context.dep_errors.push(
+            `group "${g.group.Name}": ${created.error ?? "sitelinks creation: no Id returned"}`
+          );
+          continue;
+        }
+        sitelinksId = created.id;
+        sitelinksIdByContent.set(contentKey, sitelinksId);
+      }
+      context.sitelinks_set_id_per_group[groupClusterKey(g)] = sitelinksId;
     }
 
     // 3b. Promo extension
@@ -479,60 +643,60 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
         endpoint: "/json/v5/adextensions",
         body: buildPromoExtensionPayload(bundle.campaign.promo_extension.AdExtension),
         account: parsed.account,
+        client_login: clientLogin,
       });
       if (!promoResult.ok) {
         context.dep_errors.push(`promo extension creation failed: HTTP error`);
       } else {
         const data = promoResult.data as Record<string, unknown>; // guardian: allow — Direct API response is untyped JSON
-        const result = data?.["result"] as Record<string, unknown> | undefined;
-        const addResults = result?.["AddResults"] as Array<Record<string, unknown>> | undefined;
-        const firstItem = addResults?.[0];
-        const errors = firstItem?.["Errors"] as Array<Record<string, unknown>> | undefined;
-        if (errors && errors.length > 0) {
-          const msg = errors.map((e) => e?.["Message"] ?? JSON.stringify(e)).join("; ");
-          context.dep_errors.push(`promo extension creation failed: ${msg}`);
+        const promoApiErr = topLevelApiError(data);
+        if (promoApiErr) {
+          context.dep_errors.push(`promo extension creation failed: ${promoApiErr}`);
         } else {
-          const id = firstItem?.["Id"];
-          context.promo_extension_id = typeof id === "number" ? id : undefined;
-          if (context.promo_extension_id === undefined) {
-            context.dep_errors.push("promo extension creation: no Id returned");
+          const result = data?.["result"] as Record<string, unknown> | undefined;
+          const addResults = result?.["AddResults"] as Array<Record<string, unknown>> | undefined;
+          const firstItem = addResults?.[0];
+          const errors = firstItem?.["Errors"] as Array<Record<string, unknown>> | undefined;
+          if (errors && errors.length > 0) {
+            const msg = errors.map((e) => e?.["Message"] ?? JSON.stringify(e)).join("; ");
+            context.dep_errors.push(`promo extension creation failed: ${msg}`);
+          } else {
+            const id = firstItem?.["Id"];
+            context.promo_extension_id = typeof id === "number" ? id : undefined;
+            if (context.promo_extension_id === undefined) {
+              context.dep_errors.push("promo extension creation: no Id returned");
+            }
           }
         }
       }
     }
 
-    // 3c. Callouts (Уточнения) — per naming map §5.2: POST /json/v5/adextensions with type CALLOUT
-    //     IDs are wired at ad level via TextAd.AdExtensions.Items / TextImageAd.AdExtensions.Items
+    // 3c. Callouts (Уточнения) — per naming map §5.2: POST /json/v5/adextensions with type CALLOUT.
+    //     IDs are wired at ad level via TextAd.AdExtensions.Items / TextImageAd.AdExtensions.Items.
+    //     Campaign-level first, then per-group overrides (unique text sets created once).
+    const calloutIdsByContent = new Map<string, number[]>();
     if (bundle.campaign.callouts && bundle.campaign.callouts.length > 0) {
-      const calloutResult = await executeApiCall({
-        apiName: "direct",
-        endpoint: "/json/v5/adextensions",
-        body: buildCalloutPayload({ callout_texts: bundle.campaign.callouts }),
-        account: parsed.account,
-      });
-      if (!calloutResult.ok) {
-        context.dep_errors.push(`callouts creation failed: HTTP error`);
-      } else {
-        const data = calloutResult.data as Record<string, unknown>; // guardian: allow — Direct API response is untyped JSON
-        const result = data?.["result"] as Record<string, unknown> | undefined;
-        const addResults = result?.["AddResults"] as Array<Record<string, unknown>> | undefined;
-        if (addResults) {
-          for (const item of addResults) {
-            const errors = item?.["Errors"] as Array<Record<string, unknown>> | undefined;
-            if (errors && errors.length > 0) {
-              const msg = errors.map((e) => e?.["Message"] ?? JSON.stringify(e)).join("; ");
-              context.dep_errors.push(`callout creation failed: ${msg}`);
-            } else {
-              const id = item?.["Id"];
-              if (typeof id === "number") {
-                context.callout_ids.push(id);
-              } else {
-                context.dep_errors.push("callout creation: item returned no Id");
-              }
-            }
-          }
-        }
+      const created = await createCalloutsLive(bundle.campaign.callouts, parsed.account, clientLogin);
+      context.dep_errors.push(...created.errors);
+      context.callout_ids.push(...created.ids);
+      if (created.errors.length === 0) {
+        calloutIdsByContent.set(JSON.stringify(bundle.campaign.callouts), created.ids);
       }
+    }
+    for (const g of bundle.groups) {
+      if (!g.callouts || g.callouts.length === 0) continue;
+      const contentKey = JSON.stringify(g.callouts);
+      let groupCalloutIds = calloutIdsByContent.get(contentKey);
+      if (groupCalloutIds === undefined) {
+        const created = await createCalloutsLive(g.callouts, parsed.account, clientLogin);
+        if (created.errors.length > 0) {
+          context.dep_errors.push(...created.errors.map((e) => `group "${g.group.Name}": ${e}`));
+          continue;
+        }
+        groupCalloutIds = created.ids;
+        calloutIdsByContent.set(contentKey, groupCalloutIds);
+      }
+      context.callout_ids_per_group[groupClusterKey(g)] = groupCalloutIds;
     }
 
     // 3d. Images
@@ -540,7 +704,7 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
     if (bundle.campaign.images) {
       for (const [name, imgDef] of Object.entries(bundle.campaign.images)) {
         // imgDef shape: { source, url?, path?, base64? } — map to runDirectUploadImage input
-        let uploadInput: { url?: string; file_path?: string; base64?: string; account?: string };
+        let uploadInput: { url?: string; file_path?: string; base64?: string; account?: string; client_login?: string };
 
         if (imgDef.path) {
           // Normalize local file images (aspect ratio fix for Yandex 16:9 requirement)
@@ -558,10 +722,10 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
             skippedImages.push(`${name}: ${norm.reason}`);
             continue;
           } else if (norm.action === "resized") {
-            uploadInput = { base64: norm.base64, account: parsed.account };
+            uploadInput = { base64: norm.base64, account: parsed.account, client_login: clientLogin };
           } else {
             // asis
-            uploadInput = { file_path: imgDef.path, account: parsed.account };
+            uploadInput = { file_path: imgDef.path, account: parsed.account, client_login: clientLogin };
           }
         } else {
           uploadInput = {
@@ -569,6 +733,7 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
             file_path: imgDef.path,
             base64: imgDef.base64,
             account: parsed.account,
+            client_login: clientLogin,
           };
         }
 
@@ -580,7 +745,23 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
           if (typeof hash === "string") {
             context.image_hashes[name] = hash;
           } else {
-            context.dep_errors.push(`image upload failed for "${name}": no ad_image_hash in response`);
+            let detail = "";
+            if (typeof parsed_img?.["error"] === "string") {
+              detail = parsed_img["error"];
+              if (parsed_img?.["details"]) {
+                detail += ` — details: ${JSON.stringify(parsed_img["details"])}`;
+              }
+              if (parsed_img?.["errors"]) {
+                detail += ` — errors: ${JSON.stringify(parsed_img["errors"])}`;
+              }
+            } else if (parsed_img?.["errors"]) {
+              detail = `errors: ${JSON.stringify(parsed_img["errors"])}`;
+            } else if (parsed_img?.["details"]) {
+              detail = `details: ${JSON.stringify(parsed_img["details"])}`;
+            } else {
+              detail = firstContent.text.slice(0, 300);
+            }
+            context.dep_errors.push(`image upload failed for "${name}": no ad_image_hash in response — ${detail}`);
           }
         } else {
           context.dep_errors.push(`image upload failed for "${name}": unexpected response shape`);
@@ -612,54 +793,52 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
       image_hashes: context.image_hashes,
     });
 
-    // 5. Run upload pipeline with live params
-    const resolvedCamp = resolved.campaign.campaign;
-    const resolvedTc = resolvedCamp.TextCampaign;
-    const resolvedBiddingStrategy = extractBiddingStrategy(resolvedTc);
-    const resolvedGoalIds = resolvedTc?.PriorityGoals?.Items?.map((g) => g.GoalId);
-    const ad_templates = extractAdTemplates(resolved);
-    const campaignStrategy = resolveCampaignStrategy(resolved);
-
-    const resolvedCampaignType = resolveCampaignType(resolved);
+    // 5. Run upload pipeline with live params.
+    // Shared inputs come from buildBundleUploadInput(resolved, ...) — the SAME
+    // derivation the dry-run/plan-hash sites use, so the live plan_hash matches the
+    // approved dry-run. We then override dry_run and add the live-only fields
+    // (confirm gate + pre-created IDs/hashes). buildBundleUploadInput already sets
+    // bidding_strategy / sitelinks_set / callouts CONTENT etc. from the resolved
+    // bundle, exactly as the old inline object did.
     const pipelineResult = await uploadCampaignBundle({
-      csv_path: csvPath,
-      campaign_strategy: campaignStrategy,
-      campaign_type: resolvedCampaignType,
-      site_url: siteUrl,
-      daily_budget_amount: resolvedCamp.DailyBudget.Amount,
-      region_ids: resolved.groups[0]?.group.RegionIds ?? [213],
-      bidding_strategy_type: resolvedBiddingStrategy,
-      metrika_counter_ids: resolvedTc?.CounterIds?.Items,
-      metrika_goal_ids: resolvedGoalIds,
-      ads_per_group: resolved.groups[0]?.ads.length ?? 1,
-      ad_template_strategy: "agent-provided",
-      ad_templates,
+      ...buildBundleUploadInput(resolved, parsed, clientLogin, csvPath, siteUrl, declaredImageKeys),
       dry_run: false,
-      canary_percent: 50,
-      max_clusters: resolved.groups.length,
-      abort_on_error_rate: 0.3,
       plan_hash: parsed.plan_hash,
       confirm: parsed.confirm,
       acknowledge_live: parsed.acknowledge_live,
       canary_passed: parsed.canary_passed,
       continuation_ack: parsed.continuation_ack,
-      account: parsed.account,
-      dedupe_by_name: resolved.campaign.dedupe_by_name,
-      tracking_params: resolvedTc?.TrackingParams,
-      sitelinks_set: resolved.campaign.sitelinks_set,
-      promo_extension: resolved.campaign.promo_extension,
       // F6 wiring — pass pre-created IDs/hashes to the pipeline
       image_hashes: context.image_hashes,
+      // Per-group images: resolve each group's ${img_key} refs → uploaded AdImageHashes.
+      image_hashes_per_group: extractImageHashesPerGroup(bundle, context.image_hashes),
       sitelinks_set_id: context.sitelinks_set_id,
       callout_ids: context.callout_ids.length > 0 ? context.callout_ids : undefined,
-      // Pass the resolved bundle's BiddingStrategy verbatim to bypass reconstruction.
-      // Path: resolved.campaign.campaign.TextCampaign?.BiddingStrategy
-      bidding_strategy: resolvedTc?.BiddingStrategy as Record<string, unknown> | undefined,
-      // Use declared image keys (stable at both dry-run and live time) for plan_hash consistency.
-      declared_image_keys: declaredImageKeys.length > 0 ? declaredImageKeys : null,
-      autotargeting_per_group: buildAutotargetingPerGroup(resolved),
-      combinatorial_per_group: extractCombinatorialPools(resolved),
+      // Per-group overrides — groups present in the maps use these ids; others
+      // fall back to the campaign-level sitelinks_set_id / callout_ids above.
+      sitelinks_set_id_per_group: Object.keys(context.sitelinks_set_id_per_group).length > 0
+        ? context.sitelinks_set_id_per_group
+        : undefined,
+      callout_ids_per_group: Object.keys(context.callout_ids_per_group).length > 0
+        ? context.callout_ids_per_group
+        : undefined,
     } as Parameters<typeof uploadCampaignBundle>[0]); // guardian: allow — Phase 3.5.D optional fields not in base type
+
+    // 6. Apply optional ЕПК campaign settings (epk_settings) POST-CREATE to every
+    //    campaign the pipeline created — excluded_sites / attribution / schedule /
+    //    notification / settings / campaign negative keywords + bid_modifiers
+    //    (корректировки). Additive & non-fatal: failures are reported, not thrown.
+    const epkSettings = resolved.campaign.epk_settings as EpkSettings | undefined;
+    let epkSettingsApplied: Awaited<ReturnType<typeof applyEpkCampaignSettings>>[] | undefined;
+    const createdCampaignIds = (pipelineResult as { campaigns_created?: number[] })?.campaigns_created ?? [];
+    if (hasEpkSettings(epkSettings) && createdCampaignIds.length > 0) {
+      epkSettingsApplied = [];
+      for (const cid of createdCampaignIds) {
+        epkSettingsApplied.push(
+          await applyEpkCampaignSettings({ campaign_id: cid, settings: epkSettings!, account: parsed.account, client_login: clientLogin }),
+        );
+      }
+    }
 
     return {
       content: [{
@@ -670,10 +849,13 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
             sitelinks_set_id: context.sitelinks_set_id,
             promo_extension_id: context.promo_extension_id,
             callout_ids: context.callout_ids,
+            sitelinks_set_id_per_group: context.sitelinks_set_id_per_group,
+            callout_ids_per_group: context.callout_ids_per_group,
             images_uploaded: Object.keys(context.image_hashes),
           },
           dep_errors: context.dep_errors.length > 0 ? context.dep_errors : undefined,
           pipeline_result: pipelineResult,
+          epk_settings_applied: epkSettingsApplied,
         }, null, 2),
       }],
     };

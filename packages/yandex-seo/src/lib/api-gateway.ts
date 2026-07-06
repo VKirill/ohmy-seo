@@ -3,6 +3,7 @@ import { buildUrl } from "./api/url-builder.js";
 import { resolveAccount } from "./account-resolver.js";
 import { getAccessToken } from "./oauth/token-broker.js";
 import { request } from "@ohmy-seo/mcp-core/http";
+import { parseJsonSafe } from "@ohmy-seo/mcp-core";
 import { AuthError, RateLimitError, ApiError } from "@ohmy-seo/mcp-core/errors";
 import { withCache, type CacheableTool } from "@ohmy-seo/mcp-core/cache";
 import { invalidateOnWrite } from "./api/invalidation.js";
@@ -24,7 +25,8 @@ export type ExecuteResult =
 
 function tryJson(raw: string): unknown {
   try {
-    return JSON.parse(raw);
+    // big-int-safe: error bodies may carry large ids / request_ids
+    return parseJsonSafe(raw);
   } catch {
     return raw;
   }

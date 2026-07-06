@@ -8,6 +8,7 @@ const InputSchema = z.object({
   confirm: z.boolean().describe("Must be true — explicit intent confirmation required"),
   acknowledge_live: z.string().describe("Exact ack string: I-UNDERSTAND-RESUME-LIVE:<account>:<sorted_ids_csv>"),
   account: z.string().min(1).optional().describe("Account label from list_accounts (optional if a default account is configured)"),
+  client_login: z.string().optional().describe("Yandex Direct agency client login for sub-client access (optional)"),
 });
 
 type ResumeCampaignsInput = z.infer<typeof InputSchema>;
@@ -40,6 +41,7 @@ export async function runDirectResumeCampaigns(input: ResumeCampaignsInput) {
         params: { SelectionCriteria: { Ids: parsed.campaign_ids } },
       },
       account: parsed.account,
+      client_login: parsed.client_login,
     });
 
     if (!result.ok) {

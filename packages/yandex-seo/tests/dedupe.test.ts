@@ -14,11 +14,9 @@ vi.mock("../src/lib/bundle-ledger.js", () => ({
   openLedger: vi.fn(),
 }));
 vi.mock("../src/lib/payload-builder.js", () => ({
-  buildCampaignPayload: vi.fn(),
+  buildUnifiedCampaignPayload: vi.fn().mockReturnValue({ method: "add", params: { Campaigns: [{}] } }),
   buildAdGroupPayload: vi.fn(),
   buildKeywordPayload: vi.fn(),
-  buildAdTgoPayload: vi.fn(),
-  buildAdRsyaPayload: vi.fn(),
   buildImageUploadPayload: vi.fn(),
   buildMetrikaUpdatePayload: vi.fn(),
   buildAutoTargetingUpdatePayload: vi.fn().mockReturnValue({ method: "update", params: { Keywords: [{}] } }),
@@ -40,10 +38,8 @@ import { resolveAccount } from "../src/lib/account-resolver.js";
 import { parseKeyCollectorCsv } from "../src/lib/csv-parser.js";
 import { openLedger } from "../src/lib/bundle-ledger.js";
 import {
-  buildCampaignPayload,
   buildAdGroupPayload,
   buildKeywordPayload,
-  buildAdTgoPayload,
 } from "../src/lib/payload-builder.js";
 
 // ---------------------------------------------------------------------------
@@ -83,10 +79,8 @@ describe("uploadCampaignBundle dedupe_by_name", () => {
   const mockResolveAccount = vi.mocked(resolveAccount);
   const mockParseCsv = vi.mocked(parseKeyCollectorCsv);
   const mockOpenLedger = vi.mocked(openLedger);
-  const mockBuildCampaignPayload = vi.mocked(buildCampaignPayload);
   const mockBuildAdGroupPayload = vi.mocked(buildAdGroupPayload);
   const mockBuildKeywordPayload = vi.mocked(buildKeywordPayload);
-  const mockBuildAdTgoPayload = vi.mocked(buildAdTgoPayload);
 
   // Minimal shared input fields
   const baseInput = {
@@ -139,10 +133,8 @@ describe("uploadCampaignBundle dedupe_by_name", () => {
 
     mockOpenLedger.mockResolvedValue(mockLedger as unknown as Awaited<ReturnType<typeof openLedger>>);
 
-    mockBuildCampaignPayload.mockReturnValue({ method: "add", params: { Campaigns: [{}] as [unknown] } });
     mockBuildAdGroupPayload.mockReturnValue({ method: "add", params: { AdGroups: [{}] as [unknown] } });
     mockBuildKeywordPayload.mockReturnValue({ method: "add", params: { Keywords: [{}] as [unknown] } });
-    mockBuildAdTgoPayload.mockReturnValue({ method: "add", params: { Ads: [{}] as [unknown] } });
   });
 
   it("dedupe_by_name=true: skips Campaigns.add when existing campaign matches by name", async () => {
@@ -204,7 +196,7 @@ describe("uploadCampaignBundle dedupe_by_name", () => {
         };
       }
       // Ads.add
-      if (opts.endpoint === "/json/v5/ads") {
+      if (opts.endpoint === "/json/v501/ads") {
         return {
           ok: true, status: 200,
           data: { result: { AddResults: [{ Id: 7001 }] } },
@@ -217,13 +209,19 @@ describe("uploadCampaignBundle dedupe_by_name", () => {
 
     // We need a valid plan_hash + acknowledge_live — compute them by doing a dry run first.
     // dedupe_by_name must be the same in dry_run and live so the hash matches.
-    const dryResult = await uploadCampaignBundle({ ...baseInput, dry_run: true, dedupe_by_name: true });
+    const dryResult = await uploadCampaignBundle({
+      ...baseInput,
+      dry_run: true,
+      dedupe_by_name: true,
+      client_login: "subclient-login",
+    });
     const planHash = dryResult.plan_hash!;
     const ackLive = dryResult.expected_ack_live!;
 
     const result = await uploadCampaignBundle({
       ...baseInput,
       dedupe_by_name: true,
+      client_login: "subclient-login",
       plan_hash: planHash,
       acknowledge_live: ackLive,
     });
@@ -232,9 +230,19 @@ describe("uploadCampaignBundle dedupe_by_name", () => {
     const campaignAddCalls = mockExecuteApiCall.mock.calls.filter((args) => {
       const opts = args[0] as unknown as Record<string, unknown>;
       const body = opts["body"] as Record<string, unknown> | undefined;
-      return opts["endpoint"] === "/json/v5/campaigns" && body?.["method"] !== "get";
+      return opts["endpoint"] === "/json/v501/campaigns";
     });
     expect(campaignAddCalls).toHaveLength(0);
+
+    // Every live Direct API call must carry Client-Login when the upload input has it.
+    expect(mockExecuteApiCall.mock.calls).toEqual(
+      expect.arrayContaining([
+        [expect.objectContaining({ endpoint: "/json/v5/campaigns", client_login: "subclient-login" })],
+        [expect.objectContaining({ endpoint: "/json/v5/adgroups", client_login: "subclient-login" })],
+        [expect.objectContaining({ endpoint: "/json/v5/keywords", client_login: "subclient-login" })],
+        [expect.objectContaining({ endpoint: "/json/v501/ads", client_login: "subclient-login" })],
+      ])
+    );
 
     // The result should contain Id=999 as a reused campaign (it won't be in campaigns_created
     // since we didn't create it — ad_groups should be created under campaign 999)
@@ -256,7 +264,7 @@ describe("uploadCampaignBundle dedupe_by_name", () => {
         };
       }
       // Campaigns.add — should be called because ARCHIVED is skipped
-      if (opts.endpoint === "/json/v5/campaigns") {
+      if (opts.endpoint === "/json/v501/campaigns") {
         return {
           ok: true, status: 200,
           data: { result: { AddResults: [{ Id: 998 }] } },
@@ -276,7 +284,7 @@ describe("uploadCampaignBundle dedupe_by_name", () => {
         }
         return { ok: true, status: 200, data: { result: { AddResults: [{ Id: 6010 }] } }, body: {} };
       }
-      if (opts.endpoint === "/json/v5/ads") {
+      if (opts.endpoint === "/json/v501/ads") {
         return { ok: true, status: 200, data: { result: { AddResults: [{ Id: 7010 }] } }, body: {} };
       }
       return { ok: false, status: 500, body: { error: "unexpected" } };
@@ -294,7 +302,7 @@ describe("uploadCampaignBundle dedupe_by_name", () => {
     const campaignAddCalls = mockExecuteApiCall.mock.calls.filter((args) => {
       const opts = args[0] as unknown as Record<string, unknown>;
       const body = opts["body"] as Record<string, unknown> | undefined;
-      return opts["endpoint"] === "/json/v5/campaigns" && body?.["method"] !== "get";
+      return opts["endpoint"] === "/json/v501/campaigns";
     });
     expect(campaignAddCalls.length).toBeGreaterThanOrEqual(1);
     expect(result.campaigns_created).toContain(998);
@@ -325,7 +333,7 @@ describe("uploadCampaignBundle dedupe_by_name", () => {
         }
         return { ok: true, status: 200, data: { result: { AddResults: [{ Id: 6011 }] } }, body: {} };
       }
-      if (opts.endpoint === "/json/v5/ads") {
+      if (opts.endpoint === "/json/v501/ads") {
         return { ok: true, status: 200, data: { result: { AddResults: [{ Id: 7011 }] } }, body: {} };
       }
       return { ok: false, status: 500, body: { error: "unexpected" } };
@@ -348,7 +356,7 @@ describe("uploadCampaignBundle dedupe_by_name", () => {
 
     mockExecuteApiCall.mockImplementation(async (opts: ExecuteOpts) => {
       const endpoint = opts.endpoint;
-      if (endpoint === "/json/v5/campaigns") {
+      if (endpoint === "/json/v501/campaigns") {
         return {
           ok: true, status: 200,
           data: { result: { AddResults: [{ Id: 888 }] } },
@@ -368,7 +376,7 @@ describe("uploadCampaignBundle dedupe_by_name", () => {
         }
         return { ok: true, status: 200, data: { result: { AddResults: [{ Id: 6002 }] } }, body: {} };
       }
-      if (endpoint === "/json/v5/ads") {
+      if (endpoint === "/json/v501/ads") {
         return { ok: true, status: 200, data: { result: { AddResults: [{ Id: 7002 }] } }, body: {} };
       }
       return { ok: false, status: 500, body: { error: "unexpected" } };
@@ -388,7 +396,7 @@ describe("uploadCampaignBundle dedupe_by_name", () => {
     // Campaigns.add should have been called (no pre-fetch, no dedupe check)
     const campaignAddCalls = mockExecuteApiCall.mock.calls.filter((args) => {
       const opts = args[0] as unknown as Record<string, unknown>;
-      return (opts["endpoint"] as string) === "/json/v5/campaigns";
+      return (opts["endpoint"] as string) === "/json/v501/campaigns";
     });
     expect(campaignAddCalls.length).toBeGreaterThanOrEqual(1);
 
@@ -488,10 +496,8 @@ describe("uploadCampaignBundle — ad errors surfaced in result.errors", () => {
   const mockResolveAccount2 = vi.mocked(resolveAccount);
   const mockParseCsv2 = vi.mocked(parseKeyCollectorCsv);
   const mockOpenLedger2 = vi.mocked(openLedger);
-  const mockBuildCampaignPayload2 = vi.mocked(buildCampaignPayload);
   const mockBuildAdGroupPayload2 = vi.mocked(buildAdGroupPayload);
   const mockBuildKeywordPayload2 = vi.mocked(buildKeywordPayload);
-  const mockBuildAdTgoPayload2 = vi.mocked(buildAdTgoPayload);
 
   const baseInputAds = {
     csv_path: "/fake/ads.csv",
@@ -530,17 +536,15 @@ describe("uploadCampaignBundle — ad errors surfaced in result.errors", () => {
       clusters: clusterMapAds, sha256: "aabbcc", total_clusters: 1, total_rows: 1, encoding_used: "utf-8-sig",
     } as unknown as ReturnType<typeof parseKeyCollectorCsv>);
     mockOpenLedger2.mockResolvedValue(mockLedger2 as unknown as Awaited<ReturnType<typeof openLedger>>);
-    mockBuildCampaignPayload2.mockReturnValue({ method: "add", params: { Campaigns: [{}] as [unknown] } });
     mockBuildAdGroupPayload2.mockReturnValue({ method: "add", params: { AdGroups: [{}] as [unknown] } });
     mockBuildKeywordPayload2.mockReturnValue({ method: "add", params: { Keywords: [{}] as [unknown] } });
-    mockBuildAdTgoPayload2.mockReturnValue({ method: "add", params: { Ads: [{}] as [unknown] } });
   });
 
   it("TGO error_code=8000 IS surfaced in state.errors", async () => {
     const { uploadCampaignBundle } = await import("../src/lib/upload-pipeline.js");
 
     mockExecuteApiCall2.mockImplementation(async (opts: ExecuteOpts) => {
-      if (opts.endpoint === "/json/v5/campaigns") {
+      if (opts.endpoint === "/json/v501/campaigns") {
         return { ok: true, status: 200, data: { result: { AddResults: [{ Id: 900 }] } }, body: {} };
       }
       if (opts.endpoint === "/json/v5/adgroups") {
@@ -557,7 +561,7 @@ describe("uploadCampaignBundle — ad errors surfaced in result.errors", () => {
         return { ok: true, status: 200, data: { result: { AddResults: [{ Id: 6100 }] } }, body: {} };
       }
       // TGO ad fails with code 8000
-      if (opts.endpoint === "/json/v5/ads") {
+      if (opts.endpoint === "/json/v501/ads") {
         return {
           ok: false, status: 200,
           body: { error: { error_code: 8000, error_string: "Validation error" } },
@@ -578,6 +582,54 @@ describe("uploadCampaignBundle — ad errors surfaced in result.errors", () => {
     expect(adErrors.length).toBeGreaterThan(0);
     expect(adErrors[0].error).toContain("8000");
   });
+
+  it("TGO top-level Direct {error} response is surfaced instead of blind id_extraction_failed", async () => {
+    const { uploadCampaignBundle } = await import("../src/lib/upload-pipeline.js");
+
+    mockExecuteApiCall2.mockImplementation(async (opts: ExecuteOpts) => {
+      if (opts.endpoint === "/json/v501/campaigns") {
+        return { ok: true, status: 200, data: { result: { AddResults: [{ Id: 901 }] } }, body: {} };
+      }
+      if (opts.endpoint === "/json/v5/adgroups") {
+        return { ok: true, status: 200, data: { result: { AddResults: [{ Id: 5101 }] } }, body: {} };
+      }
+      if (opts.endpoint === "/json/v5/keywords") {
+        const kwBodyTgo = opts.body as Record<string, unknown> | undefined;
+        if (kwBodyTgo?.["method"] === "get") {
+          return { ok: true, status: 200, data: { result: { Keywords: [{ Id: 9101, Keyword: "---autotargeting" }] } }, body: {} };
+        }
+        if (kwBodyTgo?.["method"] === "update") {
+          return { ok: true, status: 200, data: { result: { UpdateResults: [{ Id: 9101, Errors: [] }] } }, body: {} };
+        }
+        return { ok: true, status: 200, data: { result: { AddResults: [{ Id: 6101 }] } }, body: {} };
+      }
+      if (opts.endpoint === "/json/v501/ads") {
+        return {
+          ok: true,
+          status: 200,
+          data: { error: { error_code: 8000, error_string: "Invalid request", error_detail: "bad Ads.add field" } },
+          body: {},
+        };
+      }
+      return { ok: false, status: 500, body: { error: "unexpected" } };
+    });
+
+    const dryResult = await uploadCampaignBundle({ ...baseInputAds, dry_run: true });
+    const result = await uploadCampaignBundle({
+      ...baseInputAds,
+      plan_hash: dryResult.plan_hash!,
+      acknowledge_live: dryResult.expected_ack_live!,
+    });
+
+    const adErrors = result.errors.filter((e) => e.step === "ad_create");
+    expect(adErrors).toHaveLength(1);
+    expect(adErrors[0].error).toContain("Direct API error 8000");
+    expect(adErrors[0].error).toContain("bad Ads.add field");
+    expect(mockLedger2.writeFailed).toHaveBeenCalledWith(
+      "ad_combinatorial:cl02",
+      expect.stringContaining("Direct API error 8000")
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -589,10 +641,8 @@ describe("uploadCampaignBundle — Stage 2 aborts on error rate", () => {
   const mockResolveAccountS2 = vi.mocked(resolveAccount);
   const mockParseCsvS2 = vi.mocked(parseKeyCollectorCsv);
   const mockOpenLedgerS2 = vi.mocked(openLedger);
-  const mockBuildCampaignPayloadS2 = vi.mocked(buildCampaignPayload);
   const mockBuildAdGroupPayloadS2 = vi.mocked(buildAdGroupPayload);
   const mockBuildKeywordPayloadS2 = vi.mocked(buildKeywordPayload);
-  const mockBuildAdTgoPayloadS2 = vi.mocked(buildAdTgoPayload);
 
   // Two clusters: one canary + one bulk
   const twoClusters = new Map([
@@ -633,10 +683,8 @@ describe("uploadCampaignBundle — Stage 2 aborts on error rate", () => {
       clusters: twoClusters, sha256: "s2hash", total_clusters: 2, total_rows: 2, encoding_used: "utf-8-sig",
     } as unknown as ReturnType<typeof parseKeyCollectorCsv>);
     mockOpenLedgerS2.mockResolvedValue(mockLedgerS2 as unknown as Awaited<ReturnType<typeof openLedger>>);
-    mockBuildCampaignPayloadS2.mockReturnValue({ method: "add", params: { Campaigns: [{}] as [unknown] } });
     mockBuildAdGroupPayloadS2.mockReturnValue({ method: "add", params: { AdGroups: [{}] as [unknown] } });
     mockBuildKeywordPayloadS2.mockReturnValue({ method: "add", params: { Keywords: [{}] as [unknown] } });
-    mockBuildAdTgoPayloadS2.mockReturnValue({ method: "add", params: { Ads: [{}] as [unknown] } });
   });
 
   it("Stage 2: result.stage is 'bulk_aborted' (not 'completed') when error rate exceeds threshold", async () => {
@@ -649,7 +697,7 @@ describe("uploadCampaignBundle — Stage 2 aborts on error rate", () => {
     mockExecuteApiCallS2.mockImplementation(async (opts: ExecuteOpts) => {
       // Phase 1: canary — all OK
       if (!s2Phase) {
-        if (opts.endpoint === "/json/v5/campaigns") {
+        if (opts.endpoint === "/json/v501/campaigns") {
           return { ok: true, status: 200, data: { result: { AddResults: [{ Id: 800 }] } }, body: {} };
         }
         if (opts.endpoint === "/json/v5/adgroups") {
@@ -665,7 +713,7 @@ describe("uploadCampaignBundle — Stage 2 aborts on error rate", () => {
           }
           return { ok: true, status: 200, data: { result: { AddResults: [{ Id: 6200 }] } }, body: {} };
         }
-        if (opts.endpoint === "/json/v5/ads") {
+        if (opts.endpoint === "/json/v501/ads") {
           return { ok: true, status: 200, data: { result: { AddResults: [{ Id: 7200 }] } }, body: {} };
         }
       }
@@ -696,8 +744,9 @@ describe("uploadCampaignBundle — Stage 2 aborts on error rate", () => {
     // so Stage 2 continuation_ack validation passes
     const priorCommitted = Array.from({ length: committedCount }, (_, i) => ({
       state: "committed" as const,
-      op: i === 0 ? "campaign" : i === 1 ? "ad_group" : i === 2 ? "keyword" : "ad_tgo",
-      signature: `sig-${i}`,
+      // Historical ledger committed rows write op=""; Stage 2 must restore from signature prefix.
+      op: "",
+      signature: i === 0 ? "campaign:cluster-c1" : i === 1 ? "adgroup:c1" : i === 2 ? "keyword:c1:kw1" : "ad_combinatorial:c1",
       returned_id: i === 2 ? undefined : 10000 + i, // keyword has no returned_id number
     }));
     mockLedgerS2.readAll.mockResolvedValue(priorCommitted as never);

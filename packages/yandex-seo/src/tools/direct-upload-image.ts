@@ -3,6 +3,7 @@ import path from "node:path";
 import { executeApiCall } from "../lib/api-gateway.js";
 import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
 import { z } from "zod";
+import { normalizeAdImageBuffer } from "../lib/image-normalize.js";
 
 const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
 
@@ -12,6 +13,7 @@ const InputSchema = z
     file_path: z.string().optional().describe("Absolute path to a local image file (JPEG or PNG, ≤ 10 MB)"),
     base64: z.string().optional().describe("Base64-encoded image data (JPEG or PNG, ≤ 10 MB decoded)"),
     account: z.string().optional().describe("Account label from list_accounts (optional if a default account is configured)"),
+    client_login: z.string().optional().describe("Yandex Direct agency client login for sub-client access (optional)"),
   })
   .refine(
     (d) => [d.url, d.file_path, d.base64].filter(Boolean).length === 1,
@@ -143,7 +145,31 @@ export async function runDirectUploadImage(input: z.infer<typeof InputSchema>) {
       }
     }
 
-    const imageData = imageBuffer.toString("base64");
+    const norm = await normalizeAdImageBuffer(imageBuffer);
+    let imageData: string;
+    let isNormalized = false;
+    let normWidth: number | undefined;
+    let normHeight: number | undefined;
+    let normFormat: "jpg" | "png" | undefined;
+
+    if (norm.action === "skip") {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({ error: `Image normalization skipped: ${norm.reason}` }),
+          },
+        ],
+      };
+    } else if (norm.action === "resized") {
+      imageData = norm.base64;
+      isNormalized = true;
+      normWidth = norm.width;
+      normHeight = norm.height;
+      normFormat = norm.format.toLowerCase() as "jpg" | "png";
+    } else {
+      imageData = imageBuffer.toString("base64");
+    }
 
     const result = await executeApiCall({
       apiName: "direct",
@@ -156,6 +182,7 @@ export async function runDirectUploadImage(input: z.infer<typeof InputSchema>) {
         },
       },
       account: parsed.account,
+      client_login: parsed.client_login,
     });
 
     if (!result.ok) {
@@ -173,13 +200,23 @@ export async function runDirectUploadImage(input: z.infer<typeof InputSchema>) {
     const addResults = (data?.result as Record<string, unknown>)?.AddResults as Array<Record<string, unknown>> | undefined;
     const adImageHash = addResults?.[0]?.AdImageHash as string | undefined;
 
+    const finalFormat = isNormalized ? normFormat! : format;
+    const finalSizeBytes = isNormalized ? Buffer.from(imageData, "base64").length : imageBuffer.length;
+
     const output: Record<string, unknown> = {
       ad_image_hash: adImageHash ?? null,
-      format,
-      size_bytes: imageBuffer.length,
+      format: finalFormat,
+      size_bytes: finalSizeBytes,
     };
 
+    if (isNormalized) {
+      output.normalized = true;
+      output.normalized_width = normWidth;
+      output.normalized_height = normHeight;
+    }
+
     if (adImageHash === undefined) {
+      output.error = "Upload response contains no AdImageHash";
       const itemErrors = addResults?.[0]?.Errors;
       if (itemErrors !== undefined) {
         output.errors = itemErrors;
