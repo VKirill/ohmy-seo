@@ -23,11 +23,20 @@ import type { LoadedCampaignBundle } from "../src/lib/yaml-loader.js";
 const RED_ARGB = "FFFFC0C0";
 
 const SHEET_NAMES = [
+  "01_Превью_для_Кирилла",
   "CombinatorialAds",
   "canonical-build-preview",
   "commander-import",
   "design-assets",
   "QA",
+];
+
+const OWNER_PREVIEW_HEADERS = [
+  "campaign_name", "group_id", "group_name", "keyword", "keyword_type", "persona", "intent",
+  ...Array.from({ length: 7 }, (_, i) => `headline_${i + 1}`),
+  ...Array.from({ length: 3 }, (_, i) => `text_${i + 1}`),
+  ...Array.from({ length: 8 }, (_, i) => `sitelink_${i + 1}`),
+  "callouts", "href", "reviewer_status", "reviewer_notes",
 ];
 
 /** Canonical headers with K image columns (K = 2 in the fixtures below). */
@@ -192,19 +201,49 @@ function defaultBundle() {
   });
 }
 
-describe("renderCampaignBundleToXlsx — canonical 5-sheet workbook", () => {
-  it("renders exactly the 5 canonical sheets in order", async () => {
+describe("renderCampaignBundleToXlsx — canonical 6-sheet workbook", () => {
+  it("renders exactly the 6 canonical sheets in order, owner preview first", async () => {
     const { wb } = await renderAndRead(defaultBundle());
     expect(wb.worksheets.map((ws) => ws.name)).toEqual(SHEET_NAMES);
+    expect(wb.worksheets[0].name).toBe("01_Превью_для_Кирилла");
   });
 
   it("sheet headers match the canon verbatim", async () => {
     const { wb } = await renderAndRead(defaultBundle());
+    expect(headerValues(wb.getWorksheet("01_Превью_для_Кирилла")!)).toEqual(OWNER_PREVIEW_HEADERS);
     expect(headerValues(wb.getWorksheet("CombinatorialAds")!)).toEqual(combiHeaders(2));
     expect(headerValues(wb.getWorksheet("canonical-build-preview")!)).toEqual(PREVIEW_HEADERS);
     expect(headerValues(wb.getWorksheet("commander-import")!)).toEqual(commanderHeaders(2));
     expect(headerValues(wb.getWorksheet("design-assets")!)).toEqual(ASSETS_HEADERS);
     expect(headerValues(wb.getWorksheet("QA")!)).toEqual(QA_HEADERS);
+  });
+
+  it("01_Превью_для_Кирилла: one row per keyword, ad copy repeated per group", async () => {
+    const { wb } = await renderAndRead(defaultBundle());
+    const sheet = wb.getWorksheet("01_Превью_для_Кирилла")!;
+    const col = headerIndex(sheet);
+
+    // cl01 + cl02, 2 keywords each → header + 4 keyword rows
+    expect(sheet.rowCount).toBe(5);
+
+    const row2 = sheet.getRow(2);
+    expect(cellStr(row2, col["campaign_name"])).toBe("Тестовая кампания");
+    expect(cellStr(row2, col["group_id"])).toBe("cl01");
+    expect(cellStr(row2, col["group_name"])).toBe("cl01_ventilation");
+    expect(cellStr(row2, col["keyword"])).toBe("купить cl01");
+    expect(cellStr(row2, col["keyword_type"])).toBe("exact");
+    expect(cellStr(row2, col["headline_1"])).toBe("Заголовок один");
+    expect(cellStr(row2, col["text_1"])).toBe("Текст объявления один");
+    expect(cellStr(row2, col["sitelink_1"])).toBe("Ссылка 1");
+    expect(cellStr(row2, col["reviewer_status"])).toBe("TBD");
+
+    // Second keyword of cl01 repeats the same ad copy
+    const row3 = sheet.getRow(3);
+    expect(cellStr(row3, col["keyword"])).toBe("заказать cl01");
+    expect(cellStr(row3, col["headline_1"])).toBe("Заголовок один");
+
+    // QA reports the keyword-row count
+    expect(qaMap(wb)["preview_keyword_rows"].details).toBe("4");
   });
 
   it("CombinatorialAds: one row per ad; geo/landing/display/minus-words; rows count returned", async () => {
@@ -403,7 +442,7 @@ describe("renderCampaignBundleToXlsx — canonical 5-sheet workbook", () => {
     const qa = qaMap(wb);
 
     expect(qa["canonical_renderer_used"].status).toBe("OK");
-    expect(qa["canonical_renderer_used"].details).toContain("canonical-v2");
+    expect(qa["canonical_renderer_used"].details).toContain("canonical-v3");
     expect(qa["canonical_renderer_used"].details).toContain("xlsx-renderer.ts");
     expect(qa["groups_count"].details).toBe("2");
     expect(qa["ads_count"].details).toBe("2");

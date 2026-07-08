@@ -4,15 +4,16 @@ import { basename, join } from "path";
 import { LoadedCampaignBundle } from "./yaml-loader.js";
 
 /**
- * Canonical 5-sheet workbook renderer — the owner's standardized report format
+ * Canonical 6-sheet workbook renderer — the owner's standardized report format
  * for ALL clients. Sheet names and column headers are canon (verbatim):
- *   1. CombinatorialAds        — one row per ad of each group
- *   2. canonical-build-preview — one row per group
- *   3. commander-import        — per group: one ad row, then one row per phrase
- *   4. design-assets           — one row per image of each group
- *   5. QA                      — deterministic render checks
+ *   1. 01_Превью_для_Кирилла   — owner preview, one row per keyword (repeated ad copy)
+ *   2. CombinatorialAds        — one row per ad of each group
+ *   3. canonical-build-preview — one row per group
+ *   4. commander-import        — per group: one ad row, then one row per phrase
+ *   5. design-assets           — one row per image of each group
+ *   6. QA                      — deterministic render checks
  */
-const RENDERER_VERSION = "canonical-v2";
+const RENDERER_VERSION = "canonical-v3";
 const RENDERER_PATH = "packages/yandex-seo/src/lib/xlsx-renderer.ts";
 
 const HEADER_FILL: ExcelJS.FillPattern = {
@@ -317,9 +318,83 @@ export async function renderCampaignBundleToXlsx(
   );
 
   let lengthWarnCount = 0;
+  let previewRowCount = 0;
 
   // -------------------------------------------------------------------------
-  // Sheet 1 — CombinatorialAds: one row per ad of each group
+  // Sheet 1 — 01_Превью_для_Кирилла: owner-facing preview, one row per keyword.
+  // Direct Preview Workbook v1 contract (t_346fd22b): ad copy repeated on every
+  // keyword row of the group; MUST be the first/active sheet.
+  // -------------------------------------------------------------------------
+  const owner = wb.addWorksheet("01_Превью_для_Кирилла");
+  owner.columns = [
+    { header: "campaign_name", key: "campaign_name", width: 22 },
+    { header: "group_id", key: "group_id", width: 10 },
+    { header: "group_name", key: "group_name", width: 24 },
+    { header: "keyword", key: "keyword", width: 34 },
+    { header: "keyword_type", key: "keyword_type", width: 12 },
+    { header: "persona", key: "persona", width: 26 },
+    { header: "intent", key: "intent", width: 16 },
+    ...Array.from({ length: 7 }, (_, i) => ({
+      header: `headline_${i + 1}`, key: `headline_${i + 1}`, width: 28,
+    })),
+    ...Array.from({ length: 3 }, (_, i) => ({
+      header: `text_${i + 1}`, key: `text_${i + 1}`, width: 40,
+    })),
+    ...Array.from({ length: 8 }, (_, i) => ({
+      header: `sitelink_${i + 1}`, key: `sitelink_${i + 1}`, width: 22,
+    })),
+    { header: "callouts", key: "callouts", width: 38 },
+    { header: "href", key: "href", width: 34 },
+    { header: "reviewer_status", key: "reviewer_status", width: 14 },
+    { header: "reviewer_notes", key: "reviewer_notes", width: 40 },
+  ];
+  const ownerHeader = owner.getRow(1);
+  ownerHeader.font = { bold: true };
+  ownerHeader.fill = HEADER_FILL;
+  // Freeze first row + first 4 columns (contract §Formatting).
+  owner.views = [{ state: "frozen", xSplit: 4, ySplit: 1 }];
+
+  for (let gi = 0; gi < groups.length; gi++) {
+    const gv = groups[gi];
+    const meta = bundle.groups[gi]._meta;
+    const persona = metaString(meta, "persona") || metaString(meta, "audience");
+    const reviewerStatus = metaString(meta, "reviewer_status") || "TBD";
+    const base: Record<string, string> = {
+      campaign_name: camp.Name,
+      group_id: gv.clusterId,
+      group_name: gv.name,
+      persona: persona.slice(0, 80),
+      intent: metaString(meta, "intent"),
+      callouts: gv.calloutsJoined,
+      href: gv.landing,
+      reviewer_status: reviewerStatus,
+      reviewer_notes: metaString(meta, "reviewer_notes"),
+    };
+    for (let i = 0; i < 7; i++) base[`headline_${i + 1}`] = gv.pool.headlines[i] ?? "";
+    for (let i = 0; i < 3; i++) base[`text_${i + 1}`] = gv.pool.texts[i] ?? "";
+    for (let i = 0; i < 8; i++) base[`sitelink_${i + 1}`] = gv.sitelinks[i]?.Title ?? "";
+
+    // One row per keyword; fallback to a single TBD row when the group has none.
+    const kws: (string | null)[] = gv.keywords.length > 0 ? [...gv.keywords] : [null];
+    for (const kw of kws) {
+      const row = owner.addRow({
+        ...base,
+        keyword: kw ?? "TBD",
+        keyword_type: kw ? "exact" : "TBD",
+      });
+      if (reviewerStatus === "BLOCK" || reviewerStatus === "WARN") {
+        row.getCell("reviewer_status").fill = RED_FILL;
+      }
+      if (kw === null) {
+        warnings.push(`${gv.name}: no keyword/skeleton source — TBD preview row`);
+      }
+      previewRowCount++;
+    }
+  }
+  owner.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: owner.columnCount } };
+
+  // -------------------------------------------------------------------------
+  // Sheet 2 — CombinatorialAds: one row per ad of each group
   // -------------------------------------------------------------------------
   const combi = wb.addWorksheet("CombinatorialAds");
   combi.columns = [
@@ -546,6 +621,7 @@ export async function renderCampaignBundleToXlsx(
   });
   qa.addRow({ check: "groups_count", status: "OK", details: String(groups.length) });
   qa.addRow({ check: "ads_count", status: "OK", details: String(adRowCount) });
+  qa.addRow({ check: "preview_keyword_rows", status: "OK", details: String(previewRowCount) });
 
   const sitelinksShort = groups.filter((gv) => !gv.sitelinksComplete).map((gv) => gv.name);
   qa.addRow({
