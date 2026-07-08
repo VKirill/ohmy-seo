@@ -243,8 +243,9 @@ describe("renderCampaignBundleToXlsx — 3-sheet owner workbook", () => {
     const sheet = wb.getWorksheet("Просмотр_объявлений")!;
     const cells = allCellStrings(sheet);
     expect(cells.some((c) => c.includes("cl01_ventilation"))).toBe(true);
-    // title line = h1 — h2
-    expect(cells.some((c) => c.includes("Заголовок один") && c.includes("Заголовок два"))).toBe(true);
+    // title line = ONE headline (h1), never "h1 — h2" concatenated
+    expect(cells.some((c) => c === "Заголовок один")).toBe(true);
+    expect(cells.some((c) => c.includes("Заголовок один — Заголовок два"))).toBe(false);
     // url line
     expect(cells.some((c) => c.startsWith("Промо ·"))).toBe(true);
     // a sitelink title

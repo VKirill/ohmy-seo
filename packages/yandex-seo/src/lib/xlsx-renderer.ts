@@ -498,12 +498,10 @@ export async function renderCampaignBundleToXlsx(
     lbl.font = { bold: true, size: 10, color: { argb: DESC_GREY } };
     r++;
 
-    // title (h1 + h2 if present)
+    // title — ONE headline (combinatorial ad shows a single title in SERP)
     merge(r, 1, 4);
     const titleCell = view.getCell(r, 1);
-    const h1 = gv.pool.headlines[0] ?? "";
-    const h2 = gv.pool.headlines[1] ?? "";
-    titleCell.value = h2 ? `${h1} — ${h2}` : h1;
+    titleCell.value = gv.pool.headlines[0] ?? "";
     titleCell.font = { bold: true, size: 13, color: { argb: TITLE_BLUE } };
     wrap(r);
     r++;
