@@ -275,3 +275,70 @@ describe("renderCampaignBundleToXlsx — 3-sheet owner workbook", () => {
     expect(result.warnings.some((w) => w.includes("headline_1 too long"))).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Multi-campaign preview — group.campaign drives campaign_name per row and
+// groups rows by campaign (Брендовые < Целевые by cyrillic code-unit order).
+// ---------------------------------------------------------------------------
+describe("multi-campaign preview", () => {
+  it("campaign_name reflects each group's campaign and rows are grouped by campaign", async () => {
+    const bundle = makeBundle({
+      groups: [
+        makeResponsiveGroup("Бренд группа", "ag37", { campaign: "Брендовые запросы" }),
+        makeResponsiveGroup("Целевая группа 1", "ag01", { campaign: "Целевые запросы" }),
+        makeResponsiveGroup("Целевая группа 2", "ag02", { campaign: "Целевые запросы" }),
+      ],
+    });
+    const { wb } = await renderAndRead(bundle);
+    const owner = wb.getWorksheet("01_Превью_для_Кирилла")!;
+    const idx = headerIndex(owner);
+    const campCol = idx["campaign_name"];
+    const gidCol = idx["group_id"];
+    // rows 2..4 ordered by campaign name; within a campaign, bundle order preserved
+    expect([
+      cellStr(owner.getRow(2), campCol),
+      cellStr(owner.getRow(3), campCol),
+      cellStr(owner.getRow(4), campCol),
+    ]).toEqual(["Брендовые запросы", "Целевые запросы", "Целевые запросы"]);
+    expect([cellStr(owner.getRow(3), gidCol), cellStr(owner.getRow(4), gidCol)]).toEqual(["ag01", "ag02"]);
+  });
+
+  it("commander sheet 'Название кампании' follows the group's campaign", async () => {
+    const bundle = makeBundle({
+      groups: [
+        makeResponsiveGroup("Целевая", "ag01", { campaign: "Целевые запросы" }),
+        makeResponsiveGroup("Бренд", "ag37", { campaign: "Брендовые запросы" }),
+      ],
+    });
+    const { wb } = await renderAndRead(bundle);
+    const cmd = wb.getWorksheet("Импорт_Коммандер")!;
+    const col = headerIndex(cmd)["Название кампании"];
+    // first ad row (row 2) is the Брендовые group (sorted first)
+    expect(cellStr(cmd.getRow(2), col)).toBe("Брендовые запросы");
+  });
+
+  it("visual sheet emits a КАМПАНИЯ banner per distinct campaign", async () => {
+    const bundle = makeBundle({
+      groups: [
+        makeResponsiveGroup("Целевая", "ag01", { campaign: "Целевые запросы" }),
+        makeResponsiveGroup("Бренд", "ag37", { campaign: "Брендовые запросы" }),
+      ],
+    });
+    const { wb } = await renderAndRead(bundle);
+    const view = wb.getWorksheet("Просмотр_объявлений")!;
+    const all = allCellStrings(view);
+    expect(all.some((s) => s === "КАМПАНИЯ: Целевые запросы")).toBe(true);
+    expect(all.some((s) => s === "КАМПАНИЯ: Брендовые запросы")).toBe(true);
+  });
+
+  it("single-campaign bundle keeps the base campaign name for every row", async () => {
+    const bundle = makeBundle({
+      groups: [makeResponsiveGroup("Гр1", "c1"), makeResponsiveGroup("Гр2", "c2")],
+    });
+    const { wb } = await renderAndRead(bundle);
+    const owner = wb.getWorksheet("01_Превью_для_Кирилла")!;
+    const col = headerIndex(owner)["campaign_name"];
+    expect(cellStr(owner.getRow(2), col)).toBe("Тестовая кампания");
+    expect(cellStr(owner.getRow(3), col)).toBe("Тестовая кампания");
+  });
+});

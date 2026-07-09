@@ -305,6 +305,20 @@ export async function renderCampaignBundleToXlsx(
     buildGroupView(g, campaignSitelinks, campaignCallouts, images, warnings)
   );
 
+  // Multi-campaign: each group names its campaign (group.campaign), else the base
+  // campaign Name. Rows are ordered by campaign (then bundle order) so every
+  // campaign's groups sit together in the preview; single-campaign bundles keep
+  // their original order (one campaign → stable by index).
+  const campaignOf = (gi: number): string => bundle.groups[gi].campaign ?? camp.Name;
+  const order = groups
+    .map((_, i) => i)
+    .sort((a, b) => {
+      const ca = campaignOf(a);
+      const cb = campaignOf(b);
+      if (ca !== cb) return ca < cb ? -1 : 1;
+      return a - b;
+    });
+
   // K = max image count across all groups (minimum 2 columns).
   const imageColumns = Math.max(
     2,
@@ -348,13 +362,13 @@ export async function renderCampaignBundleToXlsx(
   ownerHeader.fill = HEADER_FILL;
   owner.views = [{ state: "frozen", xSplit: 3, ySplit: 1 }];
 
-  for (let gi = 0; gi < groups.length; gi++) {
+  for (const gi of order) {
     const gv = groups[gi];
     const meta = bundle.groups[gi]._meta;
     const persona = metaString(meta, "persona") || metaString(meta, "audience");
     const reviewerStatus = metaString(meta, "reviewer_status") || "TBD";
     const rowData: Record<string, string> = {
-      campaign_name: camp.Name,
+      campaign_name: campaignOf(gi),
       group_id: gv.clusterId,
       group_name: gv.name,
       keywords: gv.keywordsJoined,
@@ -442,10 +456,11 @@ export async function renderCampaignBundleToXlsx(
   commanderHeader.fill = HEADER_FILL;
   commander.views = [{ state: "frozen", ySplit: 1 }];
 
-  for (const gv of groups) {
+  for (const gi of order) {
+    const gv = groups[gi];
     const adRow: Record<string, string> = {
       camp_type: "Единая перфоманс-кампания",
-      camp_name: camp.Name,
+      camp_name: campaignOf(gi),
       group_name: gv.name,
       phrase: "",
       region: gv.geo,
@@ -466,7 +481,7 @@ export async function renderCampaignBundleToXlsx(
     for (const kw of gv.keywords) {
       commander.addRow({
         camp_type: "Единая перфоманс-кампания",
-        camp_name: camp.Name,
+        camp_name: campaignOf(gi),
         group_name: gv.name,
         phrase: kw,
         region: gv.geo,
@@ -489,8 +504,21 @@ export async function renderCampaignBundleToXlsx(
   let r = 1;
   const merge = (row: number, c1: number, c2: number) => view.mergeCells(row, c1, row, c2);
   const wrap = (row: number): void => { view.getRow(row).alignment = { wrapText: true, vertical: "top" }; };
+  let currentCampaign: string | null = null;
 
-  for (const gv of groups) {
+  for (const gi of order) {
+    const gv = groups[gi];
+    // campaign banner — emitted once when the campaign changes (multi-campaign bundles)
+    const campaignName = campaignOf(gi);
+    if (campaignName !== currentCampaign) {
+      currentCampaign = campaignName;
+      merge(r, 1, 4);
+      const banner = view.getCell(r, 1);
+      banner.value = `КАМПАНИЯ: ${campaignName}`;
+      banner.font = { bold: true, size: 12, color: { argb: TITLE_BLUE } };
+      banner.fill = HEADER_FILL;
+      r++;
+    }
     // group label
     merge(r, 1, 4);
     const lbl = view.getCell(r, 1);

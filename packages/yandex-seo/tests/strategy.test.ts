@@ -15,8 +15,14 @@ vi.mock("@ohmy-seo/mcp-core/errors", () => ({
 
 // payload-builder is NOT mocked — we test its real buildUnifiedCampaignPayload
 import { buildUnifiedCampaignPayload } from "../src/lib/payload-builder.js";
-import { resolveCampaignStrategy, resolveCampaignType } from "../src/tools/direct-upload-from-yaml.js";
+import {
+  resolveCampaignStrategy,
+  resolveCampaignType,
+  isMultiCampaignBundle,
+  resolveDailyBudgetByCampaign,
+} from "../src/tools/direct-upload-from-yaml.js";
 import { pickAdTemplate, computePlanHash } from "../src/lib/upload-pipeline.js";
+import { computeCampaignName } from "../src/lib/pipeline/plan-hash.js";
 
 /** Minimal bundle fixture factory. */
 function makeBundle(overrides: { upload_strategy?: string; campaignName?: string }) {
@@ -145,6 +151,74 @@ describe("resolveCampaignStrategy", () => {
     const bundle = makeBundle({ upload_strategy: "one-per-cluster" });
     const strategy = resolveCampaignStrategy(bundle);
     expect(strategy).toEqual({ mode: "one-per-cluster" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Multi-campaign bundles — cluster-map strategy + per-campaign budget
+// ---------------------------------------------------------------------------
+
+/** Multi-campaign bundle: two groups, distinct `campaign`, campaigns budget map. */
+function makeMultiBundle() {
+  return {
+    campaign: {
+      campaign: {
+        Name: "base-camp",
+        Type: "UNIFIED_PERFORMANCE_CAMPAIGN",
+        StartDate: "2026-01-01",
+        DailyBudget: { Amount: 10_000_000, Currency: "USD" },
+      },
+      campaigns: {
+        "Целевые запросы": { DailyBudget: { Amount: 20_000_000 } },
+        "Брендовые запросы": { DailyBudget: { Amount: 5_000_000 } },
+      },
+    },
+    groups: [
+      { campaign: "Целевые запросы", _meta: { cluster_id: "ag01" }, group: { Name: "G1", Type: "UNIFIED_AD_GROUP", RegionIds: [1] }, keywords: [{ Keyword: "k1" }], ads: [] },
+      { campaign: "Брендовые запросы", _meta: { cluster_id: "ag37" }, group: { Name: "G37", Type: "UNIFIED_AD_GROUP", RegionIds: [1] }, keywords: [{ Keyword: "k2" }], ads: [] },
+    ],
+    validation_errors: [],
+  } as unknown as Parameters<typeof resolveCampaignStrategy>[0];
+}
+
+describe("computeCampaignName — cluster-map mode", () => {
+  const strategy = {
+    mode: "cluster-map" as const,
+    cluster_to_campaign: { ag01: "Целевые запросы", ag37: "Брендовые запросы" },
+    default_campaign: "base-camp",
+  };
+  it("maps a known cluster to its campaign", () => {
+    expect(computeCampaignName("ag01", "transactional", strategy)).toBe("Целевые запросы");
+    expect(computeCampaignName("ag37", "branded", strategy)).toBe("Брендовые запросы");
+  });
+  it("falls back to default_campaign for an unmapped cluster", () => {
+    expect(computeCampaignName("ag99", "transactional", strategy)).toBe("base-camp");
+  });
+});
+
+describe("multi-campaign bundle detection + strategy", () => {
+  it("isMultiCampaignBundle is true when a campaigns map or group.campaign is present", () => {
+    expect(isMultiCampaignBundle(makeMultiBundle())).toBe(true);
+    expect(isMultiCampaignBundle(makeBundle({}))).toBe(false);
+  });
+
+  it("resolveCampaignStrategy returns cluster-map with per-group assignment", () => {
+    expect(resolveCampaignStrategy(makeMultiBundle())).toEqual({
+      mode: "cluster-map",
+      cluster_to_campaign: { ag01: "Целевые запросы", ag37: "Брендовые запросы" },
+      default_campaign: "base-camp",
+    });
+  });
+
+  it("resolveDailyBudgetByCampaign extracts per-campaign micros from the campaigns map", () => {
+    expect(resolveDailyBudgetByCampaign(makeMultiBundle())).toEqual({
+      "Целевые запросы": 20_000_000,
+      "Брендовые запросы": 5_000_000,
+    });
+  });
+
+  it("resolveDailyBudgetByCampaign is undefined for a single-campaign bundle", () => {
+    expect(resolveDailyBudgetByCampaign(makeBundle({}))).toBeUndefined();
   });
 });
 
@@ -373,6 +447,16 @@ describe("computePlanHash — determinism and content binding", () => {
     const h1 = computePlanHash({ ...basePlanInput, ad_templates: null });
     const h2 = computePlanHash({ ...basePlanInput });
     expect(h1).toBe(h2);
+  });
+
+  it("per-campaign budget map changes the hash; empty/absent map leaves it byte-identical", () => {
+    const h0 = computePlanHash({ ...basePlanInput });
+    const hEmpty = computePlanHash({ ...basePlanInput, daily_budget_micros_by_campaign: {} });
+    const hNull = computePlanHash({ ...basePlanInput, daily_budget_micros_by_campaign: null });
+    const hMap = computePlanHash({ ...basePlanInput, daily_budget_micros_by_campaign: { "Целевые запросы": 5 } });
+    expect(hEmpty).toBe(h0); // empty map omitted from planInput → unchanged (old bundles safe)
+    expect(hNull).toBe(h0);
+    expect(hMap).not.toBe(h0);
   });
 });
 
