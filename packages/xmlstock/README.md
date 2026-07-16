@@ -15,7 +15,7 @@ Results are cached locally in SQLite to avoid redundant paid API calls.
 ## Prerequisites
 
 - Node.js 22+
-- An active XMLStock account with API credentials (https://xmlstock.com)
+- An active XMLStock account with API credentials ([xmlstock.com](https://xmlstock.com/?ref=vechkasov))
 
 ## Install
 

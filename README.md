@@ -9,8 +9,8 @@
 | Платформа | Сервер | Что делает |
 |---|---|---|
 | **Яндекс** | `mcp-yandex-seo` | Директ (ЕПК), Метрика, Вебмастер |
-| **Mutagen.ru** | `mcp-mutagen` | конкуренция ключей, mass-parser, SERP-отчёты |
-| **XMLStock** | `mcp-xmlstock` | live SERP Яндекс/Google + архив |
+| **[Mutagen.ru](https://mutagen.ru/?r=69383)** | `mcp-mutagen` | конкуренция ключей, mass-parser, SERP-отчёты |
+| **[XMLStock](https://xmlstock.com/?ref=vechkasov)** | `mcp-xmlstock` | live SERP Яндекс/Google + архив |
 | **Google** | `mcp-gsc` · `mcp-ga4` · `mcp-gtm` | Search Console, Analytics 4, Tag Manager |
 
 > ⚠️ Серверы ходят в **живые** рекламные и аналитические аккаунты. Запись закрыта env-флагами **и** `confirm` на каждый вызов. Токены — AES-256-GCM в локальной SQLite.
@@ -24,8 +24,8 @@
 | Пакет | Версия | MCP | Назначение |
 |---|---|---|---|
 | `@ohmy-seo/yandex-seo` | **0.8.0** | `mcp-yandex-seo` | Яндекс Директ (ЕПК/комбинаторика), Метрика, Вебмастер |
-| `@ohmy-seo/mutagen` | 0.1.0 | `mcp-mutagen` | Конкуренция ключей (Mutagen.ru) |
-| `@ohmy-seo/xmlstock` | 0.2.0 | `mcp-xmlstock` | SERP Яндекс/Google (XMLStock) |
+| `@ohmy-seo/mutagen` | 0.1.0 | `mcp-mutagen` | Конкуренция ключей ([Mutagen.ru](https://mutagen.ru/?r=69383)) |
+| `@ohmy-seo/xmlstock` | 0.2.0 | `mcp-xmlstock` | SERP Яндекс/Google ([XMLStock](https://xmlstock.com/?ref=vechkasov)) |
 | `@ohmy-seo/google-search-console` | 0.1.0 | `mcp-gsc` | Google Search Console + Indexing API |
 | `@ohmy-seo/ga4` | 0.1.0 | `mcp-ga4` | GA4 Data API + Admin API |
 | `@ohmy-seo/gtm` | 0.1.0 | `mcp-gtm` | Google Tag Manager (read/write/publish/rollback) |
@@ -71,6 +71,8 @@
 
 <img src="docs/assets/mutagen.svg" alt="mcp-mutagen: Mutagen.ru" width="100%">
 
+Сервис: **[Mutagen.ru](https://mutagen.ru/?r=69383)** (реф-ссылка).
+
 | Tool | Назначение |
 |---|---|
 | `mutagen_competition` | конкуренция / частотность по фразам |
@@ -78,13 +80,15 @@
 | `mutagen_serp_report` | SERP-отчёт |
 | `mutagen_api` | raw gateway к API Mutagen.ru |
 
-Нужен `MUTAGEN_API_KEY`.
+Нужен `MUTAGEN_API_KEY` — ключ в [личном кабинете Mutagen](https://mutagen.ru/?r=69383).
 
 ---
 
 ## `mcp-xmlstock` — SERP Яндекс / Google
 
 <img src="docs/assets/xmlstock.svg" alt="mcp-xmlstock: SERP" width="100%">
+
+Сервис: **[XMLStock](https://xmlstock.com/?ref=vechkasov)** (реф-ссылка).
 
 | Tool | Назначение |
 |---|---|
@@ -93,7 +97,7 @@
 | `xmlstock_archive_search` / `xmlstock_archive_get` | историческая SERP |
 | `xmlstock_usage_stats` | расход лимитов |
 
-Нужны `XMLSTOCK_USER` + `XMLSTOCK_KEY`.
+Нужны `XMLSTOCK_USER` + `XMLSTOCK_KEY` — регистрация и ключи на [xmlstock.com](https://xmlstock.com/?ref=vechkasov).
 
 ---
 
@@ -161,7 +165,11 @@ cp packages/yandex-seo/.env.example packages/yandex-seo/.env
 | `OHMY_SEO_ALLOW_LIVE_MUTATIONS` | глобальный kill-switch записи (`true` / unset = read-only) |
 | `YANDEX_DIRECT_ALLOW_LIVE_MUTATIONS` | запись в Яндекс Директ |
 
-Опционально: `MUTAGEN_API_KEY`, `XMLSTOCK_USER` + `XMLSTOCK_KEY`. Google — см. `.env.example` пакета.
+Опционально:
+- `MUTAGEN_API_KEY` — ключ [Mutagen.ru](https://mutagen.ru/?r=69383)
+- `XMLSTOCK_USER` + `XMLSTOCK_KEY` — аккаунт [XMLStock](https://xmlstock.com/?ref=vechkasov)
+
+Google — см. `.env.example` пакета.
 
 ### OAuth (Яндекс)
 
