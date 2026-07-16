@@ -6,14 +6,38 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": { "import": "./dist/index.js", "types": "./dist/index.d.ts" },
-    "./google-oauth": { "import": "./dist/google-oauth/index.js", "types": "./dist/google-oauth/index.d.ts" },
-    "./cache": { "import": "./dist/cache/index.js", "types": "./dist/cache/index.d.ts" },
-    "./db": { "import": "./dist/db/index.js", "types": "./dist/db/index.d.ts" },
-    "./http": { "import": "./dist/http.js", "types": "./dist/http.d.ts" },
-    "./errors": { "import": "./dist/errors.js", "types": "./dist/errors.d.ts" },
-    "./crypto": { "import": "./dist/crypto/index.js", "types": "./dist/crypto/index.d.ts" },
-    "./config": { "import": "./dist/config/package-config.js", "types": "./dist/config/package-config.d.ts" }
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./google-oauth": {
+      "import": "./dist/google-oauth/index.js",
+      "types": "./dist/google-oauth/index.d.ts"
+    },
+    "./cache": {
+      "import": "./dist/cache/index.js",
+      "types": "./dist/cache/index.d.ts"
+    },
+    "./db": {
+      "import": "./dist/db/index.js",
+      "types": "./dist/db/index.d.ts"
+    },
+    "./http": {
+      "import": "./dist/http.js",
+      "types": "./dist/http.d.ts"
+    },
+    "./errors": {
+      "import": "./dist/errors.js",
+      "types": "./dist/errors.d.ts"
+    },
+    "./crypto": {
+      "import": "./dist/crypto/index.js",
+      "types": "./dist/crypto/index.d.ts"
+    },
+    "./config": {
+      "import": "./dist/config/package-config.js",
+      "types": "./dist/config/package-config.d.ts"
+    }
   },
   "scripts": {
     "build": "tsc",
@@ -28,5 +52,7 @@
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.3"
-  }
+  },
+  "author": "Кирилл Вечкасов (Kirill Vechkasov, VKirill)",
+  "license": "MIT"
 }

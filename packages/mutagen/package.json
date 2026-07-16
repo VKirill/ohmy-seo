@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
-  "bin": { "mcp-mutagen": "./dist/index.js" },
+  "bin": {
+    "mcp-mutagen": "./dist/index.js"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
@@ -26,6 +28,6 @@
   "engines": {
     "node": ">=22"
   },
-  "author": "Kirill Vechkasov",
+  "author": "Кирилл Вечкасов (Kirill Vechkasov, VKirill)",
   "license": "MIT"
 }

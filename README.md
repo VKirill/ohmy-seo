@@ -1,96 +1,152 @@
 # ohmy-seo
 
-A monorepo of **Model Context Protocol (MCP) servers** for SEO & performance‑marketing automation — Yandex (Direct, Metrika, Webmaster), Google (Search Console, GA4, Tag Manager), and third‑party SERP/keyword tools. Built for LLM agents (Claude Code, Claude Desktop, or any MCP client) to read and safely write live advertising & analytics accounts.
+<p align="center">
+  <img src="docs/assets/hero.jpg" alt="ohmy-seo — MCP-серверы для SEO и performance-маркетинга" width="100%">
+</p>
 
-The flagship is **`mcp-yandex-seo`** — a full "hands" toolset over **Yandex Direct**, built around the modern **Единая перформанс‑кампания (ЕПК / Unified Performance Campaign)** and **combinatorial `RESPONSIVE_AD`** model.
+<p align="center">
+  <strong>Монорепозиторий MCP-серверов</strong> для SEO и performance-маркетинга:<br>
+  Яндекс (Директ, Метрика, Вебмастер), Google (Search Console, GA4, Tag Manager)<br>
+  и сторонние SERP/keyword-инструменты.
+</p>
 
-> ⚠️ These servers talk to **live ad accounts**. Every mutating operation is gated behind explicit environment flags **and** a per‑call confirmation (see [Safety](#safety)). Tokens are encrypted at rest.
+<p align="center">
+  <a href="#лицензия">MIT © Кирилл Вечкасов</a> ·
+  <a href="https://github.com/VKirill">@VKirill</a> ·
+  v0.8.0
+</p>
 
----
+Серверы рассчитаны на LLM-агентов (Claude Code, Claude Desktop и любой MCP-клиент): читать и безопасно писать в живые рекламные и аналитические кабинеты.
 
-## Packages
+Флагман — **`mcp-yandex-seo`**: полный «ручной» инструментарий по **Яндекс Директу** вокруг современной **Единой перформанс-кампании (ЕПК)** и комбинаторных объявлений `RESPONSIVE_AD`.
 
-| Package | Version | MCP server | Description |
-|---|---|---|---|
-| `@ohmy-seo/mcp-core` | 0.3.0 | — | Shared infra: encrypted OAuth storage, SQLite cache, big‑int‑safe JSON, base types |
-| `@ohmy-seo/yandex-seo` | **0.8.0** | `mcp-yandex-seo` | **Yandex Direct (ЕПК/combinatorial), Metrika, Webmaster** |
-| `@ohmy-seo/mutagen` | 0.1.0 | `mcp-mutagen` | Keyword competition scoring (Mutagen.ru) |
-| `@ohmy-seo/xmlstock` | 0.2.0 | `mcp-xmlstock` | SERP data (XMLStock API) |
-| `@ohmy-seo/google-search-console` | 0.1.0 | `mcp-gsc` | Google Search Console + Indexing API |
-| `@ohmy-seo/ga4` | 0.1.0 | `mcp-ga4` | GA4 Data + Admin API |
-| `@ohmy-seo/gtm` | 0.1.0 | `mcp-gtm` | Google Tag Manager (read/write/publish/rollback) |
-
----
-
-## Flagship: Yandex Direct (`mcp-yandex-seo`)
-
-Yandex Direct has consolidated all ad formats into the **ЕПК** — classic single‑title text ads (ТГО/`TextAd`) and network banners (РСЯ/`TextImageAd`) are retired. This server is **combinatorial‑only**: every ad is one `RESPONSIVE_AD` carrying a pool of **1–7 titles × 1–3 texts** (Yandex assembles the best combination), created on the `/json/v501/` API.
-
-What it can do (all verified live against the API):
-
-- **Create** — ЕПК campaigns, ad groups, combinatorial ads, sitelinks, callouts, promo extensions, images; or upload a whole campaign from a **YAML bundle** (`upload_from_yaml`, dry‑run → plan‑hash → live).
-- **Point‑edit live objects** — `update_campaign` / `update_adgroup` / `update_ad` change only the fields you pass (ad IDs are handled as strings — they exceed 2⁵³).
-- **Bidding strategies** — a typed `strategy` param for the full set: manual (`HIGHEST_POSITION`), max clicks, average CPC, max conversions, average CPA, pay‑for‑conversion, CRR/ДРР. It builds a live‑compatible `{ Search, Network }` pair for you.
-- **Bid adjustments (корректировки)** — mobile / desktop / video (device + video adjustments) via `set_bid_modifiers`.
-- **Targeting** — campaign & group negative keywords (replace/append), excluded РСЯ sites, extended geo, hourly display schedule, attribution model.
-- **Conversions** — Metrika counter + goals + per‑goal conversion value; pay‑for‑conversion / target‑CPA strategies.
-- **Product feeds (товарные фиды)** — `feeds` (add/get/update/delete) with moderation status.
-- **Read/report** — campaigns, ad groups, ads, keywords, stats (Reports v5), search terms, change history, XLSX export.
-- **Escape hatch** — `yandex_direct_api`, a raw gateway to any Direct v5/v501 endpoint.
-
-Currency‑agnostic throughout (USD, RUB, EUR, …) — money is integer **micros** and minimums come from `Dictionaries.get{Currencies}`.
-
-**Grab the skill:** the [`skills/ohmy-seo-mcp/`](skills/ohmy-seo-mcp/) folder ships a ready‑to‑use agent skill (tool catalog, upload recipe, point‑editing playbook, safety pattern, and a `references/` file of live‑verified API quirks). Copy it into your Claude/agent skills directory so your agent knows how to drive this server.
+> ⚠️ Серверы работают с **живыми рекламными аккаунтами**. Любая мутация закрыта флагами окружения **и** явным подтверждением на каждый вызов (см. [Безопасность](#безопасность)). Токены шифруются на диске.
 
 ---
 
-## Requirements
+## Пакеты
+
+| | Пакет | Версия | MCP-сервер | Назначение |
+|---|---|---|---|---|
+| <img src="docs/assets/yandex-direct.jpg" width="64" alt="Яндекс Директ"> | `@ohmy-seo/yandex-seo` | **0.8.0** | `mcp-yandex-seo` | **Яндекс Директ (ЕПК/комбинаторика), Метрика, Вебмастер** |
+| <img src="docs/assets/mutagen.jpg" width="64" alt="Mutagen"> | `@ohmy-seo/mutagen` | 0.1.0 | `mcp-mutagen` | Оценка конкуренции ключей (Mutagen.ru) |
+| <img src="docs/assets/xmlstock.jpg" width="64" alt="XMLStock"> | `@ohmy-seo/xmlstock` | 0.2.0 | `mcp-xmlstock` | SERP-данные (XMLStock API) |
+| <img src="docs/assets/google-search-console.jpg" width="64" alt="Search Console"> | `@ohmy-seo/google-search-console` | 0.1.0 | `mcp-gsc` | Google Search Console + Indexing API |
+| <img src="docs/assets/ga4.jpg" width="64" alt="GA4"> | `@ohmy-seo/ga4` | 0.1.0 | `mcp-ga4` | GA4 Data API + Admin API |
+| <img src="docs/assets/gtm.jpg" width="64" alt="GTM"> | `@ohmy-seo/gtm` | 0.1.0 | `mcp-gtm` | Google Tag Manager (чтение / запись / publish / rollback) |
+| | `@ohmy-seo/mcp-core` | 0.3.0 | — | Общая инфраструктура: шифрованное OAuth-хранилище, SQLite-кэш, big-int-safe JSON, базовые типы |
+
+---
+
+## Флагман: Яндекс Директ (`mcp-yandex-seo`)
+
+<p align="center">
+  <img src="docs/assets/yandex-direct.jpg" alt="Яндекс Директ — ЕПК и point-editing" width="420">
+  &nbsp;
+  <img src="docs/assets/yandex-metrika.jpg" alt="Метрика и аналитика" width="420">
+</p>
+
+В Директе все форматы сведены в **ЕПК**. Классические однозаголовочные ТГО (`TextAd`) и баннеры РСЯ (`TextImageAd`) устарели. Этот сервер — **только комбинаторика**: каждое объявление — `RESPONSIVE_AD` с пулом **1–7 заголовков × 1–3 текстов** (Яндекс сам собирает лучшую связку) через API `/json/v501/`.
+
+Что умеет (проверено на живом API):
+
+- **Создание** — ЕПК-кампании, группы, комбинаторные объявления, быстрые ссылки, уточнения, промо, картинки; либо целая кампания из **YAML-бандла** (`upload_from_yaml`: dry-run → plan-hash → live).
+- **Точечное редактирование** — `update_campaign` / `update_adgroup` / `update_ad` меняют только переданные поля (ID объявлений — строки: они больше 2⁵³).
+- **Стратегии ставок** — типизированный `strategy`: ручная (`HIGHEST_POSITION`), макс. клики, средний CPC, макс. конверсии, средний CPA, оплата за конверсию, ДРР/CRR. Собирает совместимую пару `{ Search, Network }`.
+- **Корректировки** — mobile / desktop / video через `set_bid_modifiers`.
+- **Таргетинг** — минус-фразы кампании и группы (replace/append), исключённые площадки РСЯ, расширенная география, почасовое расписание, модель атрибуции.
+- **Конверсии** — счётчик Метрики + цели + ценность цели; стратегии «оплата за конверсию» / target-CPA.
+- **Товарные фиды** — `feeds` (add/get/update/delete) со статусом модерации.
+- **Чтение и отчёты** — кампании, группы, объявления, ключи, статистика (Reports v5), поисковые запросы, история изменений, выгрузка XLSX.
+- **Escape hatch** — `yandex_direct_api`, сырой шлюз к любому методу Direct v5/v501.
+
+Валюта не зафиксирована (RUB, USD, EUR, …): деньги — целые **микроединицы**, минимумы из `Dictionaries.get{Currencies}`.
+
+**Скилл для агента:** в [`skills/ohmy-seo-mcp/`](skills/ohmy-seo-mcp/) — каталог инструментов, рецепт загрузки, playbook point-editing, паттерн безопасности и `references/` с проверенными quirks API. Скопируйте в каталог skills Claude/агента, чтобы сервер использовался «из коробки».
+
+---
+
+## Приложения
+
+### Mutagen — конкуренция ключей
+
+<p align="center"><img src="docs/assets/mutagen.jpg" alt="Mutagen — конкуренция ключевых фраз" width="360"></p>
+
+Оценка конкурентности фраз через Mutagen.ru. Подключается как отдельный `mcp-mutagen` и как инструменты внутри `mcp-yandex-seo`.
+
+### XMLStock — SERP
+
+<p align="center"><img src="docs/assets/xmlstock.jpg" alt="XMLStock — парсинг выдачи" width="360"></p>
+
+Данные поисковой выдачи через XMLStock API: сниппеты, позиции, разбор SERP.
+
+### Google Search Console
+
+<p align="center"><img src="docs/assets/google-search-console.jpg" alt="Google Search Console" width="360"></p>
+
+Поисковая аналитика, инспекция URL, Indexing API. OAuth или Service Account.
+
+### GA4
+
+<p align="center"><img src="docs/assets/ga4.jpg" alt="Google Analytics 4" width="360"></p>
+
+Отчёты Data API и Admin API: измерения, метрики, realtime, drill-down.
+
+### Google Tag Manager
+
+<p align="center"><img src="docs/assets/gtm.jpg" alt="Google Tag Manager" width="360"></p>
+
+Контейнеры, теги, триггеры, переменные: чтение, запись, публикация и откат версий.
+
+---
+
+## Требования
 
 - **Node.js ≥ 22**
 - **pnpm** (`npm i -g pnpm`)
 
-## Install & build
+## Установка и сборка
 
 ```bash
 git clone https://github.com/VKirill/ohmy-seo.git
 cd ohmy-seo
 pnpm install
-pnpm -r build          # compiles every package to dist/
-pnpm -r test           # optional: run the test suites
+pnpm -r build          # dist/ для всех пакетов
+pnpm -r test           # опционально: тесты
 ```
 
-## Configuration
+## Конфигурация
 
-Each server reads a `.env` from its package directory. Copy the example and fill it in:
+Каждый сервер читает `.env` из каталога пакета. Скопируйте пример и заполните:
 
 ```bash
 cp packages/yandex-seo/.env.example packages/yandex-seo/.env
 ```
 
-Required for `mcp-yandex-seo`:
+Обязательно для `mcp-yandex-seo`:
 
-| Variable | Purpose |
+| Переменная | Назначение |
 |---|---|
-| `MCP_YANDEX_SEO_MASTER_KEY` | 32‑byte hex key that AES‑256‑GCM‑encrypts OAuth tokens & client secrets at rest. Generate with `openssl rand -hex 32`. **Keep it secret; losing it makes stored tokens unrecoverable.** |
-| `OHMY_SEO_ALLOW_LIVE_MUTATIONS` | Global kill‑switch — must be `true` for **any** write. Leave unset to run read‑only. |
-| `YANDEX_DIRECT_ALLOW_LIVE_MUTATIONS` | Platform‑specific write flag for Yandex Direct (isolated from other platforms). |
+| `MCP_YANDEX_SEO_MASTER_KEY` | 32-байтный hex-ключ AES-256-GCM для токенов и client secret. `openssl rand -hex 32`. **Храните отдельно: без него токены не восстановить.** |
+| `OHMY_SEO_ALLOW_LIVE_MUTATIONS` | Глобальный kill-switch — `true` для **любой** записи. Без него — только чтение. |
+| `YANDEX_DIRECT_ALLOW_LIVE_MUTATIONS` | Флаг записи именно для Яндекс Директа. |
 
-Optional integrations: `MUTAGEN_API_KEY`, `XMLSTOCK_USER` + `XMLSTOCK_KEY`. Google packages use Google OAuth or a Service Account. See each package's `.env.example`.
+Опционально: `MUTAGEN_API_KEY`, `XMLSTOCK_USER` + `XMLSTOCK_KEY`. Google-пакеты — OAuth или Service Account (см. `.env.example` пакета).
 
-## Connect OAuth accounts
+## Подключение OAuth
 
-Yandex uses its own OAuth flow via the server's tools:
+**Яндекс** — через инструменты сервера:
 
-1. `register_oauth_app` — store your Yandex OAuth app (client_id + client_secret, encrypted).
-2. `start_oauth_flow` — get the consent URL; approve it in the browser.
-3. `complete_oauth_flow` — exchange the returned code for tokens.
-4. `list_accounts` / `set_default_account` — manage connected accounts. Pass an account label to any tool via the optional `account` param; for agency sub‑cabinets pass `client_login`.
+1. `register_oauth_app` — сохранить OAuth-приложение (client_id + client_secret, в шифрованном виде).
+2. `start_oauth_flow` — получить URL согласия, подтвердить в браузере.
+3. `complete_oauth_flow` — обменять code на токены.
+4. `list_accounts` / `set_default_account` — управление аккаунтами. Метка аккаунта — параметр `account`; для агентских подкабинетов — `client_login`.
 
-Google servers use `register_google_oauth_app` → `start_google_oauth_flow` → `complete_google_oauth_flow`, or `register_google_service_account`.
+**Google** — `register_google_oauth_app` → `start_google_oauth_flow` → `complete_google_oauth_flow`, либо `register_google_service_account`.
 
-## Wire into an MCP client
+## Подключение к MCP-клиенту
 
-Each server is a stdio process pointing at its built `dist/index.js`. Example MCP client config (Claude Desktop / any MCP client):
+Каждый сервер — stdio-процесс на собранный `dist/index.js`. Пример для Claude Desktop / любого MCP-клиента:
 
 ```json
 {
@@ -103,39 +159,55 @@ Each server is a stdio process pointing at its built `dist/index.js`. Example MC
 }
 ```
 
-For **Claude Code**: `claude mcp add mcp-yandex-seo -- node /absolute/path/to/ohmy-seo/packages/yandex-seo/dist/index.js`. Restart the client after wiring — MCP tools are discovered at connection time.
-
----
-
-## Safety
-
-Writing to a live ad account is guarded by defence in depth:
-
-1. **Global flag** — `OHMY_SEO_ALLOW_LIVE_MUTATIONS=true` (no writes at all without it).
-2. **Platform flag** — `YANDEX_DIRECT_ALLOW_LIVE_MUTATIONS=true` (isolated per platform).
-3. **Per‑call `confirm: true`** on every mutating tool.
-4. **`acknowledge_live` ack string** for destructive/high‑impact ops (delete, pause, moderate, budget, bid‑modifier delete) — the tool echoes the exact expected string.
-
-Recommended pattern for agents: create campaigns in **DRAFT/OFF**, search‑only serving, manual or low weekly cap, **no auto‑moderation, no auto‑launch** — a human confirms before anything goes live. Read‑only tools (`list_*`, `get_*`, `*` in `get` mode) need no flags.
-
-## Security notes
-
-- OAuth access/refresh tokens and client secrets are **AES‑256‑GCM encrypted** in a local SQLite DB (`data/state.db`, git‑ignored). They are never returned by any tool.
-- `.env`, `data/`, and Google `client_secret_*.json` are git‑ignored. Never commit them.
-- The `MCP_YANDEX_SEO_MASTER_KEY` is the root of trust — store it out of band.
-
----
-
-## Development
+Для **Claude Code**:
 
 ```bash
-pnpm -r build              # build all
-pnpm --filter @ohmy-seo/yandex-seo test     # test one package
-pnpm -r exec tsc --noEmit  # typecheck all
+claude mcp add mcp-yandex-seo -- node /absolute/path/to/ohmy-seo/packages/yandex-seo/dist/index.js
 ```
 
-The Yandex Direct package is organised as: `src/registry/*` (per‑domain tool registration), `src/tools/*` (one file per tool), `src/lib/payloads/*` (API payload builders), `src/lib/pipeline/*` (bundle upload engine). See [`skills/ohmy-seo-mcp/references/yandex-direct-api-quirks.md`](skills/ohmy-seo-mcp/references/yandex-direct-api-quirks.md) for the hard‑won API quirks before writing new Direct code.
+После подключения перезапустите клиент — инструменты обнаруживаются при соединении.
 
-## License
+---
 
-[MIT](LICENSE) © Kirill Vechkasov (VKirill)
+## Безопасность
+
+Запись в живой кабинет — оборона в глубину:
+
+1. **Глобальный флаг** — `OHMY_SEO_ALLOW_LIVE_MUTATIONS=true` (без него записи нет).
+2. **Флаг платформы** — `YANDEX_DIRECT_ALLOW_LIVE_MUTATIONS=true`.
+3. **`confirm: true`** на каждом мутирующем инструменте.
+4. **`acknowledge_live`** — строка подтверждения для опасных операций (delete, pause, moderate, budget, удаление корректировок); инструмент ожидает точную фразу.
+
+Рекомендуемый паттерн для агентов: создавать кампании в **DRAFT/OFF**, только поиск, ручная стратегия или низкий недельный лимит, **без автомодерации и автозапуска** — человек подтверждает перед live. Read-only (`list_*`, `get_*`, mode `get`) флаги не требует.
+
+## Заметки по безопасности
+
+- Access/refresh-токены и client secret **шифруются AES-256-GCM** в локальной SQLite (`data/state.db`, в git не попадает). Инструменты их не возвращают.
+- `.env`, `data/` и Google `client_secret_*.json` в `.gitignore`. Не коммитьте.
+- `MCP_YANDEX_SEO_MASTER_KEY` — корень доверия; храните вне репозитория.
+
+---
+
+## Разработка
+
+```bash
+pnpm -r build                                  # собрать всё
+pnpm --filter @ohmy-seo/yandex-seo test        # тесты одного пакета
+pnpm -r exec tsc --noEmit                      # typecheck
+```
+
+Пакет Яндекс Директа: `src/registry/*` (регистрация по доменам), `src/tools/*` (один файл — один tool), `src/lib/payloads/*` (сборщики payload), `src/lib/pipeline/*` (движок YAML-загрузки). Перед новым кодом по Direct — [`skills/ohmy-seo-mcp/references/yandex-direct-api-quirks.md`](skills/ohmy-seo-mcp/references/yandex-direct-api-quirks.md).
+
+---
+
+## Авторские права
+
+**Copyright © 2026 Кирилл Вечкасов (Kirill Vechkasov, [@VKirill](https://github.com/VKirill))**
+
+Все права на исходный код, документацию, bundled skill и иллюстрации в `docs/assets/` принадлежат автору, если иное не указано явно. Сторонние API (Яндекс, Google, Mutagen, XMLStock) — товарные знаки соответствующих правообладателей; проект с ними не аффилирован.
+
+## Лицензия
+
+[MIT](LICENSE) © 2026 Кирилл Вечкасов (Kirill Vechkasov, VKirill)
+
+Разрешено использовать, копировать, изменять и распространять при сохранении уведомления об авторских правах и текста лицензии MIT.
