@@ -1,189 +1,260 @@
-# Combinatorial ЕПК upload — YAML bundle schema
+# YAML-бандл для `yandex_direct_upload_from_yaml`
 
-Save the draft YAML anywhere (e.g. `drafts/<client-slug>/<YYYY-MM-DD-domain>/combi-upload-draft.yaml`). Validate before upload with a separate `qa_<client>.mjs` script.
+Реальный вход пайплайна — **папка (folder)**, не один файл.
 
-**One ad per group is a combinatorial `RESPONSIVE_AD`** — a pool of titles + texts that Yandex assembles. There are no single-title `TextAd`s, no `title2`, no per-framework separate ads. Everything targets a `UNIFIED_CAMPAIGN` on `/json/v501/`.
+```
+drafts/<client>/<theme>/
+  _campaign.yaml          ← настройки кампании + общие расширения
+  group-001-<slug>.yaml   ← одна группа объявлений (кластер)
+  group-002-<slug>.yaml
+  group-….yaml
+```
 
-## Field limits (Yandex.Direct 2026, combinatorial)
+Tool: **`yandex_direct_upload_from_yaml`**
 
-| Field | Limit | Notes |
-|---|---|---|
-| `titles[]` | **1–7 items**, each ≤56 chars, each word ≤22 | the headline pool Yandex combines |
-| `texts[]` | **1–3 items**, each ≤81 chars, each word ≤23 | the body pool |
-| `href` | full URL ≤1024, **singular** | one per ad (NOT `Hrefs`) |
-| `image_hashes[]` | 1–5, from `AdImages.add` | field name in API is `AdImageHashes` |
-| combinatorial ads / group | **≤3 non-archived** | one pool-ad is normal (error 7001 above 3) |
-| money | integer **micros** (e.g. USD×1e6) | mins from `Dictionaries.get {Currencies}` |
+| Параметр | Смысл |
+|---|---|
+| `folder` | абсолютный путь к этой папке |
+| `dry_run: true` (default) | план + `plan_hash`, без live |
+| `dry_run: false` + `plan_hash` + `confirm` + `acknowledge_live` | live-загрузка |
+| `account` / `client_login` | кабинет / агентский подклиент |
 
-## Schema
+Загрузчик: `loadCampaignFolder` читает `_campaign.yaml` и все `group-*.yaml` (сортировка по имени).
+
+---
+
+## Модель «папка / кампания / группа»
+
+| Что | Это |
+|---|---|
+| **1 папка** | 1 **бандл** (unit загрузки) |
+| **1 файл `group-*.yaml`** | 1 **группа объявлений** (кластер ключей + 1 combinatorial ad) |
+| **`_campaign.yaml`** | шаблон/настройки + `upload_strategy` |
+
+### `upload_strategy` (в `_campaign.yaml`)
+
+| Значение | Что создаётся в Директе |
+|---|---|
+| **`one-per-cluster`** (default) | **отдельная кампания на каждый `group-*.yaml`**, имя `cluster-{cluster_id}` |
+| **`single-campaign`** | **одна** кампания на весь бандл, имя = `campaign.Name` из `_campaign.yaml`; внутри — все группы |
+
+Интуиция «одна папка = одна кампания» верна **только** при `upload_strategy: single-campaign`.  
+По умолчанию: **одна папка = N кампаний** (по числу group-файлов / кластеров).
+
+`cluster_id` берётся из `group._meta.cluster_id`, иначе из префикса `group.Name` до `_`.
+
+---
+
+## Что пишет пайплайн на группу (ЕПК)
+
+На каждый кластер/группу:
+
+1. Campaign (ЕПК / unified) — создать или reuse по имени (`dedupe_by_name`)
+2. AdGroup (без `Type` в API v501)
+3. Keywords + минус-фразы группы
+4. **Один** combinatorial `RESPONSIVE_AD` (пул заголовков × текстов)
+5. Sitelinks / callouts / images — campaign-level или per-group override
+
+Пул заголовков/текстов:
+
+1. Явный блок `combinatorial: { headlines, texts }` в group-файле, **или**
+2. Авто-сборка из `ads[]` типа `TEXT_AD` / `TEXT_IMAGE_AD` (Title/Title2 → headlines, Text → texts, cap 7/3)
+
+В live API уходит **один** `RESPONSIVE_AD`, не N классических `TextAd`.
+
+После create: optional `epk_settings` из `_campaign.yaml` → `Campaigns.update` + `bidmodifiers` на **каждую** созданную кампанию.
+
+---
+
+## `_campaign.yaml` — формат (как в коде / Zod)
+
+Поля ближе к API Direct (PascalCase внутри `campaign:`).
 
 ```yaml
-# Header — ЕПК campaign (created new; type is immutable)
+# optional top-level flags
+upload_strategy: single-campaign   # или one-per-cluster (default)
+dedupe_by_name: true
+client_login: client-login-here    # агентский подкабинет, optional
+
 campaign:
-  client_login: <client_login>                # Yandex login in plain text (NOT numeric id)
-  name: "epk-<client>-<theme>-v1"
-  type: UNIFIED_CAMPAIGN                       # ЕПК — the only supported type
-  status: DRAFT
-  state: OFF
-  currency: USD
-  daily_budget_micros: 10000000               # $10/day (>= MinimumDailyBudget USD)
-  bidding_strategy:
-    search: HIGHEST_POSITION                   # manual; MUST be active (not SERVING_OFF)
-    network: SERVING_OFF                        # search-only serving
-  geo: "Москва и Московская область"            # → RegionIds [1] on every group
-  region_ids: [1]
-  href: "https://example.com/"
-  callouts:                                     # → AdExtensionIds (шт. ≤ 50)
-    - "Гарантия 50 лет"
-    - "Свое производство"
-    - "Фикс-цена в договоре"
-    - "Проект бесплатно"
-  minus_words_campaign:
-    - "своими руками"
-    - "чертежи"
-    - "скачать"
-    - "бесплатно"
-    # ... see yandex-direct-api-quirks.md
+  Name: "epk-client-theme-v1"
+  Type: TEXT_CAMPAIGN              # в YAML-схеме ещё есть; live pipeline для search
+                                   # собирает ЕПК/unified payload (см. payload-builder)
+  StartDate: "2026-07-16"
+  DailyBudget:
+    Amount: 10000000               # micros (×1e6)
+    Currency: USD                  # RUB | USD | EUR | …
+  TextCampaign:
+    BiddingStrategy:
+      Search:
+        BiddingStrategyType: HIGHEST_POSITION   # manual; Search не SERVING_OFF
+      Network:
+        BiddingStrategyType: SERVING_OFF        # search-only
+    Settings:
+      - { Option: ADD_METRICA_TAG, Value: "YES" }
+    CounterIds: { Items: [12345678] }
+    PriorityGoals:
+      Items:
+        - { GoalId: 111, Value: 5000000 }       # micros
+    NegativeKeywords:
+      Items: ["бесплатно", "своими руками", "скачать"]
+    TrackingParams: "utm_source=yandex&utm_medium=cpc&utm_campaign={campaign_id}"
 
-  # OPTIONAL — ЕПК settings applied POST-CREATE to each created campaign
-  # (one Campaigns.update + one bidmodifiers.add). Omit the whole block if unused.
-  # On ЕПК only device (mobile/desktop/desktop_only) + video corrections apply;
-  # frequency capping is NOT settable via the API.
-  epk_settings:
-    excluded_sites: ["bad-site.com", "spam.ru"]      # площадки-исключения РСЯ (REPLACES the list)
-    negative_keywords: ["дёшево", "аналог"]           # campaign minus-words (REPLACES)
-    attribution_model: AUTO                            # short codes: LC/LSC/FC/LYDC/LSCCD/FCCD/LYDCCD/AUTO
-    counter_ids: [<counter_id>]                        # Metrika counter(s)
-    priority_goals:                                    # цель + ценность/стоимость конверсии (micros)
-      - { goal_id: <goal_id>, value: 5000000 }
-    strategy:                                          # типизированная стратегия ставок
-      type: pay_for_conversion                         # manual|max_clicks|avg_cpc|max_conversions|avg_cpa|pay_for_conversion|avg_crr|pay_for_conversion_crr
-      placement: both                                  # search|network|both
-      goal_id: <goal_id>
-      cpa_micros: 5000000                              # оплата за конверсию: цена конверсии
-    settings:                                          # ExtendedGeo = ENABLE_*_AREA_TARGETING
-      - { Option: ENABLE_AREA_OF_INTEREST_TARGETING, Value: "YES" }
-    notification:
-      EmailSettings: { Email: "me@example.com", SendAccountNews: "NO", SendWarnings: "YES" }
-    time_targeting:                                    # почасовое расписание показов
-      ConsiderWorkingWeekends: "YES"
-      Schedule:
-        Items: ["1,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100"]  # "day,c0..c23"
-    bid_modifiers:                                     # корректировки ставок (campaign-level)
-      - { type: mobile, bid_modifier: 75 }             # −25% на мобильных
-      - { type: video,  bid_modifier: 110 }            # +10% в видео
+# общие расширения (optional)
+sitelinks_set:
+  Sitelinks:
+    - { Title: "Цены", Description: "Актуальный прайс", Href: "https://example.com/prices" }
+    # max 8
 
-# Images uploaded once, referenced by key
-images:
-  img_core_v01: { source: url, url: "https://img.example.com/.../core-v01.png" }
-  img_core_v02: { source: url, url: "https://img.example.com/.../core-v02.png" }
+callouts:
+  - "Гарантия 50 лет"            # каждый ≤ 25 символов
+  - "Свое производство"
 
-# Ad groups — each holds ONE combinatorial ad (a titles×texts pool)
-groups:
+promo_extension:                   # optional
+  AdExtension:
+    PromoExtension:
+      PromotionType: DISCOUNT
+      Discount: 20
+      DiscountUnit: PERCENT
+      EndDate: "2026-12-31"
+      Href: "https://example.com/promo"
 
-  - name: "ag01_turnkey — Фахверк под ключ"
-    region_ids: [1]
-    href: "https://example.com/fahverk/"
-    keywords:
-      - "фахверк под ключ"
-      - "дом фахверк под ключ"
-      # ... 5–20 per group
-    minus_words:
-      - "аренда"
-      - "ремонт"
-    ad:                                          # exactly ONE combinatorial pool
-      titles:                                    # 1–7, each ≤56
-        - "Фахверк под ключ: 3 уровня готовности"
-        - "Фахверк под ключ за 4 месяца"
-        - "Рассчитайте фахверк с фикс-ценой"
-        - "Дом-фахверк без скрытых работ"
-        - "Фахверк с гарантией 50 лет"
-        - "Фахверк со сроком 2+2 месяца"
-        - "Проект и стройка фахверка под ключ"
-      texts:                                     # 1–3, each ≤81
-        - "Тёплый контур, инженерия или отделка. Покажем состав сметы."
-        - "Домокомплект 2 мес + сборка 2 мес. Фикс-цена. Гарантия 50 лет."
-        - "Гарантия 50 лет на конструктив. Производство и технадзор у подрядчика."
-      image_hashes: [img_core_v01, img_core_v02] # optional; resolved to AdImageHashes
-      sitelinks_set: default                      # → SitelinkSetId
-      callouts_from: campaign                     # inherit campaign callouts → AdExtensionIds
+images:                            # optional; ref `${image.<key>.Hash}` в ads
+  img_core_v01:
+    source: url
+    url: "https://cdn.example.com/core-v01.png"
 
-  - name: "ag02_buy_build — Купить фахверк-дом"
-    # ... same shape
-
-# Sitelinks (one set, referenced by ads via SitelinkSetId)
-sitelinks:
-  default:
-    - { title: "Уровни готовности", href: "https://example.com/fahverk/#packages", description: "Тёплый контур, инженерия или отделка" }
-    - { title: "Гарантия 50 лет",  href: "https://example.com/fahverk/#warranty", description: "Закреплена в договоре" }
-    # up to 8
-
-# Summary
-summary:
-  campaign_type: UNIFIED_CAMPAIGN
-  group_count: 22
-  combinatorial_ads: 22            # one pool per group
-  titles_per_ad: 7
-  texts_per_ad: 3
-  keyword_count_approx: 300
-  status: DRAFT
-  state: OFF
-  currency: USD
-  daily_budget_micros: 10000000
-  geo: MSK+MO
-  channel: "ohmy-seo → <account> / <client_login>"
+# post-create ЕПК settings (optional) — на каждую созданную кампанию
+epk_settings:
+  excluded_sites: ["bad-site.com"]
+  negative_keywords: ["дёшево"]
+  attribution_model: AUTO          # LC|LSC|FC|LYDC|LSCCD|FCCD|LYDCCD|AUTO
+  counter_ids: [12345678]
+  priority_goals:
+    - { goal_id: 111, value: 5000000 }
+  strategy:
+    type: pay_for_conversion       # manual|max_clicks|avg_cpc|max_conversions|avg_cpa|…
+    placement: both
+    goal_id: 111
+    cpa_micros: 5000000
+  bid_modifiers:
+    - { type: mobile, bid_modifier: 75 }
+    - { type: video, bid_modifier: 110 }
+  settings:
+    - { Option: ENABLE_AREA_OF_INTEREST_TARGETING, Value: "YES" }
 ```
 
-## Banned words (always check)
+---
 
-| Pattern | Why |
+## `group-*.yaml` — формат
+
+Один файл = **одна группа** (кластер).
+
+```yaml
+group:
+  Name: "1_turnkey-fahverk"        # префикс до _ → cluster_id, если нет _meta
+  Type: TEXT_AD_GROUP              # schema enum; API v501 Type на group НЕ шлёт
+  RegionIds: [1]                   # гео на группе, не на кампании
+  AutoTargetingCategories:         # optional
+    Items:
+      - { Category: TARGET_QUERIES, Value: "YES" }
+      - { Category: BROAD_MATCH, Value: "NO" }
+
+keywords:
+  - { Keyword: "фахверк под ключ" }
+  - { Keyword: "дом фахверк под ключ" }
+  # 1–200
+
+negative_keywords:
+  Items: ["аренда", "ремонт", "бесплатно"]
+
+_meta:
+  cluster_id: "1"                  # ключ для one-per-cluster имени campaign
+  intent: transactional            # informational|transactional|…
+  marker_query: "фахверк под ключ"
+
+# Вариант A (предпочтительный для ЕПК): явный пул
+combinatorial:
+  headlines:                       # → Titles, 1–7, каждый ≤56, слово ≤22
+    - "Фахверк под ключ: 3 уровня готовности"
+    - "Фахверк под ключ за 4 месяца"
+    - "Рассчитайте фахверк с фикс-ценой"
+  texts:                           # → Texts, 1–3, каждый ≤81, слово ≤23
+    - "Тёплый контур, инженерия или отделка. Покажем состав сметы."
+    - "Домокомплект 2 мес + сборка 2 мес. Фикс-цена. Гарантия 50 лет."
+
+# Вариант B: ads[] (TEXT_AD) — пайплайн сам соберёт pool из Title/Title2/Text
+ads:
+  - variant_id: A
+    Type: TEXT_AD
+    TextAd:
+      Title: "Фахверк под ключ: 3 уровня готовности"
+      Title2: "Фикс-цена в договоре"
+      Text: "Тёплый контур, инженерия или отделка. Покажем состав сметы."
+      Href: "https://example.com/fahverk/"
+      Mobile: "NO"
+      # SitelinkSetId: "${sitelinks_set.Id}"   # ref после create
+      # AdImageHash: "${image.img_core_v01.Hash}"
+
+  # schema допускает RESPONSIVE_AD напрямую:
+  # - Type: RESPONSIVE_AD
+  #   ResponsiveAd:
+  #     Titles: [...]
+  #     Texts: [...]
+  #     Hrefs: ["https://..."]     # в YAML-схеме массив; в API уходит singular Href
+
+# per-group overrides (optional)
+sitelinks_set:
+  Sitelinks:
+    - { Title: "Пакеты", Href: "https://example.com/fahverk/#packages" }
+
+callouts:
+  - "Только эта группа"
+```
+
+`ads` — **min 1** (schema). Даже при `combinatorial:` нужен хотя бы один ad (часто TEXT_AD-заглушка с Href для landing).
+
+---
+
+## Лимиты combinatorial (API 2026)
+
+| Поле | Лимит |
 |---|---|
-| `!!!` | модерация отклонит |
-| `№1` | превосходная степень |
-| `лучший`, `лучшая`, `лучшее`, `лучшие` | превосходная степень |
-| `самый`, `самая`, `самое`, `самые` | превосходная степень |
-| `100%`, `гарантированно` | вводит в заблуждение |
-| CAPS в заголовке | снижает CTR / модерация |
-| Эмодзи в headline | модерация отклонит |
-| Цена без «от» | нельзя гарантировать |
+| Titles / headlines | 1–7, ≤56 символов, слово ≤22 |
+| Texts | 1–3, ≤81, слово ≤23 |
+| Href | singular ≤1024 (API); в YAML schema — `Hrefs[]` |
+| AdImageHashes | 1–5 на ad |
+| RESPONSIVE_AD / группа | ≤3 non-archived (обычно **один** pool) |
 
-## QA validator pattern (qa_<client>.mjs)
+## Banned (модерация)
 
-Validate the pool per group **before** any API call. Same parser the uploader uses.
+`!!!`, `№1`, `лучший*`, `самый*`, `100%`, `гарантированно`, CAPS-заголовок, эмодзи в headline, цена без «от».
 
-```js
-import fs from 'node:fs';
-import yaml from 'js-yaml';
-const doc = yaml.load(fs.readFileSync(path, 'utf8'));
-const BANNED = [/!!!/, /№1/, /лучш/i, /сам(ый|ая|ое|ые)/i, /100\s?%/, /гарантированно/i];
-let problems = 0;
-for (const g of doc.groups) {
-  const { titles = [], texts = [] } = g.ad || {};
-  if (titles.length < 1 || titles.length > 7) { console.log(`${g.name}: titles ${titles.length} (need 1–7)`); problems++; }
-  if (texts.length < 1 || texts.length > 3)   { console.log(`${g.name}: texts ${texts.length} (need 1–3)`); problems++; }
-  for (const t of titles) {
-    if ([...t].length > 56) { console.log(`${g.name}: title >56: "${t}"`); problems++; }
-    if (t.split(/\s+/).some(w => [...w].length > 22)) { console.log(`${g.name}: word >22 in title`); problems++; }
-  }
-  for (const t of texts) {
-    if ([...t].length > 81) { console.log(`${g.name}: text >81: "${t}"`); problems++; }
-    if (t.split(/\s+/).some(w => [...w].length > 23)) { console.log(`${g.name}: word >23 in text`); problems++; }
-  }
-  for (const s of [...titles, ...texts]) for (const re of BANNED) if (re.test(s)) { console.log(`${g.name}: banned ${re} in "${s}"`); problems++; }
-}
-console.log(problems ? `FAIL: ${problems} problems` : `OK: ${doc.groups.length} groups clean`);
+## Регионы (шпаргалка)
+
+| ID | Регион |
+|---:|---|
+| 1 | Московская область (МСК+МО для показов) |
+| 213 | Москва (город) |
+| 2 | СПб |
+| 10174 | ЛО |
+| 225 | Россия |
+| 0 | вся РФ (осторожно) |
+
+---
+
+## Поток агента
+
+```text
+1. Собрать drafts/<…>/  (_campaign.yaml + group-*.yaml)
+2. yandex_direct_render_to_xlsx { folder }     # превью (optional)
+3. yandex_direct_upload_from_yaml { folder, dry_run: true }
+4. Проверить plan / plan_hash / counts
+5. Human OK + env flags
+6. yandex_direct_upload_from_yaml {
+     folder, dry_run: false, plan_hash, confirm: true, acknowledge_live
+   }
+7. list_*/get_stats → human OK → moderate_ads
 ```
 
-Validator MUST accept the exact YAML shape the uploader consumes. If they drift, fix one — never both.
-
-## Region ID cheat-sheet
-
-| ID | Region |
-|---:|---|
-| 0 | Россия целиком (avoid unless explicitly requested) |
-| 1 | Московская область |
-| 2 | Санкт-Петербург |
-| 213 | Москва (город) |
-| 10174 | Ленинградская область |
-
-МСК+МО = `[1]` (область включает город для показов; add `213` to force city). СПб+ЛО = `[2, 10174]`.
+**Не** описывать бандл как один flat YAML с `groups: [...]` — загрузчик такого **не читает**.

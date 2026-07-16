@@ -23,19 +23,39 @@ Yandex Direct consolidated all ad formats into the **Единая перформ
 
 Prefer these **typed MCP tools** — they embed the quirks (v501 endpoints, big‑int string IDs, field placement, gates). Use the raw `yandex_direct_api` gateway only for coverage gaps.
 
-| Job | Tool(s) |
+| Job | Tool(s) (реальные MCP-имена) |
 |---|---|
-| **Inspect / read** (no gate) | `list_campaigns`, `list_adgroups`, `list_ads`, `list_keywords`, `get_stats` (Reports v5), `get_search_terms`, `get_change_history`; `get` modes of `feeds`, `set_bid_modifiers`, `negative_keywords_add` |
-| **Build a full campaign from a bundle** | `upload_from_yaml` (folder `_campaign.yaml` + `group-*.yaml`; dry‑run → plan_hash → live; applies `epk_settings` post‑create) — or `upload_campaign_bundle` (CSV) |
-| **Create piece‑by‑piece (DRAFT)** | `create_campaign`, `create_adgroup`, `create_ad_unified`, `create_sitelinks_set`, `create_promo_extension`, `upload_image` |
-| **Point‑edit live objects** | `update_campaign`, `update_adgroup`, `update_ad`, `update_budgets`, `update_adgroup_autotargeting` |
-| **Targeting & corrections** | `set_bid_modifiers` (корректировки), `negative_keywords_add` (replace/append/get), `link_metrika_goals` |
-| **Product feeds** | `feeds` (add/get/update/delete; `Status` = moderation) |
-| **Lifecycle** | `pause_campaigns`, `resume_campaigns`, `moderate_ads`, `delete_campaigns` |
-| **Reports export** | `render_to_xlsx` |
-| **Anything else** | `yandex_direct_api` — raw gateway to any v5/v501 endpoint |
+| **Inspect / read** (no gate) | `yandex_direct_list_campaigns`, `…_list_adgroups`, `…_list_ads`, `…_list_keywords`, `…_get_stats`, `…_get_search_terms`, `…_get_change_history`; get-modes of `…_feeds`, `…_set_bid_modifiers`, `…_negative_keywords_add` |
+| **Build from YAML folder** | `yandex_direct_upload_from_yaml` — **папка** с `_campaign.yaml` + `group-*.yaml`; dry‑run → `plan_hash` → live; `epk_settings` post‑create |
+| **Build from CSV** | `yandex_direct_upload_campaign_bundle` |
+| **Create piece‑by‑piece (DRAFT)** | `yandex_direct_create_campaign`, `…_create_adgroup`, `…_create_ad_unified`, `…_create_sitelinks_set`, `…_create_promo_extension`, `…_upload_image` |
+| **Point‑edit live objects** | `yandex_direct_update_campaign`, `…_update_adgroup`, `…_update_ad`, `…_update_budgets`, `…_update_adgroup_autotargeting` |
+| **Targeting & corrections** | `yandex_direct_set_bid_modifiers`, `…_negative_keywords_add`, `…_link_metrika_goals` |
+| **Product feeds** | `yandex_direct_feeds` |
+| **Lifecycle** | `yandex_direct_pause_campaigns`, `…_resume_campaigns`, `…_moderate_ads`, `…_delete_campaigns` |
+| **XLSX preview** | `yandex_direct_render_to_xlsx` `{ folder }` |
+| **Anything else** | `yandex_direct_api` — raw gateway v5/v501 |
 
-**Typical flows.** New campaign → `upload_from_yaml` *or* `create_campaign` → `create_adgroup` → `upload_image`/`create_sitelinks_set`/`create_promo_extension` → `create_ad_unified` → verify → *(human OK)* → `moderate_ads`. Tune existing → `update_campaign`/`update_adgroup`/`update_ad` + `set_bid_modifiers` + `negative_keywords_add`. Optimise for conversions → `update_campaign` with a typed `strategy` (avg_cpa / pay_for_conversion) + `counter_ids` + `priority_goals`.
+**Typical flows.** New → `yandex_direct_upload_from_yaml` *or* piece-by-piece create → verify → *(human OK)* → `yandex_direct_moderate_ads`. Tune → `update_*` + `set_bid_modifiers` + `negative_keywords_add`. Conversions → `update_campaign` + typed `strategy` + `counter_ids` + `priority_goals`.
+
+### YAML folder model (важно — не путать)
+
+```
+folder/                      ← 1 бандл (аргумент folder)
+  _campaign.yaml             ← настройки + upload_strategy + sitelinks/callouts/images/epk_settings
+  group-001-….yaml           ← 1 группа объявлений (кластер ключей)
+  group-002-….yaml
+```
+
+| | |
+|---|---|
+| **1 папка** | 1 **бандл** |
+| **1 `group-*.yaml`** | 1 **группа** (+ keywords + **один** combinatorial ad) |
+| **`upload_strategy: one-per-cluster`** (default) | **отдельная кампания Директа на каждый group-файл** (`cluster-{id}`) |
+| **`upload_strategy: single-campaign`** | **одна** кампания на весь бандл (`campaign.Name`), внутри все группы |
+
+«Одна папка = одна кампания» — **только** при `single-campaign`. По умолчанию папка = N кампаний.  
+Схема файлов и примеры: [`templates/yaml-bundle.md`](templates/yaml-bundle.md). **Не** писать один flat YAML с `groups: [...]` — loader этого не читает.
 
 ## Combinatorial ЕПК upload recipe (verified live)
 
@@ -82,7 +102,7 @@ Beyond upload, the MCP surgically edits **existing** objects. Each update tool s
 - **`update_ad`** — a combinatorial `RESPONSIVE_AD`: `titles`, `texts`, `href`, `image_hashes`, `video_extension_ids`, `sitelinks_set_id`, `ad_extensions`, `business_id`. **Pass `ad_id` as a STRING** — ad IDs exceed 2⁵³; a rounded number → error 8800 «Ad not found». Editing creative can re‑trigger moderation.
 - **`set_bid_modifiers`** (корректировки, `mode: add|set|delete|get`) — `bid_modifier` is a **percent coefficient** (100 = no change, 50 = −50 %, 130 = +30 %). No enable/disable toggle — change via `mode:set`. **On ЕПК only `mobile` / `desktop` / `desktop_only` / `video` apply**; demographics/regional/retargeting are rejected on ЕПК (they belong to classic campaign types).
 - **`negative_keywords_add`** — campaign or group, `mode: replace | append | get`. Prefer `append` (reads + merges + dedupes) so you don't wipe the existing list.
-- **YAML bundle** — the same settings ride along in `_campaign.yaml` under an optional `epk_settings:` block, applied post‑create to every campaign the bundle creates.
+- **YAML bundle** — optional `epk_settings:` in `_campaign.yaml`, applied **post‑create to every campaign** the strategy creates (при `one-per-cluster` — к каждой `cluster-*` кампании).
 
 ### Typed bidding `strategy`
 
@@ -156,4 +176,4 @@ Yandex **ad** IDs exceed JavaScript's `2⁵³` (e.g. `1914841739704982433`). `JS
 ## Reference
 
 - [`references/yandex-direct-api-quirks.md`](references/yandex-direct-api-quirks.md) — the full set of live‑verified API gotchas (v501‑only ads, big‑int IDs, bid‑modifier ЕПК matrix, strategy compatibility, `PriorityGoals` Operation, feeds, etc.). Read it before writing production Direct code.
-- [`templates/yaml-bundle.md`](templates/yaml-bundle.md) — the `upload_from_yaml` bundle schema with field limits and an `epk_settings` example.
+- [`templates/yaml-bundle.md`](templates/yaml-bundle.md) — реальная folder-схема `_campaign.yaml` + `group-*.yaml`, `upload_strategy`, лимиты pool, `epk_settings`.
