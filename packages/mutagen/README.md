@@ -18,7 +18,7 @@ Copy `.env.example` to `.env` and fill in the values:
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `MCP_MUTAGEN_MASTER_KEY` | yes | — | 32 hex bytes for AES-256-GCM encryption. Generate: `openssl rand -hex 32` |
-| `MUTAGEN_API_KEY` | yes | — | Mutagen.ru API key. Required for both tools. |
+| `MUTAGEN_API_KEY` | yes | — | Mutagen.ru API key ([get key](https://mutagen.ru/?r=69383)). Required for both tools. |
 | `MCP_MUTAGEN_DB_PATH` | no | `./data/state.db` | Path to the local SQLite state database |
 | `MCP_MUTAGEN_CACHE_TTL` | no | `2592000` | Cache TTL in seconds (default 30 days) |
 
