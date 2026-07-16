@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="340" viewBox="0 0 760 340" role="img" aria-label="SERP · Яндекс / Google">
+  <defs>
+    <linearGradient id="g-xmlstock.svg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#8B5CF6"/><stop offset="100%" stop-color="#A78BFA"/>
+    </linearGradient>
+    <linearGradient id="bg-xmlstock.svg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0b1220"/><stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+  </defs>
+  <rect width="760" height="340" rx="14" fill="url(#bg-xmlstock.svg)"/>
+  <rect x="0.75" y="0.75" width="758.5" height="338.5" rx="13.25" fill="none" stroke="#1e293b"/>
+  <rect x="0" y="20" width="4" height="300" rx="2" fill="#8B5CF6"/>
+  <rect x="36" y="24" width="40" height="40" rx="9" fill="url(#g-xmlstock.svg)"/>
+  <text x="56" y="50" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="15" font-weight="700" fill="#0b1220">X</text>
+  <text x="90" y="40" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12" font-weight="600" fill="#8B5CF6" letter-spacing="0.06em">XMLSTOCK</text>
+  <text x="90" y="62" font-family="ui-sans-serif, system-ui, sans-serif" font-size="20" font-weight="700" fill="#f8fafc">SERP · Яндекс / Google</text>
+  <text x="36" y="100" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" fill="#94a3b8">XMLStock reseller: live SERP + архив выдачи</text>
+  <rect x="546" y="28" width="178" height="26" rx="7" fill="#020617" stroke="#334155"/>
+  <text x="635" y="45" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#e2e8f0">mcp-xmlstock</text>
+  <text x="724" y="70" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11" fill="#64748b">v0.2.0</text>
+  <text x="36" y="138" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10.5" font-weight="700" fill="#64748b" letter-spacing="0.1em">MCP TOOLS</text>
+  <rect x="36" y="158" width="162" height="26" rx="6" fill="#8B5CF6" fill-opacity="0.14" stroke="#8B5CF6" stroke-opacity="0.4"/><text x="46" y="175" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11.5" fill="#8B5CF6">xmlstock_yandex_serp</text><rect x="206" y="158" width="162" height="26" rx="6" fill="#8B5CF6" fill-opacity="0.14" stroke="#8B5CF6" stroke-opacity="0.4"/><text x="216" y="175" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11.5" fill="#8B5CF6">xmlstock_google_serp</text><rect x="376" y="158" width="162" height="26" rx="6" fill="#8B5CF6" fill-opacity="0.14" stroke="#8B5CF6" stroke-opacity="0.4"/><text x="386" y="175" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11.5" fill="#8B5CF6">xmlstock_usage_stats</text><rect x="36" y="192" width="183" height="26" rx="6" fill="#8B5CF6" fill-opacity="0.14" stroke="#8B5CF6" stroke-opacity="0.4"/><text x="46" y="209" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11.5" fill="#8B5CF6">xmlstock_archive_search</text><rect x="227" y="192" width="162" height="26" rx="6" fill="#8B5CF6" fill-opacity="0.14" stroke="#8B5CF6" stroke-opacity="0.4"/><text x="237" y="209" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="11.5" fill="#8B5CF6">xmlstock_archive_get</text>
+  <text x="36" y="244" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="12.5" fill="#94a3b8">· xmlstock_yandex_serp — выдача Яндекса (позиции, сниппеты)</text><text x="36" y="264" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="12.5" fill="#94a3b8">· xmlstock_google_serp — выдача Google</text><text x="36" y="284" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="12.5" fill="#94a3b8">· archive_search / archive_get — историческая SERP · usage_stats</text>
+</svg>
