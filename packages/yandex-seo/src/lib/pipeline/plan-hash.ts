@@ -23,6 +23,9 @@ export function computeCampaignName(
     const key = intent as keyof typeof strategy.intent_to_campaign;
     return strategy.intent_to_campaign[key] ?? `${intent}-campaign`;
   }
+  if (strategy.mode === "cluster-map") {
+    return strategy.cluster_to_campaign[cluster_id] ?? strategy.default_campaign;
+  }
   // one-per-cluster
   return `cluster-${cluster_id}`;
 }
@@ -79,8 +82,11 @@ export function computePlanHash(input: {
     { Sitelinks: Array<{ Title: string; Description?: string; Href: string }> }
   > | null;
   callouts_per_group?: Record<string, string[]> | null;
+  /** Per-campaign budget overrides (name → micros). Bound only when non-empty so
+   *  single-campaign bundles keep their historical hash byte-for-byte. */
+  daily_budget_micros_by_campaign?: Record<string, number> | null;
 }): string {
-  const planInput = {
+  const planInput: Record<string, unknown> = {
     csv_hash: input.csv_hash,
     account_login: input.account_login,
     campaign_strategy: input.campaign_strategy,
@@ -112,6 +118,11 @@ export function computePlanHash(input: {
     sitelinks_set_per_group: input.sitelinks_set_per_group ?? null,
     callouts_per_group: input.callouts_per_group ?? null,
   };
+  // Additive: only present for multi-campaign bundles with per-campaign budgets.
+  // Omitting the key entirely when absent keeps single-campaign hashes unchanged.
+  if (input.daily_budget_micros_by_campaign && Object.keys(input.daily_budget_micros_by_campaign).length > 0) {
+    planInput.daily_budget_micros_by_campaign = input.daily_budget_micros_by_campaign;
+  }
   return crypto.createHash("sha256").update(stableStringify(planInput)).digest("hex");
 }
 

@@ -49,6 +49,19 @@ export function loadCampaignFolder(folder: string): LoadedCampaignBundle {
     })
     .filter((g): g is NonNullable<typeof g> => g !== null);
 
+  // 5. Multi-campaign consistency: when a `campaigns` map is declared, every
+  //    group's `campaign` value must reference a key in that map (typo guard).
+  const campaignKeys = campaign.campaigns ? Object.keys(campaign.campaigns) : null;
+  if (campaignKeys) {
+    for (const g of groups) {
+      if (g.campaign && !campaignKeys.includes(g.campaign)) {
+        errors.push(
+          `group "${g.group.Name}": campaign "${g.campaign}" is not a key in the campaigns map (${campaignKeys.join(", ")})`
+        );
+      }
+    }
+  }
+
   return {
     campaign_dir: folder,
     campaign,

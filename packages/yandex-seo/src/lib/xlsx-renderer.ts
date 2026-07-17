@@ -1,18 +1,17 @@
 import ExcelJS from "exceljs";
-import { existsSync } from "fs";
 import { basename, join } from "path";
 import { LoadedCampaignBundle } from "./yaml-loader.js";
 
 /**
- * Canonical 5-sheet workbook renderer — the owner's standardized report format
- * for ALL clients. Sheet names and column headers are canon (verbatim):
- *   1. CombinatorialAds        — one row per ad of each group
- *   2. canonical-build-preview — one row per group
- *   3. commander-import        — per group: one ad row, then one row per phrase
- *   4. design-assets           — one row per image of each group
- *   5. QA                      — deterministic render checks
+ * Direct campaign workbook renderer — 3 sheets, owner-friendly:
+ *   1. 01_Превью_для_Кирилла — таблица, ОДНА строка = ОДНА группа (одно объявление);
+ *      ключи группы списком в ячейке. Первый/активный лист.
+ *   2. Импорт_Коммандер      — плоский формат для ручного импорта в Директ Коммандер
+ *      (строка объявления + по строке на фразу).
+ *   3. Просмотр_объявлений   — визуальный рендер каждого объявления как в выдаче Яндекса
+ *      (заголовок, ссылка, текст, сетка быстрых ссылок с описаниями, уточнения).
  */
-const RENDERER_VERSION = "canonical-v2";
+const RENDERER_VERSION = "canonical-v4";
 const RENDERER_PATH = "packages/yandex-seo/src/lib/xlsx-renderer.ts";
 
 const HEADER_FILL: ExcelJS.FillPattern = {
@@ -25,6 +24,11 @@ const RED_FILL: ExcelJS.FillPattern = {
   pattern: "solid",
   fgColor: { argb: "FFFFC0C0" },
 };
+
+// Colours for the visual (SERP-like) sheet.
+const TITLE_BLUE = "FF0B41CD"; // ad title / sitelink title
+const URL_GREEN = "FF006621"; // display url
+const DESC_GREY = "FF545454"; // descriptions / secondary text
 
 /** Human-readable region labels; unknown ids are rendered as the raw number. */
 const GEO_NAMES: Record<number, string> = {
@@ -282,14 +286,6 @@ function buildGroupView(
   };
 }
 
-/** Style a header row: bold + gray fill + frozen pane. */
-function styleHeader(sheet: ExcelJS.Worksheet): void {
-  const headerRow = sheet.getRow(1);
-  headerRow.font = { bold: true };
-  headerRow.fill = HEADER_FILL;
-  sheet.views = [{ state: "frozen", ySplit: 1 }];
-}
-
 export async function renderCampaignBundleToXlsx(
   bundle: LoadedCampaignBundle,
   outputPath: string
@@ -309,133 +305,128 @@ export async function renderCampaignBundleToXlsx(
     buildGroupView(g, campaignSitelinks, campaignCallouts, images, warnings)
   );
 
-  // K = max image count across all ads (minimum 2 columns) — shared by sheets 1 and 3
+  // Multi-campaign: each group names its campaign (group.campaign), else the base
+  // campaign Name. Rows are ordered by campaign (then bundle order) so every
+  // campaign's groups sit together in the preview; single-campaign bundles keep
+  // their original order (one campaign → stable by index).
+  const campaignOf = (gi: number): string => bundle.groups[gi].campaign ?? camp.Name;
+  const order = groups
+    .map((_, i) => i)
+    .sort((a, b) => {
+      const ca = campaignOf(a);
+      const cb = campaignOf(b);
+      if (ca !== cb) return ca < cb ? -1 : 1;
+      return a - b;
+    });
+
+  // K = max image count across all groups (minimum 2 columns).
   const imageColumns = Math.max(
     2,
-    ...groups.flatMap((gv) => gv.ads.map((a) => a.images.length)),
     ...groups.map((gv) => gv.images.length)
   );
 
   let lengthWarnCount = 0;
 
   // -------------------------------------------------------------------------
-  // Sheet 1 — CombinatorialAds: one row per ad of each group
+  // Sheet 1 — 01_Превью_для_Кирилла: owner table, ONE row per group (one ad).
   // -------------------------------------------------------------------------
-  const combi = wb.addWorksheet("CombinatorialAds");
-  combi.columns = [
-    { header: "campaign_name", key: "campaign_name", width: 25 },
-    { header: "geo", key: "geo", width: 14 },
-    { header: "group_name", key: "group_name", width: 25 },
-    { header: "cluster_id", key: "cluster_id", width: 10 },
-    { header: "landing_url", key: "landing_url", width: 35 },
-    { header: "display_url", key: "display_url", width: 20 },
+  const owner = wb.addWorksheet("01_Превью_для_Кирилла");
+  owner.columns = [
+    { header: "campaign_name", key: "campaign_name", width: 22 },
+    { header: "group_id", key: "group_id", width: 10 },
+    { header: "group_name", key: "group_name", width: 26 },
+    { header: "keywords", key: "keywords", width: 40 },
+    { header: "geo", key: "geo", width: 12 },
+    { header: "persona", key: "persona", width: 24 },
+    { header: "intent", key: "intent", width: 16 },
     ...Array.from({ length: 7 }, (_, i) => ({
-      header: `headline_${i + 1}`, key: `headline_${i + 1}`, width: 30,
+      header: `headline_${i + 1}`, key: `headline_${i + 1}`, width: 28,
     })),
     ...Array.from({ length: 3 }, (_, i) => ({
-      header: `text_${i + 1}`, key: `text_${i + 1}`, width: 42,
+      header: `text_${i + 1}`, key: `text_${i + 1}`, width: 40,
     })),
-    ...Array.from({ length: imageColumns }, (_, i) => ({
-      header: `image_${i + 1}`, key: `image_${i + 1}`, width: 35,
+    ...Array.from({ length: 8 }, (_, i) => ({
+      header: `sitelink_${i + 1}`, key: `sitelink_${i + 1}`, width: 22,
     })),
-    { header: "sitelink_titles", key: "sitelink_titles", width: 45 },
     { header: "sitelink_descs", key: "sitelink_descs", width: 55 },
-    { header: "sitelink_urls", key: "sitelink_urls", width: 55 },
     { header: "callouts", key: "callouts", width: 40 },
-    { header: "group_minus_words", key: "group_minus_words", width: 30 },
-    { header: "campaign_minus_words", key: "campaign_minus_words", width: 30 },
-  ];
-  styleHeader(combi);
-
-  let adRowCount = 0;
-  for (const gv of groups) {
-    for (const ad of gv.ads) {
-      const rowData: Record<string, string> = {
-        campaign_name: camp.Name,
-        geo: gv.geo,
-        group_name: gv.name,
-        cluster_id: gv.clusterId,
-        landing_url: ad.landing,
-        display_url: netloc(ad.landing),
-        sitelink_titles: gv.slTitlesJoined,
-        sitelink_descs: gv.slDescsJoined,
-        sitelink_urls: gv.slUrlsJoined,
-        callouts: gv.calloutsJoined,
-        group_minus_words: gv.groupMinus,
-        campaign_minus_words: campaignMinus,
-      };
-      for (let i = 0; i < 7; i++) rowData[`headline_${i + 1}`] = ad.headlines[i] ?? "";
-      for (let i = 0; i < 3; i++) rowData[`text_${i + 1}`] = ad.texts[i] ?? "";
-      for (let i = 0; i < imageColumns; i++) rowData[`image_${i + 1}`] = ad.images[i]?.value ?? "";
-
-      const row = combi.addRow(rowData);
-
-      // Length limits — red fill + warning per offending cell (56 / 81)
-      ad.headlines.forEach((h, i) => {
-        if (h.length > 56) {
-          row.getCell(`headline_${i + 1}`).fill = RED_FILL;
-          warnings.push(`${gv.name}: headline_${i + 1} too long (${h.length}/56)`);
-          lengthWarnCount++;
-        }
-      });
-      ad.texts.forEach((t, i) => {
-        if (t.length > 81) {
-          row.getCell(`text_${i + 1}`).fill = RED_FILL;
-          warnings.push(`${gv.name}: text_${i + 1} too long (${t.length}/81)`);
-          lengthWarnCount++;
-        }
-      });
-
-      // Sitelinks/callouts issues — highlight on every row of the group
-      if (gv.slTitlesBad) row.getCell("sitelink_titles").fill = RED_FILL;
-      if (gv.slDescriptionsBad) row.getCell("sitelink_descs").fill = RED_FILL;
-      if (gv.calloutsBad) row.getCell("callouts").fill = RED_FILL;
-
-      adRowCount++;
-    }
-  }
-
-  // -------------------------------------------------------------------------
-  // Sheet 2 — canonical-build-preview: one row per group
-  // -------------------------------------------------------------------------
-  const preview = wb.addWorksheet("canonical-build-preview");
-  preview.columns = [
-    { header: "Кампания", key: "campaign", width: 25 },
-    { header: "Группа", key: "group", width: 25 },
-    { header: "Тип услуги", key: "service_type", width: 20 },
-    { header: "Аудитория", key: "audience", width: 40 },
-    { header: "Интент", key: "intent", width: 15 },
-    { header: "Ключевые запросы (wordstat)", key: "keywords", width: 60 },
-    ...Array.from({ length: 7 }, (_, i) => ({
-      header: `Заголовок ${i + 1}`, key: `h${i + 1}`, width: 30,
+    { header: "href", key: "href", width: 34 },
+    ...Array.from({ length: imageColumns }, (_, i) => ({
+      header: `image_${i + 1}`, key: `image_${i + 1}`, width: 34,
     })),
-    ...Array.from({ length: 3 }, (_, i) => ({
-      header: `Текст ${i + 1}`, key: `t${i + 1}`, width: 42,
-    })),
+    { header: "reviewer_status", key: "reviewer_status", width: 14 },
+    { header: "reviewer_notes", key: "reviewer_notes", width: 40 },
   ];
-  styleHeader(preview);
+  const ownerHeader = owner.getRow(1);
+  ownerHeader.font = { bold: true };
+  ownerHeader.fill = HEADER_FILL;
+  owner.views = [{ state: "frozen", xSplit: 3, ySplit: 1 }];
 
-  for (let gi = 0; gi < groups.length; gi++) {
+  for (const gi of order) {
     const gv = groups[gi];
     const meta = bundle.groups[gi]._meta;
-    const audience = metaString(meta, "persona") || metaString(meta, "audience");
+    const persona = metaString(meta, "persona") || metaString(meta, "audience");
+    const reviewerStatus = metaString(meta, "reviewer_status") || "TBD";
     const rowData: Record<string, string> = {
-      campaign: camp.Name,
-      group: gv.name,
-      service_type: metaString(meta, "service_type"),
-      audience: audience.slice(0, 80),
-      intent: metaString(meta, "intent"),
+      campaign_name: campaignOf(gi),
+      group_id: gv.clusterId,
+      group_name: gv.name,
       keywords: gv.keywordsJoined,
+      geo: gv.geo,
+      persona: persona.slice(0, 80),
+      intent: metaString(meta, "intent"),
+      sitelink_descs: gv.slDescsJoined,
+      callouts: gv.calloutsJoined,
+      href: gv.landing,
+      reviewer_status: reviewerStatus,
+      reviewer_notes: metaString(meta, "reviewer_notes"),
     };
-    for (let i = 0; i < 7; i++) rowData[`h${i + 1}`] = gv.pool.headlines[i] ?? "";
-    for (let i = 0; i < 3; i++) rowData[`t${i + 1}`] = gv.pool.texts[i] ?? "";
-    preview.addRow(rowData);
+    for (let i = 0; i < 7; i++) rowData[`headline_${i + 1}`] = gv.pool.headlines[i] ?? "";
+    for (let i = 0; i < 3; i++) rowData[`text_${i + 1}`] = gv.pool.texts[i] ?? "";
+    for (let i = 0; i < 8; i++) rowData[`sitelink_${i + 1}`] = gv.sitelinks[i]?.Title ?? "";
+    for (let i = 0; i < imageColumns; i++) rowData[`image_${i + 1}`] = gv.images[i]?.value ?? "";
+
+    if (gv.keywords.length === 0) {
+      rowData.keywords = "TBD";
+      warnings.push(`${gv.name}: no keyword/skeleton source`);
+    }
+
+    const row = owner.addRow(rowData);
+
+    // Length limits — red fill + warning per offending cell (56 / 81).
+    gv.pool.headlines.forEach((h, i) => {
+      if (h.length > 56) {
+        row.getCell(`headline_${i + 1}`).fill = RED_FILL;
+        warnings.push(`${gv.name}: headline_${i + 1} too long (${h.length}/56)`);
+        lengthWarnCount++;
+      }
+    });
+    gv.pool.texts.forEach((t, i) => {
+      if (t.length > 81) {
+        row.getCell(`text_${i + 1}`).fill = RED_FILL;
+        warnings.push(`${gv.name}: text_${i + 1} too long (${t.length}/81)`);
+        lengthWarnCount++;
+      }
+    });
+    if (gv.name.length > 56) {
+      row.getCell("group_name").fill = RED_FILL;
+      warnings.push(`${gv.name}: group name too long (${gv.name.length}/56)`);
+      lengthWarnCount++;
+    }
+    if (gv.slTitlesBad) { for (let i = 0; i < 8; i++) row.getCell(`sitelink_${i + 1}`).fill = RED_FILL; }
+    if (gv.slDescriptionsBad) row.getCell("sitelink_descs").fill = RED_FILL;
+    if (gv.calloutsBad) row.getCell("callouts").fill = RED_FILL;
+    if (reviewerStatus === "BLOCK" || reviewerStatus === "WARN") {
+      row.getCell("reviewer_status").fill = RED_FILL;
+    }
   }
+  owner.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: owner.columnCount } };
 
   // -------------------------------------------------------------------------
-  // Sheet 3 — commander-import: per group, one ad row then one row per phrase
+  // Sheet 2 — Импорт_Коммандер: per group, one ad row then one row per phrase.
+  // Stable Russian column headers for the desktop Direct Commander import.
   // -------------------------------------------------------------------------
-  const commander = wb.addWorksheet("commander-import");
+  const commander = wb.addWorksheet("Импорт_Коммандер");
   commander.columns = [
     { header: "Тип кампании", key: "camp_type", width: 26 },
     { header: "Название кампании", key: "camp_name", width: 25 },
@@ -460,13 +451,16 @@ export async function renderCampaignBundleToXlsx(
       header: `Изображение ${i + 1}`, key: `img${i + 1}`, width: 35,
     })),
   ];
-  styleHeader(commander);
+  const commanderHeader = commander.getRow(1);
+  commanderHeader.font = { bold: true };
+  commanderHeader.fill = HEADER_FILL;
+  commander.views = [{ state: "frozen", ySplit: 1 }];
 
-  for (const gv of groups) {
-    // Ad row: texts/links/extensions/images filled, phrase empty, campaign minus filled
+  for (const gi of order) {
+    const gv = groups[gi];
     const adRow: Record<string, string> = {
       camp_type: "Единая перфоманс-кампания",
-      camp_name: camp.Name,
+      camp_name: campaignOf(gi),
       group_name: gv.name,
       phrase: "",
       region: gv.geo,
@@ -484,11 +478,10 @@ export async function renderCampaignBundleToXlsx(
     for (let i = 0; i < imageColumns; i++) adRow[`img${i + 1}`] = gv.images[i]?.value ?? "";
     commander.addRow(adRow);
 
-    // Phrase rows: only type/campaign/group/phrase/region/link/display/group-minus
     for (const kw of gv.keywords) {
       commander.addRow({
         camp_type: "Единая перфоманс-кампания",
-        camp_name: camp.Name,
+        camp_name: campaignOf(gi),
         group_name: gv.name,
         phrase: kw,
         region: gv.geo,
@@ -500,107 +493,111 @@ export async function renderCampaignBundleToXlsx(
   }
 
   // -------------------------------------------------------------------------
-  // Sheet 4 — design-assets: one row per image of each group
+  // Sheet 3 — Просмотр_объявлений: visual SERP-like card per group.
   // -------------------------------------------------------------------------
-  const assets = wb.addWorksheet("design-assets");
-  assets.columns = [
-    { header: "cluster_id", key: "cluster_id", width: 10 },
-    { header: "group_name", key: "group_name", width: 25 },
-    { header: "image_path", key: "image_path", width: 60 },
-    { header: "file_exists", key: "file_exists", width: 12 },
-  ];
-  styleHeader(assets);
+  const view = wb.addWorksheet("Просмотр_объявлений");
+  view.getColumn(1).width = 50;
+  view.getColumn(2).width = 12;
+  view.getColumn(3).width = 50;
+  view.getColumn(4).width = 12;
 
-  for (const gv of groups) {
-    for (const img of gv.images) {
-      const fileExists =
-        img.kind === "file"
-          ? (existsSync(img.value) ? "True" : "False")
-          : img.kind === "url"
-            ? "url"
-            : "";
-      assets.addRow({
-        cluster_id: gv.clusterId,
-        group_name: gv.name,
-        image_path: img.value,
-        file_exists: fileExists,
-      });
+  let r = 1;
+  const merge = (row: number, c1: number, c2: number) => view.mergeCells(row, c1, row, c2);
+  const wrap = (row: number): void => { view.getRow(row).alignment = { wrapText: true, vertical: "top" }; };
+  let currentCampaign: string | null = null;
+
+  for (const gi of order) {
+    const gv = groups[gi];
+    // campaign banner — emitted once when the campaign changes (multi-campaign bundles)
+    const campaignName = campaignOf(gi);
+    if (campaignName !== currentCampaign) {
+      currentCampaign = campaignName;
+      merge(r, 1, 4);
+      const banner = view.getCell(r, 1);
+      banner.value = `КАМПАНИЯ: ${campaignName}`;
+      banner.font = { bold: true, size: 12, color: { argb: TITLE_BLUE } };
+      banner.fill = HEADER_FILL;
+      r++;
     }
+    // group label
+    merge(r, 1, 4);
+    const lbl = view.getCell(r, 1);
+    lbl.value = `▸ ${gv.name}${gv.geo ? "  ·  " + gv.geo : ""}`;
+    lbl.font = { bold: true, size: 10, color: { argb: DESC_GREY } };
+    r++;
+
+    // title — ONE headline (combinatorial ad shows a single title in SERP)
+    merge(r, 1, 4);
+    const titleCell = view.getCell(r, 1);
+    titleCell.value = gv.pool.headlines[0] ?? "";
+    titleCell.font = { bold: true, size: 13, color: { argb: TITLE_BLUE } };
+    wrap(r);
+    r++;
+
+    // display url line
+    merge(r, 1, 4);
+    const urlCell = view.getCell(r, 1);
+    urlCell.value = `Промо · ${gv.display || netloc(gv.landing) || gv.landing}`;
+    urlCell.font = { size: 11, color: { argb: URL_GREEN } };
+    r++;
+
+    // text (t1)
+    merge(r, 1, 4);
+    const textCell = view.getCell(r, 1);
+    textCell.value = gv.pool.texts[0] ?? "";
+    textCell.font = { size: 11 };
+    wrap(r);
+    r++;
+
+    // sitelinks grid: 2 links per row (left A:B, right C:D), title line + desc line
+    for (let p = 0; p < 8; p += 2) {
+      const left = gv.sitelinks[p];
+      const right = gv.sitelinks[p + 1];
+      if (!left && !right) break;
+      // title line
+      merge(r, 1, 2); merge(r, 3, 4);
+      if (left) { const c = view.getCell(r, 1); c.value = left.Title; c.font = { bold: true, size: 11, color: { argb: TITLE_BLUE } }; }
+      if (right) { const c = view.getCell(r, 3); c.value = right.Title; c.font = { bold: true, size: 11, color: { argb: TITLE_BLUE } }; }
+      r++;
+      // desc line
+      merge(r, 1, 2); merge(r, 3, 4);
+      if (left?.Description) { const c = view.getCell(r, 1); c.value = left.Description; c.font = { size: 10, color: { argb: DESC_GREY } }; }
+      if (right?.Description) { const c = view.getCell(r, 3); c.value = right.Description; c.font = { size: 10, color: { argb: DESC_GREY } }; }
+      wrap(r);
+      r++;
+    }
+
+    // callouts line
+    if (gv.callouts.length) {
+      merge(r, 1, 4);
+      const c = view.getCell(r, 1);
+      c.value = `Уточнения: ${gv.callouts.join(" · ")}`;
+      c.font = { size: 10, color: { argb: DESC_GREY } };
+      wrap(r);
+      r++;
+    }
+
+    // full copy listing (all 7 headlines / 3 texts, so the client sees the whole set)
+    merge(r, 1, 4);
+    const hl = view.getCell(r, 1);
+    hl.value = `Заголовки (${gv.pool.headlines.length}): ${gv.pool.headlines.join(" · ")}`;
+    hl.font = { italic: true, size: 9, color: { argb: DESC_GREY } };
+    wrap(r);
+    r++;
+    merge(r, 1, 4);
+    const tx = view.getCell(r, 1);
+    tx.value = `Тексты (${gv.pool.texts.length}): ${gv.pool.texts.join("  |  ")}`;
+    tx.font = { italic: true, size: 9, color: { argb: DESC_GREY } };
+    wrap(r);
+    r++;
+
+    // separator
+    r++;
   }
-
-  // -------------------------------------------------------------------------
-  // Sheet 5 — QA: deterministic render checks
-  // -------------------------------------------------------------------------
-  const qa = wb.addWorksheet("QA");
-  qa.columns = [
-    { header: "check", key: "check", width: 32 },
-    { header: "status", key: "status", width: 8 },
-    { header: "details", key: "details", width: 80 },
-  ];
-  styleHeader(qa);
-
-  qa.addRow({
-    check: "canonical_renderer_used",
-    status: "OK",
-    details: `${RENDERER_VERSION} (${RENDERER_PATH})`,
-  });
-  qa.addRow({ check: "groups_count", status: "OK", details: String(groups.length) });
-  qa.addRow({ check: "ads_count", status: "OK", details: String(adRowCount) });
-
-  const sitelinksShort = groups.filter((gv) => !gv.sitelinksComplete).map((gv) => gv.name);
-  qa.addRow({
-    check: "sitelinks_8_with_descriptions",
-    status: sitelinksShort.length > 0 ? "WARN" : "OK",
-    details: sitelinksShort.length > 0
-      ? `short: ${sitelinksShort.join(", ")}`
-      : "all groups have 8 sitelinks with descriptions",
-  });
-
-  const calloutsShort = groups.filter((gv) => !gv.calloutsEnough).map((gv) => gv.name);
-  qa.addRow({
-    check: "callouts_min_4",
-    status: calloutsShort.length > 0 ? "WARN" : "OK",
-    details: calloutsShort.length > 0
-      ? `below 4: ${calloutsShort.join(", ")}`
-      : "all groups have at least 4 callouts",
-  });
-
-  const calloutSets = new Set(groups.map((gv) => JSON.stringify(gv.callouts)));
-  const allSame = groups.length > 1 && calloutSets.size === 1;
-  qa.addRow({
-    check: "callout_sets_differentiated",
-    status: allSame ? "WARN" : "OK",
-    details: allSame
-      ? `all ${groups.length} groups share the same callout set`
-      : `${calloutSets.size} distinct callout sets across ${groups.length} groups`,
-  });
-
-  const unresolvedRefs = [
-    ...new Set(
-      groups.flatMap((gv) =>
-        gv.ads.flatMap((ad) => ad.images.filter((img) => img.unresolved).map((img) => img.value))
-      )
-    ),
-  ];
-  qa.addRow({
-    check: "images_resolved",
-    status: unresolvedRefs.length > 0 ? "WARN" : "OK",
-    details: unresolvedRefs.length > 0
-      ? `${unresolvedRefs.length} unresolved image refs: ${unresolvedRefs.join(", ")}`
-      : "all image refs resolved",
-  });
-
-  qa.addRow({
-    check: "length_limits",
-    status: lengthWarnCount > 0 ? "WARN" : "OK",
-    details: lengthWarnCount > 0
-      ? `${lengthWarnCount} length warnings (56/81)`
-      : "no 56/81 violations",
-  });
 
   await wb.xlsx.writeFile(outputPath);
 
-  return { path: outputPath, rows: adRowCount, warnings };
+  return { path: outputPath, rows: groups.length, warnings };
 }
 
 export function defaultXlsxPath(folder: string): string {
