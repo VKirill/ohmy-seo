@@ -2,13 +2,22 @@ import { executeApiCall } from "../lib/api-gateway.js";
 import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
 import { z } from "zod";
 
+/**
+ * Direct's changes.check requires FieldNames — omitting it answers error_code 8000
+ * "Omitted required parameter FieldNames". The enumeration is closed: only
+ * CampaignIds, AdGroupIds, AdIds and CampaignsStat are accepted. Default to the three
+ * structural ones; CampaignsStat (campaigns whose statistics moved) is opt-in.
+ */
+export const CHANGE_FIELD_NAMES = ["CampaignIds", "AdGroupIds", "AdIds", "CampaignsStat"] as const;
+const DEFAULT_CHANGE_FIELD_NAMES = ["CampaignIds", "AdGroupIds", "AdIds"];
+
 const InputSchema = z.object({
   mode: z.enum(["check", "checkDictionaries"]).default("check"),
   since_timestamp: z.string().optional(),
   campaign_ids: z.array(z.number()).optional(),
   ad_group_ids: z.array(z.number()).optional(),
   ad_ids: z.array(z.number()).optional(),
-  field_names: z.array(z.string()).optional(),
+  field_names: z.array(z.enum(CHANGE_FIELD_NAMES)).optional(),
   account: z.string().optional(),
 });
 
@@ -39,7 +48,7 @@ export async function runDirectGetChangeHistory(input: z.infer<typeof InputSchem
     if (parsed.campaign_ids) params.CampaignIds = parsed.campaign_ids;
     if (parsed.ad_group_ids) params.AdGroupIds = parsed.ad_group_ids;
     if (parsed.ad_ids) params.AdIds = parsed.ad_ids;
-    if (parsed.field_names) params.FieldNames = parsed.field_names;
+    params.FieldNames = parsed.field_names ?? DEFAULT_CHANGE_FIELD_NAMES;
 
     body = { method: "check", params };
   }

@@ -4,6 +4,7 @@ import { getApiSpec } from "./endpoints-spec.js";
 
 export interface ReportPollingOpts {
   accountLabel?: string;
+  clientLogin?: string;  // Client-Login header — agency sub-client login (e.g. "agency-client-login")
   body: Record<string, unknown>;  // Direct Reports request body
   maxWaitMs?: number;  // default 60_000
   processingMode?: "auto" | "online" | "offline";  // default "auto"
@@ -19,6 +20,22 @@ export interface ReportPollingResult {
   total_wait_ms: number;
 }
 
+/** Parse Direct's TSV response, skipping the optional report-title line. */
+export function parseReportTsv(tsv: string): Array<Record<string, string>> {
+  const lines = tsv.split(/\r?\n/).filter((line) => line.trim());
+  let headerIndex = 0;
+  while (headerIndex < lines.length && !lines[headerIndex]!.includes("\t")) {
+    headerIndex++;
+  }
+  if (lines.length - headerIndex < 2) return [];
+
+  const columns = lines[headerIndex]!.split("\t");
+  return lines.slice(headerIndex + 1).map((line) => {
+    const values = line.split("\t");
+    return Object.fromEntries(columns.map((column, index) => [column, values[index] ?? ""]));
+  });
+}
+
 export async function pollReport(opts: ReportPollingOpts): Promise<ReportPollingResult> {
   const spec = getApiSpec("direct");
   const acc = resolveAccount(spec.requiredScope, opts.accountLabel);
@@ -32,28 +49,28 @@ export async function pollReport(opts: ReportPollingOpts): Promise<ReportPolling
 
   while (Date.now() - start < maxWait) {
     attempts++;
+    const headers: Record<string, string> = {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json; charset=utf-8",
+      "Accept-Language": "ru",
+      "processingMode": mode,
+      "skipReportSummary": "true",
+      "skipReportHeader": "false",
+    };
+    // Agency/sub-client reports (e.g. agency-client-login) require the Client-Login header.
+    if (opts.clientLogin) {
+      headers["Client-Login"] = opts.clientLogin;
+    }
+
     const response = await fetch(url, {
       method: "POST",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json; charset=utf-8",
-        "Accept-Language": "ru",
-        "processingMode": mode,
-        "skipReportSummary": "true",
-        "skipReportHeader": "false",
-      },
+      headers,
       body: JSON.stringify(opts.body),
     });
 
     if (response.status === 200) {
       const tsv = await response.text();
-      const lines = tsv.split("\n").filter(l => l.trim());
-      if (lines.length < 2) return { ok: true, status: 200, tsv, rows: [], attempts, total_wait_ms: Date.now() - start };
-      const headers = lines[0].split("\t");
-      const rows = lines.slice(1).map(line => {
-        const values = line.split("\t");
-        return Object.fromEntries(headers.map((h, i) => [h, values[i] ?? ""]));
-      });
+      const rows = parseReportTsv(tsv);
       return { ok: true, status: 200, tsv, rows, attempts, total_wait_ms: Date.now() - start };
     }
     if (response.status === 201 || response.status === 202) {

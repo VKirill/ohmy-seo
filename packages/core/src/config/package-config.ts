@@ -13,6 +13,7 @@ const ENV_PREFIX_MAP: Record<string, string> = {
   "google-search-console": "MCP_GSC",
   "ga4":                   "MCP_GA4",
   "gtm":                   "MCP_GTM",
+  "google-ads":            "MCP_GOOGLE_ADS",
 };
 
 export interface PackageConfig {

@@ -11,7 +11,8 @@
 | **Яндекс** | `mcp-yandex-seo` | Директ (ЕПК), Метрика, Вебмастер |
 | **[Mutagen.ru](https://mutagen.ru/?r=69383)** | `mcp-mutagen` | конкуренция ключей, mass-parser, SERP-отчёты |
 | **[XMLStock](https://xmlstock.com/?ref=vechkasov)** | `mcp-xmlstock` | live SERP Яндекс/Google + архив |
-| **Google** | `mcp-gsc` · `mcp-ga4` · `mcp-gtm` | Search Console, Analytics 4, Tag Manager |
+| **Google** | `mcp-gsc` · `mcp-ga4` · `mcp-gtm` · `mcp-google-ads` | Search Console, Analytics 4, Tag Manager, Google Ads |
+| **Roistat** | `mcp-roistat` | read-only сквозная аналитика, метрики и измерения |
 
 > ⚠️ Серверы ходят в **живые** рекламные и аналитические аккаунты. Запись закрыта env-флагами **и** `confirm` на каждый вызов. Токены — AES-256-GCM в локальной SQLite.
 
@@ -29,6 +30,8 @@
 | `@ohmy-seo/google-search-console` | 0.1.0 | `mcp-gsc` | Google Search Console + Indexing API |
 | `@ohmy-seo/ga4` | 0.1.0 | `mcp-ga4` | GA4 Data API + Admin API |
 | `@ohmy-seo/gtm` | 0.1.0 | `mcp-gtm` | Google Tag Manager (read/write/publish/rollback) |
+| `@ohmy-seo/google-ads` | 0.1.0 | `mcp-google-ads` | Google Ads API v25 (GAQL, отчёты, мутации с двухшаговым подтверждением) |
+| `@ohmy-seo/roistat` | 0.1.0 | `mcp-roistat` | Read-only Roistat API: проекты, поля аналитики и отчёты |
 | `@ohmy-seo/mcp-core` | 0.3.0 | — | OAuth storage, SQLite cache, big-int JSON, base types |
 
 ---
@@ -101,7 +104,7 @@
 
 ---
 
-## Google: Search Console · GA4 · GTM
+## Google: Search Console · GA4 · GTM · Ads
 
 ### `mcp-gsc` — Search Console + Indexing
 
@@ -141,6 +144,16 @@
 
 Google-пакеты: OAuth (`register_google_oauth_app` → `start_google_oauth_flow` → `complete_google_oauth_flow`) или `register_google_service_account`.
 
+### `mcp-google-ads` — Google Ads API v25
+
+44 инструмента: аккаунты, GAQL, отчёты, метаданные полей и управляемые мутации. Любая реальная запись требует `confirm:true` и `GOOGLE_ADS_ALLOW_LIVE_MUTATIONS=true`; опасные операции дополнительно требуют `acknowledge_live` с ID аккаунта и ресурса. Пакет пока подключается как отдельный локальный MCP-сервер и не включён в hosted OAuth автоматически.
+
+---
+
+## `mcp-roistat` — сквозная аналитика
+
+Отдельный от Яндекса read-only сервер. Он предоставляет только три явно разрешённых инструмента: список проектов, справочники аналитики и получение отчёта. Произвольных endpoint и write-операций нет. Нужны `ROISTAT_API_KEY` и, для проектных запросов, `ROISTAT_PROJECT_ID`.
+
 ---
 
 ## Установка
@@ -168,6 +181,7 @@ cp packages/yandex-seo/.env.example packages/yandex-seo/.env
 Опционально:
 - `MUTAGEN_API_KEY` — ключ [Mutagen.ru](https://mutagen.ru/?r=69383)
 - `XMLSTOCK_USER` + `XMLSTOCK_KEY` — аккаунт [XMLStock](https://xmlstock.com/?ref=vechkasov)
+- `ROISTAT_API_KEY` + `ROISTAT_PROJECT_ID` — отдельный `mcp-roistat`
 
 Google — см. `.env.example` пакета.
 
@@ -216,6 +230,7 @@ SQLite. Общего демона нет, пакеты друг о друге н
 | `google-search-console` | `MCP_GSC` |
 | `ga4` | `MCP_GA4` |
 | `gtm` | `MCP_GTM` |
+| `google-ads` | `MCP_GOOGLE_ADS` |
 | `mutagen` | `MCP_MUTAGEN` |
 | `xmlstock` | `MCP_XMLSTOCK` |
 

@@ -47,14 +47,33 @@ export function quoteUnsafeIntegers(text: string): string {
     }
 
     // Outside a string, digits and a leading '-' can only start a JSON number.
+    // Scan the WHOLE number — integer part, fraction and exponent — in one go.
+    // Scanning only the integer part used to leave the fractional digits to be
+    // re-scanned as a separate token, and a long fraction such as
+    // 0.018604651162790697 got quoted as 0."018604651162790697", which is not
+    // valid JSON.
     if (c === "-" || (c >= "0" && c <= "9")) {
       let j = i;
       if (text[j] === "-") j++;
       const digitsStart = j;
-      while (j < n && text[j] >= "0" && text[j] <= "9") j++;
+      while (j < n && text[j]! >= "0" && text[j]! <= "9") j++;
       const intDigits = j - digitsStart;
-      const next = text[j];
-      const isPureInt = next !== "." && next !== "e" && next !== "E";
+
+      let isPureInt = true;
+
+      if (text[j] === ".") {
+        isPureInt = false;
+        j++;
+        while (j < n && text[j]! >= "0" && text[j]! <= "9") j++;
+      }
+
+      if (text[j] === "e" || text[j] === "E") {
+        isPureInt = false;
+        j++;
+        if (text[j] === "+" || text[j] === "-") j++;
+        while (j < n && text[j]! >= "0" && text[j]! <= "9") j++;
+      }
+
       const token = text.slice(i, j);
 
       if (isPureInt && intDigits >= 16) {
@@ -76,6 +95,7 @@ export function quoteUnsafeIntegers(text: string): string {
       i = j;
       continue;
     }
+
 
     out += c;
     i++;

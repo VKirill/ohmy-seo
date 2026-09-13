@@ -1,4 +1,4 @@
-<!-- ohmy-seo packages: @ohmy-seo/mcp-core, @ohmy-seo/yandex-seo, @ohmy-seo/mutagen, @ohmy-seo/xmlstock, @ohmy-seo/google-search-console, @ohmy-seo/ga4, @ohmy-seo/gtm. See README.md for full package list, MCP server names, and OAuth setup. -->
+<!-- ohmy-seo packages: @ohmy-seo/mcp-core, @ohmy-seo/yandex-seo, @ohmy-seo/mutagen, @ohmy-seo/xmlstock, @ohmy-seo/google-search-console, @ohmy-seo/ga4, @ohmy-seo/gtm, @ohmy-seo/google-ads, @ohmy-seo/roistat. See README.md for full package list, MCP server names, and OAuth setup. -->
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence

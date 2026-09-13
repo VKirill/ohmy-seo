@@ -304,6 +304,11 @@ export function registerDirectRead(server: McpServer): void {
           .min(1)
           .optional()
           .describe("Account label from list_accounts (optional if a default account is configured)"),
+        client_login: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Yandex Direct agency sub-client login, sent as the Client-Login header (e.g. 'agency-client-login'). Use it to pull reports for an agency sub-client instead of the token owner's own account."),
       },
       annotations: READ_ONLY,
     },
@@ -318,6 +323,7 @@ export function registerDirectRead(server: McpServer): void {
         include_vat: args.include_vat,
         selection_criteria: args.selection_criteria,
         account: args.account,
+        client_login: args.client_login,
       }),
   );
 
@@ -329,7 +335,12 @@ export function registerDirectRead(server: McpServer): void {
         "Check Yandex Direct change history (use mode=checkDictionaries first to know dictionary versions, then mode=check with timestamp). " +
         "mode='checkDictionaries' returns current dictionary versions (no timestamp required). " +
         "mode='check' (default) returns which campaigns, ad groups, or ads have changed since the given timestamp — requires since_timestamp in ISO 8601 format. " +
-        "Use campaign_ids, ad_group_ids, ad_ids to narrow the scope. Use field_names to limit which fields are checked.",
+        "Use campaign_ids, ad_group_ids, ad_ids to narrow the scope. " +
+        "NOTE — this is Direct's Changes service, not the interface's change log: it returns only the IDs " +
+        "of objects that changed plus a timestamp, never the author, the field, or the old → new value. " +
+        "To learn what actually changed, diff a fresh yandex_direct_get_campaign_details read against an " +
+        "earlier snapshot. field_names selects which change types to check and Direct requires it — this " +
+        "tool defaults to CampaignIds + AdGroupIds + AdIds so the call does not fail.",
       inputSchema: {
         mode: z
           .enum(["check", "checkDictionaries"])
@@ -352,9 +363,12 @@ export function registerDirectRead(server: McpServer): void {
           .optional()
           .describe("Limit change check to these ad IDs (optional)"),
         field_names: z
-          .array(z.string())
+          .array(z.enum(["CampaignIds", "AdGroupIds", "AdIds", "CampaignsStat"]))
           .optional()
-          .describe("Specific field names to check for changes (optional; omit to check all fields)"),
+          .describe(
+            "Which change types to check — closed enumeration: CampaignIds, AdGroupIds, AdIds, CampaignsStat. " +
+              "Optional: defaults to CampaignIds + AdGroupIds + AdIds (CampaignsStat is opt-in)",
+          ),
         account: z
           .string()
           .min(1)
@@ -413,6 +427,11 @@ export function registerDirectRead(server: McpServer): void {
           .min(1)
           .optional()
           .describe("Account label from list_accounts (optional if a default account is configured)"),
+        client_login: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Yandex Direct agency sub-client login, sent as the Client-Login header (e.g. 'agency-client-login'). Use it to pull search-term reports for an agency sub-client instead of the token owner's own account."),
       },
       annotations: READ_ONLY,
     },
@@ -424,6 +443,7 @@ export function registerDirectRead(server: McpServer): void {
         date_to: args.date_to,
         field_names: args.field_names,
         account: args.account,
+        client_login: args.client_login,
       }),
   );
 

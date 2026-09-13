@@ -3,6 +3,9 @@ export const SCOPE_GSC_READONLY = "https://www.googleapis.com/auth/webmasters.re
 export const SCOPE_GSC_FULL     = "https://www.googleapis.com/auth/webmasters";
 export const SCOPE_INDEXING     = "https://www.googleapis.com/auth/indexing";
 
+// Google Ads API
+export const SCOPE_ADWORDS = "https://www.googleapis.com/auth/adwords";
+
 // GA4 Data + Admin API
 export const SCOPE_GA4_READONLY                = "https://www.googleapis.com/auth/analytics.readonly";
 export const SCOPE_GA4_EDIT                    = "https://www.googleapis.com/auth/analytics.edit";
@@ -33,6 +36,7 @@ export const SCOPE_SPREADSHEETS          = "https://www.googleapis.com/auth/spre
 export const SCOPE_SPREADSHEETS_READONLY = "https://www.googleapis.com/auth/spreadsheets.readonly";
 
 // Convenience scope arrays
+export const ALL_ADS_SCOPES = [SCOPE_ADWORDS] as const;
 export const ALL_GSC_SCOPES = [SCOPE_GSC_READONLY, SCOPE_GSC_FULL, SCOPE_INDEXING] as const;
 export const ALL_GA4_SCOPES = [SCOPE_GA4_READONLY, SCOPE_GA4_EDIT, SCOPE_GA4_MANAGE_USERS, SCOPE_GA4_MANAGE_USERS_READONLY] as const;
 export const ALL_GTM_SCOPES = [SCOPE_GTM_READONLY, SCOPE_GTM_EDIT, SCOPE_GTM_EDIT_VERSIONS, SCOPE_GTM_PUBLISH, SCOPE_GTM_DELETE_CONTAINERS, SCOPE_GTM_MANAGE_ACCOUNTS, SCOPE_GTM_MANAGE_USERS] as const;
