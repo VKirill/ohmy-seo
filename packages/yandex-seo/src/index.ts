@@ -12,6 +12,7 @@ import { registerInventory } from "./registry/inventory.js";
 import { registerCache } from "./registry/cache.js";
 import { registerGateways } from "./registry/gateways.js";
 import { registerDirectRead } from "./registry/direct-read.js";
+import { registerDirectReadExtra } from "./registry/direct-read-extra.js";
 import { registerDirectWrite } from "./registry/direct-write.js";
 import { registerDirectBundle } from "./registry/direct-bundle.js";
 
@@ -25,6 +26,7 @@ const server = new McpServer(
       "yandex_metrika_api — any Yandex Metrika endpoint; see skill yandex-metrica (cookbook.md) for examples. " +
       "yandex_webmaster_api — any Yandex Webmaster endpoint; see skill yandex-webmaster (cookbook.md). " +
       "yandex_direct_api — any Yandex Direct v5 endpoint (Bearer auth, optional client_login); see skill yandex-direct (cookbook.md). " +
+      "Campaign settings that list_campaigns does not return (bidding strategy, Metrika counters, PriorityGoals, attribution model) are available via yandex_direct_get_campaign_details. " +
       "Inventory tools: list_sites, list_counters, find_property, refresh_inventory. " +
       "OAuth management: list_oauth_apps, register_oauth_app, delete_oauth_app, list_accounts, start_oauth_flow, complete_oauth_flow, delete_account, set_default_account. " +
       "Cache tools: invalidate_cache, cache_stats. " +
@@ -48,6 +50,7 @@ registerInventory(server);
 registerCache(server);
 registerGateways(server);
 registerDirectRead(server);
+registerDirectReadExtra(server);
 registerDirectWrite(server);
 registerDirectBundle(server);
 

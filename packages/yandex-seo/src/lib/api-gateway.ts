@@ -33,6 +33,28 @@ function tryJson(raw: string): unknown {
 }
 
 /**
+ * Normalise the request body before serialisation.
+ *
+ * The generic gateways declare `body` as `z.unknown()`, so some MCP clients hand it
+ * over as a JSON *string* instead of an object. JSON.stringify would then double-encode
+ * it — Yandex receives `"{\"method\":\"get\",...}"` and answers error_code 8000
+ * "Not able to process JSON/XML". Parse such a string back into an object first.
+ *
+ * Anything that is not a JSON object/array string is passed through untouched, so a
+ * genuinely string body (an API that wants raw text) still works.
+ */
+export function normalizeBody(body: unknown): unknown {
+  if (typeof body !== "string") return body;
+  const trimmed = body.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return body;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return body;
+  }
+}
+
+/**
  * Core API gateway — resolves account, obtains token, builds URL, fires request.
  * GET requests are wrapped in withCache (skipCacheIf skips 4xx responses).
  * Non-GET success calls invalidateOnWrite to purge stale GET cache entries.
@@ -60,12 +82,14 @@ export async function executeApiCall(opts: ExecuteOpts): Promise<ExecuteResult> 
     headers["Client-Login"] = opts.client_login;
   }
 
+  const normalizedBody = normalizeBody(opts.body);
+
   const init: Parameters<typeof request>[1] = {
     method,
     headers,
-    ...(opts.body !== undefined &&
+    ...(normalizedBody !== undefined &&
     (method === "POST" || method === "PUT")
-      ? { body: JSON.stringify(opts.body) }
+      ? { body: JSON.stringify(normalizedBody) }
       : {}),
   };
 
@@ -99,7 +123,7 @@ export async function executeApiCall(opts: ExecuteOpts): Promise<ExecuteResult> 
     endpoint: opts.endpoint,
     method,
     params: opts.params ?? null,
-    body: opts.body ?? null,
+    body: normalizedBody ?? null,
   };
 
   return withCache<ExecuteResult>(

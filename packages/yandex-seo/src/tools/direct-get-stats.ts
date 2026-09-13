@@ -39,6 +39,11 @@ const InputSchema = z.object({
     .min(1)
     .optional()
     .describe("Account label from list_accounts (optional if a default account is configured)"),
+  client_login: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("Yandex Direct agency sub-client login, sent as the Client-Login header (e.g. 'agency-client-login'). Required to pull reports for an agency sub-client rather than the token owner's own account."),
 });
 
 export async function runDirectGetStats(input: z.infer<typeof InputSchema>) {
@@ -67,14 +72,18 @@ export async function runDirectGetStats(input: z.infer<typeof InputSchema>) {
   };
 
   if (parsed.date_range_type === "CUSTOM_DATE") {
-    params.DateFrom = parsed.date_from;
-    params.DateTo = parsed.date_to;
+    // Reports API expects DateFrom/DateTo inside SelectionCriteria, not at the
+    // top level of params (top-level → error 8000 "unknown field DateFrom").
+    const sc = (params.SelectionCriteria ?? {}) as Record<string, unknown>;
+    sc.DateFrom = parsed.date_from;
+    sc.DateTo = parsed.date_to;
+    params.SelectionCriteria = sc;
   }
 
   const body = { params };
 
   try {
-    const result = await pollReport({ body, accountLabel: parsed.account });
+    const result = await pollReport({ body, accountLabel: parsed.account, clientLogin: parsed.client_login });
     return {
       content: [
         {

@@ -1,4 +1,5 @@
 import { executeApiCall, type ExecuteResult } from "../lib/api-gateway.js";
+import { pollReport } from "../lib/api/reports-polling.js";
 import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
 
 /**
@@ -58,6 +59,25 @@ export async function runYandexDirectApi(input: {
         urlParams = undefined;
         autoPromoted = true;
       }
+    }
+
+    // Reports API (/json/v5/reports) responds with TSV, not JSON — the generic
+    // gateway's JSON parser would throw on it. Route reports requests through the
+    // dedicated poller, which handles 201/202 polling, TSV parsing and Client-Login,
+    // and returns { ok, status, tsv, rows }.
+    if (/\/reports\/?$/.test(input.endpoint)) {
+      const reportBody = (body ?? {}) as Record<string, unknown>;
+      const report = await pollReport({
+        body: reportBody,
+        accountLabel: input.account,
+        clientLogin: input.client_login,
+      });
+      const augmentedReport: typeof report & { _note?: string } = { ...report };
+      if (autoPromoted) {
+        augmentedReport._note =
+          "Auto-promoted `params` field to `body` (Direct-shaped payload detected in params).";
+      }
+      return { content: [{ type: "text" as const, text: JSON.stringify(augmentedReport, null, 2) }] };
     }
 
     const result = await executeApiCall({

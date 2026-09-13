@@ -4,6 +4,7 @@ import { getApiSpec } from "./endpoints-spec.js";
 
 export interface ReportPollingOpts {
   accountLabel?: string;
+  clientLogin?: string;  // Client-Login header — agency sub-client login (e.g. "agency-client-login")
   body: Record<string, unknown>;  // Direct Reports request body
   maxWaitMs?: number;  // default 60_000
   processingMode?: "auto" | "online" | "offline";  // default "auto"
@@ -32,27 +33,38 @@ export async function pollReport(opts: ReportPollingOpts): Promise<ReportPolling
 
   while (Date.now() - start < maxWait) {
     attempts++;
+    const headers: Record<string, string> = {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json; charset=utf-8",
+      "Accept-Language": "ru",
+      "processingMode": mode,
+      "skipReportSummary": "true",
+      "skipReportHeader": "false",
+    };
+    // Agency/sub-client reports (e.g. agency-client-login) require the Client-Login header.
+    if (opts.clientLogin) {
+      headers["Client-Login"] = opts.clientLogin;
+    }
+
     const response = await fetch(url, {
       method: "POST",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json; charset=utf-8",
-        "Accept-Language": "ru",
-        "processingMode": mode,
-        "skipReportSummary": "true",
-        "skipReportHeader": "false",
-      },
+      headers,
       body: JSON.stringify(opts.body),
     });
 
     if (response.status === 200) {
       const tsv = await response.text();
       const lines = tsv.split("\n").filter(l => l.trim());
-      if (lines.length < 2) return { ok: true, status: 200, tsv, rows: [], attempts, total_wait_ms: Date.now() - start };
-      const headers = lines[0].split("\t");
-      const rows = lines.slice(1).map(line => {
+      // With skipReportHeader=false the report begins with a quoted title line
+      // ("<ReportName> (<from> - <to>)") that contains no tab. Skip any such leading
+      // line(s) so the real column-header row is used and data rows stay aligned.
+      let h = 0;
+      while (h < lines.length && !lines[h].includes("\t")) h++;
+      if (lines.length - h < 2) return { ok: true, status: 200, tsv, rows: [], attempts, total_wait_ms: Date.now() - start };
+      const cols = lines[h].split("\t");
+      const rows = lines.slice(h + 1).map(line => {
         const values = line.split("\t");
-        return Object.fromEntries(headers.map((h, i) => [h, values[i] ?? ""]));
+        return Object.fromEntries(cols.map((c, i) => [c, values[i] ?? ""]));
       });
       return { ok: true, status: 200, tsv, rows, attempts, total_wait_ms: Date.now() - start };
     }
