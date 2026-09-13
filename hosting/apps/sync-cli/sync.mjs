@@ -95,9 +95,10 @@ db.transaction(() => {
     const exp = Math.floor(new Date(a.expiresAt).getTime() / 1000);
     const enc = encrypt(a.accessToken);
     const scopes = a.scopes.join(" ");
-    if (a.provider === "yandex") {
-      upY.run(a.label, yandexApp.id, a.login, enc, placeholder, exp, scopes, a.isDefault ? 1 : 0, now, now);
-    } else {
+    if (["yandex", "yandex-direct", "yandex-api"].includes(a.provider)) {
+      const label = a.provider === "yandex-direct" ? `${a.label} (Директ)` : a.provider === "yandex-api" ? `${a.label} (API)` : a.label;
+      upY.run(label, yandexApp.id, a.login, enc, placeholder, exp, scopes, a.isDefault ? 1 : 0, now, now);
+    } else if (a.provider === "google") {
       upG.run(a.label, googleApp.id, a.email, enc, placeholder, exp, scopes, a.isDefault ? 1 : 0, now, now);
     }
     ok++;

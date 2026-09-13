@@ -121,7 +121,7 @@ export default async function Dashboard({
       )}
 
       <div className="row" style={{ marginTop: 16 }}>
-        <a className="btn primary" href="/api/oauth/yandex/start?chain=1&mode=connect">
+        <a className="btn primary" href={process.env.YANDEX_API_CLIENT_ID && process.env.YANDEX_API_CLIENT_SECRET ? "/app/connect/yandex-code" : "/api/oauth/yandex/start?chain=1&mode=connect"}>
           <ProviderMark family="yandex" />
           <span>Добавить аккаунт Яндекса</span>
         </a>

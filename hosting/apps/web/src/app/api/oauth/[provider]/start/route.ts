@@ -8,6 +8,7 @@ export const runtime = "nodejs";
 export async function GET(req: NextRequest, ctx: { params: Promise<{ provider: string }> }) {
   const { provider } = await ctx.params;
   if (!isProviderId(provider)) return NextResponse.json({ error: "unknown provider" }, { status: 404 });
+  if (provider === "yandex-api") return NextResponse.redirect(`${process.env.APP_URL}/app/connect/yandex-code`);
   const user = await currentUser();
   if (req.nextUrl.searchParams.get("mode") === "connect" && !user) {
     return NextResponse.redirect(`${process.env.APP_URL}/?error=session_required`);

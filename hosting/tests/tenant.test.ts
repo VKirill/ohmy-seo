@@ -30,3 +30,12 @@ it('materializes multiple accounts and removes only disconnected accounts, keepi
   expect(db.prepare('SELECT count(*) AS n FROM google_accounts').get()).toEqual({ n: 0 });
   db.close();
 });
+it('keeps unified API credentials separate from legacy Yandex credentials', () => {
+  const common = { label: 'same', login: 'same', email: null, accessToken: 'test-token', expiresAt: new Date(Date.now()+3600000), scopes: 'test', isDefault: false };
+  const path = tenant.materialize(20, [{ ...common, provider: 'yandex', connectionId: 1 }, { ...common, provider: 'yandex-api', connectionId: 2 }]);
+  const db = new Database(path);
+  expect(db.prepare('SELECT label FROM accounts ORDER BY label').all()).toEqual([{ label: 'same' }, { label: 'same (API)' }]);
+  tenant.materialize(20, [{ ...common, provider: 'yandex-api', connectionId: 2 }]);
+  expect(db.prepare('SELECT label FROM accounts').all()).toEqual([{ label: 'same (API)' }]);
+  db.close();
+});

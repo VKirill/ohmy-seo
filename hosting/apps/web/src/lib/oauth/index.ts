@@ -1,5 +1,5 @@
 import type { ProviderId } from "../providers";
-import { YANDEX_SCOPES, YANDEX_DIRECT_SCOPES, GOOGLE_SCOPES } from "../providers";
+import { YANDEX_SCOPES, YANDEX_DIRECT_SCOPES, YANDEX_API_SCOPES, GOOGLE_SCOPES } from "../providers";
 
 export type TokenSet = {
   accessToken: string;
@@ -88,6 +88,15 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
     extraAuthParams: {},
     identity: yandexIdentity,
   },
+  "yandex-api": {
+    authorizeUrl: "https://oauth.yandex.ru/authorize",
+    tokenUrl: "https://oauth.yandex.ru/token",
+    scopes: YANDEX_API_SCOPES,
+    clientId: () => env("YANDEX_API_CLIENT_ID"),
+    clientSecret: () => env("YANDEX_API_CLIENT_SECRET"),
+    extraAuthParams: {},
+    identity: yandexIdentity,
+  },
   google: {
     authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
     tokenUrl: "https://oauth2.googleapis.com/token",
@@ -109,6 +118,7 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
 };
 
 export function redirectUri(provider: ProviderId): string {
+  if (provider === "yandex-api") return "https://oauth.yandex.ru/verification_code";
   return `${env("APP_URL")}/api/oauth/${provider}/callback`;
 }
 

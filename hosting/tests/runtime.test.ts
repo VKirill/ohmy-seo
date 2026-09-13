@@ -26,3 +26,8 @@ it('refreshes active MCP runtimes after account additions/removals, without reis
   expect(mocks.materialize).toHaveBeenLastCalledWith(10, []);
   expect(mocks.close).toHaveBeenCalledTimes(5);
 });
+it('starts the Yandex MCP server for a unified API-only connection', async () => {
+  mocks.fresh.mockResolvedValue([{ provider: 'yandex-api', connectionId: 3, label: 'api-account' }]);
+  const rt = await getRuntime(20);
+  expect([...rt.clients.keys()]).toEqual(['yandex-seo']);
+});

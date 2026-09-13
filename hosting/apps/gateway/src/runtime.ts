@@ -47,7 +47,7 @@ const starting = new Map<number, Promise<Runtime>>();
 function packagesFor(accounts: Account[]): PackageSpec[] {
   const providers = new Set<string>(accounts.map((a) => a.provider));
   // Direct is a separate OAuth app but the same MCP server serves it.
-  if (providers.has("yandex-direct")) providers.add("yandex");
+  if (providers.has("yandex-direct") || providers.has("yandex-api")) providers.add("yandex");
   const wanted = PACKAGES.filter((p) => p.requires === null || providers.has(p.requires));
   if (process.env.ENABLE_SHARED_SERP === "true") wanted.push(...SHARED_PACKAGES);
   return wanted;

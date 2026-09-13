@@ -12,6 +12,7 @@ export const runtime = "nodejs";
 export async function GET(req: NextRequest, ctx: { params: Promise<{ provider: string }> }) {
   const { provider } = await ctx.params;
   if (!isProviderId(provider)) return NextResponse.json({ error: "unknown provider" }, { status: 404 });
+  if (provider === "yandex-api") return NextResponse.redirect(`${process.env.APP_URL}/app/connect/yandex-code`);
   const url = new URL(req.url);
   const state = url.searchParams.get("state");
   const expected = req.cookies.get(`ohmy_state_${provider}`)?.value;

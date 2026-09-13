@@ -54,7 +54,16 @@ CREATE INDEX IF NOT EXISTS idx_connections_user ON connections(user_id) WHERE re
 ALTER TABLE connections DROP CONSTRAINT IF EXISTS connections_provider_check;
 ALTER TABLE connections DROP CONSTRAINT IF EXISTS connections_provider_allowed;
 ALTER TABLE connections ADD CONSTRAINT connections_provider_allowed
-  CHECK (provider IN ('yandex','yandex-direct','google'));
+  CHECK (provider IN ('yandex','yandex-direct','yandex-api','google'));
+
+CREATE TABLE IF NOT EXISTS oauth_code_attempts (
+  id TEXT PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  client_id TEXT NOT NULL,
+  verifier_enc BYTEA NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_code_attempt_expiry ON oauth_code_attempts(expires_at);
 
 CREATE TABLE IF NOT EXISTS api_keys (
   id           BIGSERIAL PRIMARY KEY,

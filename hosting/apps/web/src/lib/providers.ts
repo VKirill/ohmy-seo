@@ -1,4 +1,4 @@
-export type ProviderId = "yandex" | "yandex-direct" | "google";
+export type ProviderId = "yandex" | "yandex-direct" | "yandex-api" | "google";
 
 /**
  * Login and account connection are one and the same flow: signing in with
@@ -30,6 +30,11 @@ export const YANDEX_DIRECT_SCOPES = [
   "cloud:auth",
 ] as const;
 
+export const YANDEX_API_SCOPES = [
+  "metrika:read", "metrika:write", "webmaster:hostinfo", "webmaster:verify",
+  "direct:api", "audience:read", "audience:write", "cloud:auth",
+] as const;
+
 /**
  * Read-only by design. The platform keeps OHMY_SEO_ALLOW_LIVE_MUTATIONS unset,
  * so asking for write scopes would mean holding rights we never exercise.
@@ -55,6 +60,7 @@ export const GOOGLE_SCOPES = [
 export const PROVIDER_LABEL: Record<ProviderId, string> = {
   yandex: "Яндекс",
   "yandex-direct": "Яндекс Директ, Аудитории и Облако",
+  "yandex-api": "Яндекс API",
   google: "Google",
 };
 
@@ -62,10 +68,11 @@ export const PROVIDER_LABEL: Record<ProviderId, string> = {
 export const PROVIDER_SERVICES: Record<ProviderId, string[]> = {
   yandex: ["Яндекс Метрика", "Яндекс Вебмастер"],
   "yandex-direct": ["Яндекс Директ", "Яндекс Аудитории", "Яндекс Облако"],
+  "yandex-api": ["Яндекс Метрика", "Яндекс Вебмастер", "Яндекс Директ", "Яндекс Аудитории", "Яндекс Облако"],
   google: ["Search Console", "Analytics 4", "Tag Manager"],  // чтение
 };
 
-export const ALL_PROVIDERS: ProviderId[] = ["yandex", "yandex-direct", "google"];
+export const ALL_PROVIDERS: ProviderId[] = ["yandex", "yandex-direct", "yandex-api", "google"];
 
 /**
  * Yandex needs two OAuth apps to cover Metrika, Webmaster and Direct, but that
@@ -78,6 +85,7 @@ export type FamilyId = "yandex" | "google";
 export const PROVIDER_FAMILY: Record<ProviderId, FamilyId> = {
   yandex: "yandex",
   "yandex-direct": "yandex",
+  "yandex-api": "yandex",
   google: "google",
 };
 

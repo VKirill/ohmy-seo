@@ -8,7 +8,7 @@ export const TENANT_ROOT = process.env.TENANT_ROOT ?? "/data/tenants";
 
 export const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 10 });
 
-export type Provider = "yandex" | "yandex-direct" | "google";
+export type Provider = "yandex" | "yandex-direct" | "yandex-api" | "google";
 
 export type Account = {
   connectionId: number;
@@ -161,7 +161,7 @@ export function materialize(userId: number, accounts: Account[]): string {
       // Derived tenant cache: remove disconnected access, retaining IDs of
       // accounts that are still connected.
       const yandexLabels = accounts.filter(a => a.provider !== "google")
-        .map(a => a.provider === "yandex-direct" ? `${a.label} (Директ)` : a.label);
+        .map(a => a.provider === "yandex-direct" ? `${a.label} (Директ)` : a.provider === "yandex-api" ? `${a.label} (API)` : a.label);
       const googleLabels = accounts.filter(a => a.provider === "google").map(a => a.label);
       for (const [table, labels] of [["accounts", yandexLabels], ["google_accounts", googleLabels]] as const) {
         db.prepare(`DELETE FROM ${table} WHERE label NOT IN (SELECT value FROM json_each(?))`)
@@ -170,10 +170,10 @@ export function materialize(userId: number, accounts: Account[]): string {
       for (const a of accounts) {
         const exp = Math.floor(a.expiresAt.getTime() / 1000);
         const enc = encryptWith(key, a.accessToken);
-        if ((a.provider === "yandex" || a.provider === "yandex-direct") && yandexApp) {
+        if ((a.provider === "yandex" || a.provider === "yandex-direct" || a.provider === "yandex-api") && yandexApp) {
           // Same Yandex login arrives twice — once per OAuth app — so the
           // Direct row is labelled apart to keep both tokens usable.
-          const label = a.provider === "yandex-direct" ? `${a.label} (Директ)` : a.label;
+          const label = a.provider === "yandex-direct" ? `${a.label} (Директ)` : a.provider === "yandex-api" ? `${a.label} (API)` : a.label;
           upsertYandex.run(
             label, yandexApp.id, a.login, enc, placeholder,
             exp, a.scopes, a.isDefault ? 1 : 0, now, now,
@@ -203,6 +203,11 @@ function providerCfg(provider: Provider): ProviderCfg {
       clientId: process.env.YANDEX_CLIENT_ID ?? "",
       clientSecret: process.env.YANDEX_CLIENT_SECRET ?? "",
     };
+  }
+  if (provider === "yandex-api") {
+    return { tokenUrl: "https://oauth.yandex.ru/token",
+      clientId: process.env.YANDEX_API_CLIENT_ID ?? "",
+      clientSecret: process.env.YANDEX_API_CLIENT_SECRET ?? "" };
   }
   if (provider === "yandex-direct") {
     return {
