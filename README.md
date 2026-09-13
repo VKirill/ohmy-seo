@@ -15,7 +15,7 @@
 
 > ⚠️ Серверы ходят в **живые** рекламные и аналитические аккаунты. Запись закрыта env-флагами **и** `confirm` на каждый вызов. Токены — AES-256-GCM в локальной SQLite.
 
-**MIT © 2026 [Кирилл Вечкасов](https://github.com/VKirill)** · v0.8.0
+**MIT © 2026 [Кирилл Вечкасов](https://github.com/VKirill)** · v0.9.0
 
 ---
 
@@ -296,3 +296,14 @@ Quirks API: [`skills/ohmy-seo-mcp/references/yandex-direct-api-quirks.md`](skill
 Код, документация, skill и ассеты в `docs/assets/` — автора. Товарные знаки Яндекс, Google, Mutagen, XMLStock принадлежат правообладателям; проект с ними не аффилирован.
 
 [MIT](LICENSE) — использование, изменение и распространение с сохранением copyright notice.
+
+## Облачный MCP и личный кабинет
+
+[ohmy-seo.ru/app](https://ohmy-seo.ru/app) — подключение нескольких аккаунтов
+Яндекса и Google через OAuth. Создайте персональный API-ключ и подключите
+Streamable HTTP MCP: `https://mcp.ohmy-seo.ru/mcp`, заголовок
+`Authorization: Bearer <ваш API-ключ>`.
+
+Исходники веб-сервиса, шлюза, синхронизации и инструкция развёртывания:
+[hosting/OPERATIONS.md](hosting/OPERATIONS.md). Директ использует отдельное
+OAuth-приложение; для его инструментов выбирайте аккаунт с суффиксом `(Директ)`.

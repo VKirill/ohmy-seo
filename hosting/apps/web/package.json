@@ -1,0 +1,27 @@
+{
+  "name": "ohmy-seo-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev -p 3300",
+    "build": "next build",
+    "start": "node server.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "16.3.5",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "pg": "8.23.0",
+    "jose": "6.2.12",
+    "redis": "6.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.2",
+    "@types/pg": "8.23.1",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "typescript": "7.0.2"
+  }
+}

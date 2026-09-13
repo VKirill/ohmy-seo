@@ -1,0 +1,8 @@
+{
+  "name": "ohmy-seo-sync",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": { "ohmy-seo-sync": "./sync.mjs" },
+  "dependencies": { "better-sqlite3": "13.0.3" }
+}
