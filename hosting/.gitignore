@@ -1,0 +1,8 @@
+.env
+node_modules/
+.next/
+dist/
+*.log
+
+.gitnexus/
+next-env.d.ts

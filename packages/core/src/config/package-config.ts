@@ -1,4 +1,5 @@
 import path from "node:path";
+import { setMasterKeyEnv } from "../crypto/master-key.js";
 
 // ---------------------------------------------------------------------------
 // Per-package env prefixes
@@ -43,6 +44,10 @@ export function resolvePackageConfig(packageName: string): PackageConfig {
 
   const masterKeyEnv = `${envPrefix}_MASTER_KEY`;
   const dbPathEnv    = `${envPrefix}_DB_PATH`;
+
+  // Point the shared cipher at this package's variable, otherwise encryptSecret
+  // and decryptSecret would keep reading the Yandex one.
+  setMasterKeyEnv(masterKeyEnv);
 
   const rawKey = process.env[masterKeyEnv] ?? "";
   if (!/^[0-9a-fA-F]{64}$/.test(rawKey)) {

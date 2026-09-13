@@ -1,0 +1,7 @@
+{
+  "name": "ohmy-seo-hosting",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "vitest run --config vitest.config.ts" },
+  "devDependencies": { "vitest": "^4.0.0" }
+}

@@ -27,7 +27,12 @@ export interface AccountInput {
   access_token?: string;
   /** Already decrypted refresh token. */
   refresh_token?: string;
-  /** Unix timestamp in milliseconds (Date.now() scale). */
+  /**
+   * Unix timestamp in SECONDS — the scale every caller persists
+   * (`Math.floor(Date.now() / 1000) + expires_in`). It used to be compared
+   * against Date.now() in milliseconds, so the "still valid" fast path never
+   * fired and every API call performed a pointless token refresh.
+   */
   expires_at: number;
   /** Already decrypted Service Account JSON string. */
   service_account_json?: string;
@@ -61,7 +66,8 @@ const REFRESH_THRESHOLD_MS = 300_000;
 /**
  * Returns a valid access token for the given account.
  *
- * Fast path: if the token is still valid (expires_at > now + 5 min), return it.
+ * Fast path: if the token is still valid (expires_at is more than 5 minutes
+ * away), return it without contacting Google.
  * Slow path: refresh the token (oauth_user via refresh_token, service_account via JWT).
  *
  * Throws GoogleAuthError on invalid_grant / 401 / 403 — caller must handle
@@ -74,7 +80,7 @@ export async function getGoogleAccessToken(
   // Fast path: token still valid
   if (
     account.access_token &&
-    account.expires_at > Date.now() + REFRESH_THRESHOLD_MS
+    account.expires_at * 1000 > Date.now() + REFRESH_THRESHOLD_MS
   ) {
     return account.access_token;
   }

@@ -1,0 +1,84 @@
+# Pinning the project name is what makes `docker compose up -d` idempotent:
+# containers are matched by name and reused, never duplicated, across reboots
+# and re-deploys regardless of which directory the command is run from.
+name: ohmy-seo
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  postgres:
+    <<: *restart
+    image: postgres:18-alpine
+    container_name: ohmy-seo-pg
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ohmy_seo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-ohmy_seo}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ohmy_seo} -d ${POSTGRES_DB:-ohmy_seo}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    <<: *restart
+    image: redis:8-alpine
+    container_name: ohmy-seo-redis
+    # Cache only — everything is reconstructible from Postgres, so an LRU
+    # eviction policy is safe and keeps memory bounded on a small VPS.
+    command: redis-server --save 60 1 --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  web:
+    <<: *restart
+    build:
+      context: ./apps/web
+      cache_from:
+        - ohmy-seo-web:latest
+    image: ohmy-seo-web:latest
+    container_name: ohmy-seo-web
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-ohmy_seo}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ohmy_seo}
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "127.0.0.1:${WEB_PORT:-3300}:3300"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+
+  gateway:
+    <<: *restart
+    build:
+      context: ./apps/gateway
+      args:
+        OHMY_SEO_REF: ${OHMY_SEO_REF:-v0.9.0}
+      cache_from:
+        - ohmy-seo-gateway:latest
+    image: ohmy-seo-gateway:latest
+    container_name: ohmy-seo-gateway
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-ohmy_seo}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ohmy_seo}
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "127.0.0.1:${GATEWAY_PORT:-3301}:3301"
+    volumes:
+      - tenants:/data/tenants
+    depends_on:
+      postgres: { condition: service_healthy }
+      web:      { condition: service_started }
+
+volumes:
+  pg_data:
+  redis_data:
+  tenants:
