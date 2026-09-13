@@ -11,7 +11,7 @@
 | **Яндекс** | `mcp-yandex-seo` | Директ (ЕПК), Метрика, Вебмастер |
 | **[Mutagen.ru](https://mutagen.ru/?r=69383)** | `mcp-mutagen` | конкуренция ключей, mass-parser, SERP-отчёты |
 | **[XMLStock](https://xmlstock.com/?ref=vechkasov)** | `mcp-xmlstock` | live SERP Яндекс/Google + архив |
-| **Google** | `mcp-gsc` · `mcp-ga4` · `mcp-gtm` | Search Console, Analytics 4, Tag Manager |
+| **Google** | `mcp-gsc` · `mcp-ga4` · `mcp-gtm` · `mcp-google-ads` | Search Console, Analytics 4, Tag Manager, Google Ads |
 
 > ⚠️ Серверы ходят в **живые** рекламные и аналитические аккаунты. Запись закрыта env-флагами **и** `confirm` на каждый вызов. Токены — AES-256-GCM в локальной SQLite.
 
@@ -29,6 +29,7 @@
 | `@ohmy-seo/google-search-console` | 0.1.0 | `mcp-gsc` | Google Search Console + Indexing API |
 | `@ohmy-seo/ga4` | 0.1.0 | `mcp-ga4` | GA4 Data API + Admin API |
 | `@ohmy-seo/gtm` | 0.1.0 | `mcp-gtm` | Google Tag Manager (read/write/publish/rollback) |
+| `@ohmy-seo/google-ads` | 0.1.0 | `mcp-google-ads` | Google Ads API v25 (GAQL, отчёты, мутации с двухшаговым подтверждением) |
 | `@ohmy-seo/mcp-core` | 0.3.0 | — | OAuth storage, SQLite cache, big-int JSON, base types |
 
 ---
