@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { assertHostedCall, isHostedTool } from '../apps/gateway/src/tool-policy';
+import { assertHostedCall, isHostedTool, hostedTool } from '../apps/gateway/src/tool-policy';
 import { WindowLimiter } from '../apps/gateway/src/request-security';
 
 describe('hosted tool authorization', () => {
   it.each(['register_google_service_account', 'yandex_direct_render_to_xlsx', 'delete_account', 'start_oauth_flow',
-    'yandex_direct_upload_from_yaml', 'gtm_publish_version', 'yandex_direct_update_budgets', 'unknown_tool'])('denies %s before execution', name => {
+    'yandex_direct_upload_from_yaml', 'unknown_tool'])('denies %s before execution', name => {
     expect(isHostedTool(name)).toBe(false);
     expect(() => assertHostedCall(name, {})).toThrow();
   });
-  it.each(['yandex_metrika_api', 'yandex_webmaster_api'])('permits GET only for %s', name => {
+  it.each(['yandex_metrika_api', 'yandex_webmaster_api'])('permits GET and requires explicit confirmation for writes in %s', name => {
     expect(() => assertHostedCall(name, { endpoint: '/v4/user' })).not.toThrow();
     for (const method of ['POST', 'PUT', 'DELETE', 'get']) expect(() => assertHostedCall(name, { endpoint: '/v4/user', method })).toThrow();
     expect(() => assertHostedCall(name, { endpoint: '/v4/user', body: { method: 'delete' } })).toThrow();
@@ -44,4 +44,30 @@ describe('bounded request quotas', () => {
     expect(limiter.allow('c', 103)).toBe(true);
     expect(limiter.allow('a', 104)).toBe(true);
   });
+});
+
+it('restores dedicated mutations with confirmation and advertises the gateway fields', () => {
+  for (const name of ['yandex_direct_update_budgets', 'gtm_publish_version', 'gsc_submit_sitemap']) {
+    expect(isHostedTool(name)).toBe(true);
+    expect(() => assertHostedCall(name, {})).toThrow('confirm');
+    expect(() => assertHostedCall(name, { confirm: true })).not.toThrow();
+    expect(hostedTool({ name, inputSchema: { type: 'object', properties: {} } }).inputSchema.properties).toHaveProperty('confirm');
+  }
+});
+it('allows confirmed Webmaster, Metrika and Direct writes through all accepted body forms', () => {
+  for (const name of ['yandex_webmaster_api', 'yandex_metrika_api']) {
+    for (const method of ['POST', 'PUT', 'DELETE']) {
+      expect(() => assertHostedCall(name, { endpoint: '/v4/user/123/hosts', method, confirm: true, acknowledge_live: `${method} /v4/user/123/hosts` })).not.toThrow();
+      expect(() => assertHostedCall(name, { endpoint: '/v4/user/123/hosts', method, confirm: true, acknowledge_live: `${method} /wrong` })).toThrow();
+    }
+  }
+  for (const payload of [{ body: { method: 'update' } }, { body: '{"method":"update"}' }, { params: { method: 'update' } }]) {
+    expect(() => assertHostedCall('yandex_direct_api', { endpoint: '/json/v5/campaigns', confirm: true, acknowledge_live: 'UPDATE /json/v5/campaigns', ...payload })).not.toThrow();
+  }
+});
+it('allows image data but rejects server-file and arbitrary-URL uploads', () => {
+  expect(() => assertHostedCall('yandex_direct_upload_image', { base64: 'test', confirm: true })).not.toThrow();
+  for (const args of [{ file_path: '/etc/passwd' }, { url: 'http://127.0.0.1/' }]) {
+    expect(() => assertHostedCall('yandex_direct_upload_image', { ...args, confirm: true })).toThrow();
+  }
 });

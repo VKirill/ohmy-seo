@@ -3,7 +3,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { join } from "node:path";
 import { ensureFreshAccounts, materialize, tenantDir, type Account } from "./tenant.js";
-import { assertHostedCall, isHostedTool } from "./tool-policy.js";
+import { assertHostedCall, isHostedTool, hostedTool } from "./tool-policy.js";
 import { tenantKey } from "./crypto.js";
 
 const OHMY_ROOT = process.env.OHMY_SEO_ROOT ?? "/opt/ohmy-seo";
@@ -76,9 +76,9 @@ async function spawnPackage(userId: number, spec: PackageSpec, tenantPath: strin
       MUTAGEN_API_KEY: process.env.MUTAGEN_API_KEY ?? "",
       XMLSTOCK_USER: process.env.XMLSTOCK_USER ?? "",
       XMLSTOCK_KEY: process.env.XMLSTOCK_KEY ?? "",
-      // Write stays off unless the operator opts in for the whole platform.
-      OHMY_SEO_ALLOW_LIVE_MUTATIONS: "",
-      YANDEX_DIRECT_ALLOW_LIVE_MUTATIONS: "",
+      // The hosted policy gates writes before dispatch; package confirmation gates remain active.
+      OHMY_SEO_ALLOW_LIVE_MUTATIONS: "true",
+      YANDEX_DIRECT_ALLOW_LIVE_MUTATIONS: "true",
     },
     stderr: "pipe",
   });
@@ -124,7 +124,7 @@ export async function getRuntime(userId: number): Promise<Runtime> {
           // ohmy-seo tool names are already unique across packages.
           if (!isHostedTool(t.name) || toolOwner.has(t.name)) continue;
           toolOwner.set(t.name, spec.id);
-          tools.push(t);
+          tools.push(hostedTool(t));
         }
       } catch (e) {
         console.error(`[runtime] user ${userId}: package ${spec.id} failed to start`);
