@@ -1,8 +1,13 @@
+import { MarketingShell } from "@/components/marketing/Shell";
+
 export const metadata = { title: "Политика конфиденциальности — ohmy-seo" };
 
 export default function Privacy() {
   return (
-    <main className="wrap">
+    <MarketingShell>
+    <main id="main-content" className="mk-container legal-page">
+      <nav className="breadcrumbs" aria-label="Хлебные крошки"><a href="/">Главная</a><span>/</span><span>Приватность</span></nav>
+      <span className="eyebrow">OHMY-SEO · ОБРАБОТКА ДАННЫХ</span>
       <h1>Политика конфиденциальности</h1>
       <p className="lead">
         Документ описывает, какие данные обрабатывает сервис ohmy-seo.ru и как обращается
@@ -12,9 +17,10 @@ export default function Privacy() {
       <h2>Какие данные мы храним</h2>
       <div className="card">
         <p style={{ marginTop: 0 }}>
-          При входе через Яндекс или Google мы сохраняем идентификатор аккаунта, адрес
-          электронной почты и отображаемое имя, а также токены доступа и обновления,
-          которые вы выдали сервису на этапе согласия.
+          При входе через Яндекс мы сохраняем идентификатор аккаунта, адрес
+          электронной почты и отображаемое имя. При отдельном подключении рабочих
+          аккаунтов Яндекса или Google внутри кабинета мы сохраняем данные этих аккаунтов,
+          а также токены доступа и обновления, которые вы выдали сервису на этапе согласия.
         </p>
         <p style={{ marginBottom: 0 }}>
           Токены хранятся в зашифрованном виде (AES-256-GCM). Ключ шифрования хранится
@@ -63,5 +69,6 @@ export default function Privacy() {
         <a href="mailto:support@ohmy-seo.ru">support@ohmy-seo.ru</a>.
       </div>
     </main>
+    </MarketingShell>
   );
 }

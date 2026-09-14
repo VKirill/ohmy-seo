@@ -55,7 +55,7 @@ export default async function Dashboard({
   searchParams: Promise<{ error?: string; connected?: string }>;
 }) {
   const user = await currentUser();
-  if (!user) redirect("/");
+  if (!user) redirect("/connect");
 
   const sp = await searchParams;
   const [connections, keys] = await Promise.all([
@@ -70,14 +70,25 @@ export default async function Dashboard({
   const appUrl = process.env.APP_URL ?? "https://ohmy-seo.ru";
 
   return (
-    <main className="wrap">
+    <main id="main-content" className="wrap dashboard-main">
       <div className="row">
-        <h1 style={{ marginBottom: 0 }}>Кабинет</h1>
+        <h1>Кабинет</h1>
         <form action="/api/logout" method="post">
           <button className="btn" type="submit">Выйти</button>
         </form>
       </div>
       <p className="lead">{user.displayName ?? user.email ?? `Пользователь #${user.id}`}</p>
+
+      <div className="dashboard-add-accounts">
+        <a className="btn primary" href="/app/connect/yandex-code">
+          <ProviderMark family="yandex" />
+          <span>Добавить аккаунт Яндекса</span>
+        </a>
+        <a className="btn" href="/api/oauth/google/start?mode=connect">
+          <ProviderMark family="google" />
+          <span>Добавить аккаунт Google</span>
+        </a>
+      </div>
 
       {sp.error ? <div className="notice err">Не удалось подключить аккаунт: {sp.error}</div> : null}
       {sp.connected ? (
@@ -86,12 +97,12 @@ export default async function Dashboard({
         </div>
       ) : null}
 
-      <h2>Подключённые аккаунты: {accounts.length}</h2>
+      <div className="dashboard-section-heading"><h2>Подключённые аккаунты <span className="dashboard-count">{accounts.length}</span></h2></div>
       {accounts.length === 0 ? (
-        <div className="card muted">Пока ни одного аккаунта не подключено.</div>
+        <div className="card muted">Вы вошли в кабинет. Теперь добавьте рабочие аккаунты, из которых AI будет получать данные.</div>
       ) : (
         accounts.map((a) => (
-          <div className="card" key={`${a.family}:${a.label}`}>
+          <div className="card account-card" key={`${a.family}:${a.label}`}>
             <div className="row">
               <div>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -99,11 +110,12 @@ export default async function Dashboard({
                   <strong>{FAMILY_LABEL[a.family]}</strong>
                   <span className="muted">· {a.email ?? a.label}</span>
                 </div>
-                <div style={{ marginTop: 10 }}>
+                <div className="account-services">
                   {[...new Set(a.parts.flatMap((c) => PROVIDER_SERVICES[c.provider]))].map((s) => (
                     <span className="tag" key={s}>{s}</span>
                   ))}
                 </div>
+                <div className="account-application">{a.family === "yandex" ? (a.parts.some(c => c.provider === "yandex-api") ? "Подключено через новое приложение Яндекса" : "Подключено через прежнее приложение Яндекса") : "Подключено через Google"}</div>
                 <div className="muted" style={{ fontSize: 13 }}>
                   Доступ активен, обновляется автоматически · продлён до{" "}
                   {a.earliestExpiry.toLocaleDateString("ru-RU")}
@@ -120,25 +132,9 @@ export default async function Dashboard({
         ))
       )}
 
-      <div className="row" style={{ marginTop: 16 }}>
-        <a className="btn primary" href={process.env.YANDEX_API_CLIENT_ID && process.env.YANDEX_API_CLIENT_SECRET ? "/app/connect/yandex-code" : "/api/oauth/yandex/start?chain=1&mode=connect"}>
-          <ProviderMark family="yandex" />
-          <span>Добавить аккаунт Яндекса</span>
-        </a>
-        <a className="btn" href="/api/oauth/google/start?mode=connect">
-          <ProviderMark family="google" />
-          <span>Добавить аккаунт Google</span>
-        </a>
-      </div>
-      <p className="muted" style={{ fontSize: 13, marginTop: 10 }}>
-        Добавляйте аккаунты по одному — второй, третий, четвёртый и дальше.
-        Выберите аккаунт на странице Яндекса или Google и подтвердите доступ.
-      </p>
-
-      <h2>API-ключи</h2>
+      <div className="dashboard-section-heading"><h2>Ваши MCP-ключи</h2></div>
       <p className="muted" style={{ marginTop: 0 }}>
-        Ключ выдаётся на вас, а не на отдельный кабинет: все аккаунты выше видны по одному ключу,
-        и новый подключённый аккаунт появляется в MCP без перевыпуска.
+        Один ключ открывает доступ ко всем вашим подключениям. При добавлении аккаунтов менять его не нужно.
       </p>
 
       {freshKey ? (
@@ -149,10 +145,10 @@ export default async function Dashboard({
       ) : null}
 
       {keys.length > 0 ? (
-        <div className="card">
+        <div className="card key-table-wrap">
           <table>
             <thead>
-              <tr><th>Название</th><th>Префикс</th><th>Последнее использование</th><th /></tr>
+              <tr><th>Название</th><th>Префикс</th><th>Последнее использование</th><th><span className="dashboard-sr-only">Действия</span></th></tr>
             </thead>
             <tbody>
               {keys.map((k) => (
@@ -175,21 +171,19 @@ export default async function Dashboard({
         </div>
       ) : null}
 
-      <form action={actionCreateKey} className="card">
+      <form action={actionCreateKey} className="card key-create">
+        <label htmlFor="key-name">Название нового ключа</label>
         <div className="row">
           <input
-            name="name" placeholder="Название ключа, например «ноутбук»"
-            style={{
-              flex: 1, minWidth: 220, padding: "9px 12px", borderRadius: 7,
-              border: "1px solid var(--border)", background: "#0b0f14", color: "var(--fg)",
-              font: "inherit",
-            }}
+            id="key-name" name="name" placeholder="Название ключа, например «ноутбук»"
+            className="key-name-input"
           />
           <button className="btn primary" type="submit">Выпустить ключ</button>
         </div>
       </form>
 
-      <h2>Подключение MCP</h2>
+      <div className="dashboard-section-heading"><h2>Подключите AI-ассистента</h2><p className="muted"><a href="/claude-mcp">Пошаговая инструкция →</a> <a href="/prompts">Готовые вопросы к данным →</a></p></div>
+      <details className="dashboard-config"><summary>Настройки подключения MCP</summary>
       <div className="card">
         <strong>Облачный режим</strong> — ничего не устанавливаете, один URL в конфиге клиента:
         <pre>{JSON.stringify(
@@ -209,6 +203,7 @@ OHMY_SEO_API_KEY=ohmy_ВАШ_КЛЮЧ OHMY_SEO_API_URL=${appUrl} node sync.mjs`}
           раз в 30 минут — тогда доступ не протухнет.
         </p>
       </div>
+      </details>
     </main>
   );
 }

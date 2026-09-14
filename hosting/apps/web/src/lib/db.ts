@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 -- One row per external account the user has authorised us to act on behalf of.
--- The account they signed in with is simply the first such row.
+-- Sign-in identities are stored separately; connections grant data access only.
 CREATE TABLE IF NOT EXISTS connections (
   id                BIGSERIAL PRIMARY KEY,
   user_id           BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -55,6 +55,20 @@ ALTER TABLE connections DROP CONSTRAINT IF EXISTS connections_provider_check;
 ALTER TABLE connections DROP CONSTRAINT IF EXISTS connections_provider_allowed;
 ALTER TABLE connections ADD CONSTRAINT connections_provider_allowed
   CHECK (provider IN ('yandex','yandex-direct','yandex-api','google'));
+
+-- Login is independent of revocable data credentials.
+CREATE TABLE IF NOT EXISTS login_identities (
+  yandex_subject TEXT PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  email TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_login_user ON login_identities(user_id);
+-- Preserve only actual historical Yandex sign-ins. Client data accounts are not identities.
+INSERT INTO login_identities (yandex_subject, user_id, email)
+SELECT subject, user_id, account_email FROM connections
+WHERE provider = 'yandex' AND is_login_identity = true
+ON CONFLICT (yandex_subject) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS oauth_code_attempts (
   id TEXT PRIMARY KEY,

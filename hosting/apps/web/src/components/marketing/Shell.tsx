@@ -1,0 +1,10 @@
+import type { ReactNode } from 'react';
+import { integrations } from '@/lib/marketing/catalog';
+
+export function MarketingShell({ children }: { children: ReactNode }) {
+  return <div className="marketing"><a className="mk-skip" href="#main-content">К содержанию</a><div className="mk-subnav"><nav aria-label="Разделы сайта"><a href="/#scenarios">Сценарии</a><a href="/#integrations">Интеграции</a><a href="/claude-mcp">Подключение Claude</a><a href="/prompts">Готовые вопросы</a><a className="nav-start" href="/connect">Начать работу ↗</a></nav></div>{children}<footer className="mk-footer"><div className="mk-container"><div className="footer-top"><div><a className="mk-wordmark" href="/">oh<span>my</span>-seo<span className="brand-dot">.</span></a><p>Ваши данные. Ваш AI.<br />Больше контекста для решений.</p></div><div><strong>Инструменты</strong>{integrations.slice(0, 5).map(i => <a key={i.slug} href={`/integrations/${i.slug}`}>{i.name}</a>)}</div><div><strong>Аналитика и исследование</strong>{integrations.slice(5).map(i => <a key={i.slug} href={`/integrations/${i.slug}`}>{i.name}</a>)}</div><div><strong>Начать</strong><a href="/claude-mcp">Подключение MCP</a><a href="/prompts">Библиотека вопросов</a><a href="/app">Личный кабинет</a><a href="https://github.com/VKirill/ohmy-seo">Исходный код и документация ↗</a><a href="/privacy">Приватность</a></div></div><div className="footer-bottom"><span>© {new Date().getFullYear()} ohmy-seo · Кирилл Вечкасов</span><span>Независимый проект. Не аффилирован с Яндексом, Google или Anthropic.</span></div></div></footer></div>;
+}
+
+export function FinalCta() {
+  return <section className="mk-final"><div className="mk-container"><span className="eyebrow">ПЕРВЫЙ ШАГ</span><h2>Начните с одного вопроса<br />к вашим данным.</h2><p>Подключите источник и поручите AI первую задачу.<br />Инструкция поможет пройти путь до первого отчёта.</p><div className="mk-actions"><a className="mk-button" href="/connect">Перейти к подключению <span aria-hidden="true">↗</span></a><a className="mk-button secondary" href="/claude-mcp">Как подключить MCP</a></div></div></section>;
+}

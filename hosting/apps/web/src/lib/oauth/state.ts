@@ -4,6 +4,7 @@ import type { ProviderId } from "../providers";
 
 export type OAuthFlow = {
   provider: ProviderId;
+  purpose: "login" | "connect";
   userId: number | null;
   chain: boolean;
   retried: boolean;
@@ -29,7 +30,10 @@ export async function verifyFlow(state: string, provider: ProviderId): Promise<O
   const { payload } = await jwtVerify(state, signingKey(), {
     algorithms: ["HS256"], audience: "ohmy-oauth",
   });
-  if (payload.provider !== provider ||
+  if ((payload.purpose !== "login" && payload.purpose !== "connect") ||
+      (payload.purpose === "login" && (provider !== "yandex" || payload.userId !== null || payload.chain !== false || payload.retried !== false)) ||
+      (payload.purpose === "connect" && payload.userId === null) ||
+      payload.provider !== provider ||
       (payload.userId !== null && (!Number.isSafeInteger(payload.userId) || Number(payload.userId) <= 0)) ||
       typeof payload.chain !== "boolean" || typeof payload.retried !== "boolean") {
     throw new Error("invalid_oauth_state");

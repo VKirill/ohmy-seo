@@ -5,7 +5,7 @@ import { authorizeUrl } from "../apps/web/src/lib/oauth/index";
 
 const mocks = vi.hoisted(() => ({
   user: vi.fn(), session: vi.fn(), upsert: vi.fn(), stored: vi.fn(), exchange: vi.fn(),
-  identity: vi.fn(), cookieDelete: vi.fn(),
+  login: vi.fn(), resolveLogin: vi.fn(), identity: vi.fn(), cookieDelete: vi.fn(),
 }));
 vi.mock("next/headers", () => ({ cookies: async () => ({ delete: mocks.cookieDelete }) }));
 vi.mock("@/lib/session", () => ({ currentUser: mocks.user, createSession: mocks.session }));
@@ -14,10 +14,12 @@ vi.mock("@/lib/oauth", async (original) => ({
   ...await original<any>(), exchangeCode: mocks.exchange,
   PROVIDERS: { yandex: { identity: mocks.identity }, "yandex-direct": { identity: mocks.identity }, google: { identity: mocks.identity } },
 }));
+vi.mock("@/lib/oauth/login", async original => ({ ...await original<any>(), exchangeYandexLogin: mocks.login }));
+vi.mock("@/lib/login-identities", () => ({ resolveCabinetUser: mocks.resolveLogin }));
 import { GET as start } from "../apps/web/src/app/api/oauth/[provider]/start/route";
 import { GET as callback } from "../apps/web/src/app/api/oauth/[provider]/callback/route";
 
-const base: OAuthFlow = { provider: "yandex", userId: 10, chain: true, retried: false };
+const base: OAuthFlow = { provider: "yandex", purpose: "connect", userId: 10, chain: true, retried: false };
 async function invoke(flow: OAuthFlow, query = "code=test-code") {
   const state = await signFlow(flow);
   const req = new NextRequest(`https://test.invalid/api/oauth/${flow.provider}/callback?${query}&state=${state}`, {
@@ -30,6 +32,7 @@ beforeEach(() => {
   process.env.SESSION_SECRET = "test-session-secret-at-least-32-characters";
   process.env.APP_URL = "https://test.invalid";
   process.env.YANDEX_CLIENT_ID = "test-yandex";
+  process.env.YANDEX_CLIENT_SECRET = "test-yandex-secret";
   process.env.YANDEX_DIRECT_CLIENT_ID = "test-direct";
   process.env.GOOGLE_CLIENT_ID = "test-google";
   mocks.user.mockResolvedValue({ id: 10 });
@@ -42,7 +45,7 @@ beforeEach(() => {
 describe("repeated account connections", () => {
   it("opens provider authorization directly for every add-account link", async () => {
     for (const provider of ["yandex", "google"]) {
-      for (const query of ["?mode=connect", "?chain=1", "", "?mode=connect&login_hint=old@example.test"]) {
+      for (const query of ["?mode=connect", "?mode=connect&chain=1", "?mode=connect&login_hint=old@example.test"]) {
         const res = await start(new NextRequest(`https://test.invalid/api/oauth/${provider}/start${query}`), { params: Promise.resolve({ provider }) });
         const url = new URL(res.headers.get("location")!);
         expect(url.host).toBe(provider === "yandex" ? "oauth.yandex.ru" : "accounts.google.com");
@@ -119,5 +122,45 @@ describe("repeated account connections", () => {
     const state = await signFlow(base);
     await expect(verifyFlow(state, "google")).rejects.toThrow();
     await expect(verifyFlow(state.slice(0, -8) + "tampered", "yandex")).rejects.toThrow();
+  });
+});
+
+describe('cabinet login is separate from data access', () => {
+  it('requests only identity scopes and never chains data authorization', async () => {
+    mocks.user.mockResolvedValue(null);
+    const res = await start(new NextRequest('https://test.invalid/api/oauth/yandex/start?chain=1'), { params: Promise.resolve({ provider: 'yandex' }) });
+    const url = new URL(res.headers.get('location')!);
+    expect(url.searchParams.get('scope')?.split(' ').sort()).toEqual(['login:email', 'login:info']);
+    expect(await verifyFlow(url.searchParams.get('state')!, 'yandex')).toMatchObject({ purpose: 'login', userId: null, chain: false });
+  });
+  it('creates a session without saving service tokens or a data connection', async () => {
+    mocks.user.mockResolvedValue(null);
+    mocks.login.mockResolvedValue({ subject: 'owner', email: null, displayName: 'Owner' });
+    mocks.resolveLogin.mockResolvedValue(77);
+    const res = await invoke({ provider: 'yandex', purpose: 'login', userId: null, chain: false, retried: false });
+    expect(res.headers.get('location')).toBe('https://test.invalid/app');
+    expect(mocks.session).toHaveBeenCalledWith(77);
+    expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(mocks.exchange).not.toHaveBeenCalled();
+  });
+  it('blocks guest access to every data-connection start route', async () => {
+    mocks.user.mockResolvedValue(null);
+    for (const provider of ['google', 'yandex', 'yandex-direct', 'yandex-api']) {
+      const res = await start(new NextRequest(`https://test.invalid/api/oauth/${provider}/start?mode=connect`), { params: Promise.resolve({ provider }) });
+      expect(res.headers.get('location')).toBe('https://test.invalid/connect?error=session_required');
+    }
+  });
+  it('rejects legacy state and invalid purpose/provider combinations', async () => {
+    for (const flow of [{ ...base, purpose: undefined }, { ...base, purpose: 'login' }, { ...base, provider: 'google', purpose: 'login', userId: null, chain: false }, { ...base, userId: null }]) {
+      const state = await signFlow(flow as OAuthFlow);
+      await expect(verifyFlow(state, flow.provider as OAuthFlow['provider'])).rejects.toThrow('invalid_oauth_state');
+    }
+  });
+  it('does not switch an existing cabinet session during login', async () => {
+    const res = await start(new NextRequest('https://test.invalid/api/oauth/yandex/start'), { params: Promise.resolve({ provider: 'yandex' }) });
+    expect(res.headers.get('location')).toBe('https://test.invalid/app');
+    await invoke({ provider: 'yandex', purpose: 'login', userId: null, chain: false, retried: false });
+    expect(mocks.login).not.toHaveBeenCalled();
+    expect(mocks.session).not.toHaveBeenCalled();
   });
 });

@@ -1,7 +1,8 @@
 import { getHostsList } from "../webmaster-client.js";
 import { getCountersList } from "../metrika-client.js";
 import { getAccessToken } from "../oauth/token-broker.js";
-import { getAccountById } from "../db/accounts-repo.js";
+import { getAccountById, updateWebmasterUserId } from "../db/accounts-repo.js";
+import { probeWebmasterUserId } from "../oauth/login-probe.js";
 import {
   upsertSitesForAccount,
   upsertCountersForAccount,
@@ -40,12 +41,17 @@ export async function refreshSitesForAccount(accountId: number): Promise<Refresh
   if (!hasScope(acc.scopes_granted, SCOPES.WEBMASTER_HOSTINFO)) {
     return emptyReport(account_label, "sites", Date.now() - t0, "Account lacks webmaster:hostinfo scope");
   }
-  if (acc.webmaster_user_id === null) {
-    return emptyReport(account_label, "sites", Date.now() - t0, "Account has no webmaster_user_id (probe failed at connect)");
-  }
-  const webmasterUserId = String(acc.webmaster_user_id);
   try {
     const accessToken = await getAccessToken(accountId);
+    // Hosted OAuth connections receive tokens without the standalone login probe.
+    // Discover the ID lazily, also recovering accounts whose initial probe failed.
+    let userId = acc.webmaster_user_id;
+    if (userId === null) {
+      userId = await probeWebmasterUserId(accessToken);
+      if (userId === null) throw new Error("Cannot resolve Webmaster user ID; check webmaster:hostinfo access");
+      updateWebmasterUserId(accountId, userId);
+    }
+    const webmasterUserId = String(userId);
     const hosts = await getHostsList({ accessToken, webmasterUserId });
     const { inserted, updated, removed } = upsertSitesForAccount(
       accountId,

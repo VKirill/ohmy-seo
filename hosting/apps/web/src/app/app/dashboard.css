@@ -1,0 +1,61 @@
+.dashboard {
+  --bg:var(--paper); --panel:#fff; --border:var(--line); --fg:var(--ink);
+  --muted:var(--subtle); --accent:var(--blue); --ok:#397247; --warn:#967026;
+  color-scheme:light;
+}
+.dashboard .wrap { max-width:1040px; padding:32px 32px 64px; }
+.dashboard h1 { font-size:32px; letter-spacing:-1px; margin:0 0 8px; }
+.dashboard p.lead { color:var(--subtle); font-size:14px; margin-bottom:24px; overflow-wrap:anywhere; }
+.dashboard .dashboard-section-heading { margin-top:36px; }
+.dashboard .dashboard-section-heading h2 { font-size:22px; letter-spacing:-.5px; margin:12px 0 16px; }
+.dashboard-section-heading>p a { display:inline-block; margin-right:24px; }
+.dashboard-count { display:inline-block; vertical-align:middle; font-size:15px; letter-spacing:0; line-height:28px; padding:0 10px; border:1px solid var(--line); border-radius:5px; color:var(--subtle); }
+.dashboard .card { background:#fff; border:1px solid var(--line); border-radius:6px; padding:20px; margin-bottom:12px; }
+.dashboard .account-card>.row { align-items:flex-start; }
+.dashboard .account-card>.row>div { min-width:0; flex:1; overflow-wrap:anywhere; }
+.dashboard .account-card strong { font-size:17px; }
+.dashboard .account-card .row>div>div:first-child { flex-wrap:wrap; }
+.dashboard .account-services { margin:14px 0 6px; }
+.dashboard .account-application { font-size:12px; color:var(--subtle); margin:4px 0 8px; }
+.dashboard .tag { color:#4d584c; background:#f3f5ee; border:1px solid #e0e5d8; border-radius:4px; font-size:12px; padding:4px 9px; }
+.dashboard .btn { background:transparent; color:var(--ink); border:1px solid #d6dacf; border-radius:5px; font-size:14px; font-weight:600; padding:11px 18px; justify-content:center; }
+.dashboard .btn:hover { background:#eef0e8; border-color:#bbc2b1; }
+.dashboard .btn.primary { color:white; background:var(--blue); border-color:var(--blue); }
+.dashboard .btn.primary:hover { background:#2440be; }
+.dashboard .btn.danger { color:#a03331; border-color:#e9d3ce; background:#fff; font-size:12px; padding:8px 13px; }
+.dashboard .btn.danger:hover { background:#fff1ed; border-color:#c89387; }
+.dashboard pre { background:#f3f4ef; color:var(--ink); border:1px solid var(--line); border-radius:5px; padding:20px; line-height:1.7; max-width:100%; }
+.dashboard .notice { background:#faf3df; color:#635126; border-radius:0 5px 5px 0; padding:16px 20px; }
+.dashboard .notice.ok { background:#edf5ea; color:#345737; border-color:#608552; }
+.dashboard .notice.err { background:#fff0eb; color:#913e30; border-color:#bb6953; }
+.dashboard .key-table-wrap { overflow-x:auto; }
+.dashboard table { min-width:560px; }
+.dashboard th { position:relative; color:var(--subtle); font-size:12px; font-weight:500; }
+.dashboard th,.dashboard td { border-color:var(--line); padding:14px 12px; }
+.dashboard tbody tr:last-child td { border-bottom:0; }
+.dashboard td:first-child { overflow-wrap:anywhere; max-width:250px; }
+.dashboard label { display:block; font-size:13px; font-weight:600; margin-bottom:10px; }
+.dashboard input:not([type=hidden]) { background:#fff; color:var(--ink); border:1px solid #cbd1c2; border-radius:5px; padding:12px 14px; font:inherit; }
+.dashboard input::placeholder { color:#74796f; opacity:1; }
+.dashboard input:focus-visible { outline:3px solid #3555df; outline-offset:3px; }
+.dashboard .key-name-input { flex:1; min-width:200px; }
+.dashboard-sr-only { position:absolute; width:1px; height:1px; padding:0; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+@media(max-width:640px) {
+  .dashboard .wrap { padding:32px 22px 56px; }
+  .dashboard h1 { font-size:30px; letter-spacing:-1px; }
+  .dashboard .card { padding:20px; }
+  .dashboard .dashboard-section-heading { margin-top:38px; }
+  .dashboard .account-card>.row { flex-direction:column; }
+  .dashboard .key-create .row { align-items:stretch; flex-direction:column; }
+  .dashboard .key-name-input { min-width:0; width:100%; }
+  .dashboard .notice pre { overflow-wrap:anywhere; white-space:pre-wrap; }
+}
+
+.dashboard-add-accounts { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:28px; }
+.dashboard .account-card { border:0; border-bottom:1px solid var(--line); border-radius:0; background:transparent; padding:20px 0; margin:0; }
+.dashboard .account-services { margin:10px 0 4px; }
+.dashboard .tag { background:transparent; border:0; padding:0; margin-right:14px; }
+.dashboard .dashboard-config { border:1px solid var(--line); border-radius:5px; padding:0; }
+.dashboard .dashboard-config summary { cursor:pointer; padding:18px 20px; font-size:14px; }
+.dashboard .dashboard-config>.card { margin:0 16px 16px; }
+@media(max-width:640px) { .dashboard-add-accounts { flex-direction:column; } .dashboard-add-accounts .btn { width:100%; } }

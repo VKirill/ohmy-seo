@@ -55,17 +55,14 @@ export async function listConnections(userId: number): Promise<Connection[]> {
   return r.rows.map(toConnection);
 }
 
-/**
- * Upserts the connection and returns the owning user id, creating the user on
- * first sign-in. A connection is keyed by (provider, subject), so re-authorising
- * the same external account refreshes it in place instead of duplicating it.
- */
+/** Upserts a data connection inside an authenticated cabinet. Never creates a user. */
 export async function upsertConnection(opts: {
   provider: ProviderId;
   identity: Identity;
   tokens: TokenSet;
-  userId: number | null;
+  userId: number;
 }): Promise<{ userId: number; connectionId: number }> {
+  if (!Number.isSafeInteger(opts.userId) || opts.userId <= 0) throw new Error("unauthorized");
   await ensureSchema();
   const { provider, identity, tokens } = opts;
   const client = await pool.connect();
@@ -81,21 +78,7 @@ export async function upsertConnection(opts: {
       throw new Error("Этот аккаунт уже подключён к другому кабинету");
     }
 
-    let userId = opts.userId;
-    if (userId === null) {
-      userId =
-        existing.rowCount && existing.rowCount > 0
-          ? Number(existing.rows[0].user_id)
-          : await (async () => {
-              const u = await client.query<{ id: string }>(
-                `INSERT INTO users (email, display_name, last_login_at)
-                 VALUES ($1, $2, now()) RETURNING id`,
-                [identity.email, identity.displayName],
-              );
-              return Number(u.rows[0].id);
-            })();
-      await client.query("UPDATE users SET last_login_at = now() WHERE id = $1", [userId]);
-    }
+    const userId = opts.userId;
 
     // Yandex only returns a refresh token on the first authorisation of a
     // given app+account pair; keep the stored one when the response omits it.
@@ -123,7 +106,7 @@ export async function upsertConnection(opts: {
        RETURNING id`,
       [
         userId, provider, identity.subject, identity.email, identity.login, label,
-        accessEnc, refreshEnc, expiresAt, tokens.scope, opts.userId === null,
+        accessEnc, refreshEnc, expiresAt, tokens.scope, false,
       ],
     );
 

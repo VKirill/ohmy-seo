@@ -1,0 +1,73 @@
+[
+  {
+    "service": "yandex-direct",
+    "source": "https://avatars.mds.yandex.net/get-lpc/14837328/cdc4f410-5c2f-4f70-a818-e922fbbc1f12/orig",
+    "file": "yandex-direct.png",
+    "contentType": "image/png",
+    "bytes": 4910
+  },
+  {
+    "service": "yandex-metrica",
+    "source": "https://avatars.mds.yandex.net/get-adv/135342/2a000001967c31d064a2f00190fa9211b75e/orig",
+    "file": "yandex-metrica.png",
+    "contentType": "image/png",
+    "bytes": 7563,
+    "note": "Product icon in the official Yandex business navigation, not the umbrella Yandex Advertising favicon."
+  },
+  {
+    "service": "yandex-webmaster",
+    "source": "https://avatars.mds.yandex.net/get-lpc/1635340/a14b5f2e-862b-4cbc-9d3d-578c6209d1e0/orig",
+    "file": "yandex-webmaster.png",
+    "contentType": "image/png",
+    "bytes": 3601
+  },
+  {
+    "service": "google-ads",
+    "source": "https://www.gstatic.com/images/branding/productlogos/ads/v5/192px.svg",
+    "file": "google-ads.svg",
+    "contentType": "image/svg+xml",
+    "bytes": 584
+  },
+  {
+    "service": "google-search-console",
+    "source": "https://gstatic.com/search-console/scfe/logo_search_console.svg",
+    "file": "google-search-console.svg",
+    "contentType": "image/svg+xml",
+    "bytes": 8827
+  },
+  {
+    "service": "google-analytics",
+    "source": "https://www.gstatic.com/images/branding/productlogos/google_analytics/v6/192px.svg",
+    "file": "google-analytics.svg",
+    "contentType": "image/svg+xml",
+    "bytes": 627
+  },
+  {
+    "service": "roistat",
+    "source": "https://roistat.com/img/favicon-120x120.png",
+    "file": "roistat.png",
+    "contentType": "image/png",
+    "bytes": 2801
+  },
+  {
+    "service": "mutagen",
+    "source": "https://mutagen.ru/img/favicon32.png",
+    "file": "mutagen.png",
+    "contentType": "image/png",
+    "bytes": 15100
+  },
+  {
+    "service": "xmlstock",
+    "source": "https://xmlstock.com/template/images/logo.png",
+    "file": "xmlstock.png",
+    "contentType": "image/png",
+    "bytes": 6777
+  },
+  {
+    "service": "google-tag-manager",
+    "source": "https://marketingplatform.google.com/about/tag-manager/",
+    "stylesheet": "https://marketingplatform.google.com/about/static/css/index.min.css",
+    "file": "google-tag-manager.svg",
+    "note": "Official inline SVG with original CSS fills embedded."
+  }
+]

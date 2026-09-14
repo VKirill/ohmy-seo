@@ -1,10 +1,13 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "./marketing.css";
 
 export const metadata: Metadata = {
-  title: "ohmy-seo — один вход во все SEO- и рекламные API",
+  metadataBase: new URL("https://ohmy-seo.ru"),
+  title: "ohmy-seo — бесплатный MCP для маркетологов",
   description:
-    "Авторизуйтесь Яндексом или Google и получите готовый MCP-доступ к Директу, Метрике, Вебмастеру, Search Console, Analytics 4 и Tag Manager.",
+    "Бесплатный инструмент специально для маркетологов: работа с рекламой, SEO и аналитикой через AI-ассистента.",
+  openGraph: { type: "website", locale: "ru_RU", siteName: "ohmy-seo", images: [{ url: "/og-image.png", width: 1200, height: 630, alt: "ohmy-seo — ваш маркетинг в диалоге с AI" }] },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

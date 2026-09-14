@@ -1,3 +1,5 @@
+import { exchangeYandexLogin } from "@/lib/oauth/login";
+import { resolveCabinetUser } from "@/lib/login-identities";
 import { NextResponse, type NextRequest } from "next/server";
 import { cookies } from "next/headers";
 import { exchangeCode, PROVIDERS } from "@/lib/oauth";
@@ -17,10 +19,12 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ provider: s
   const state = url.searchParams.get("state");
   const expected = req.cookies.get(`ohmy_state_${provider}`)?.value;
   if (!state || !expected || state !== expected) {
-    return NextResponse.redirect(`${process.env.APP_URL}/app?error=state_mismatch`);
+    return NextResponse.redirect(`${process.env.APP_URL}/connect?error=state_mismatch`);
   }
+  let errorPath = "/connect";
   try {
     const flow = await verifyFlow(state, provider);
+    errorPath = flow.purpose === "connect" ? "/app" : "/connect";
     const session = await currentUser();
     if (flow.userId !== (session?.id ?? null)) throw new Error("Сессия изменилась. Подключите аккаунт заново");
     // Consume the browser state on success, cancellation and failure alike.
@@ -30,6 +34,13 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ provider: s
     if (!code) throw new Error("missing_code");
     if (provider === "yandex-direct" && (!session || !flow.expectedSubject)) throw new Error("yandex_chain_required");
 
+    if (flow.purpose === "login") {
+      const identity = await exchangeYandexLogin(code);
+      const userId = await resolveCabinetUser(identity);
+      await createSession(userId);
+      return NextResponse.redirect(`${process.env.APP_URL}/app`);
+    }
+    if (!session) throw new Error("Войдите в кабинет перед подключением аккаунта");
     const tokens = await exchangeCode(provider, code);
     // Yandex returns basic id/login for ANY valid service token, even when
     // the Direct application has no login scopes. Never borrow a session ID.
@@ -43,12 +54,11 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ provider: s
       return oauthRedirect({ ...flow, retried: true, expectedSubject: identity.subject,
         loginHint: identity.email ?? undefined }, true);
     }
-    const { userId } = await upsertConnection({ provider, identity, tokens, userId: flow.userId });
-    if (!session) await createSession(userId);
+    const { userId } = await upsertConnection({ provider, identity, tokens, userId: session.id });
 
     const next = CHAIN_AFTER[provider];
     if (next && flow.chain) {
-      return oauthRedirect({ provider: next, userId, chain: true, retried: false,
+      return oauthRedirect({ provider: next, purpose: "connect", userId, chain: true, retried: false,
         expectedSubject: identity.subject, loginHint: identity.login ?? undefined });
     }
     const res = NextResponse.redirect(`${process.env.APP_URL}/app?connected=${PROVIDER_FAMILY[provider]}`);
@@ -59,7 +69,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ provider: s
     // Provider errors can contain credentials. Do not log raw endpoint bodies.
     const known = e instanceof Error && /[А-Яа-я]/.test(e.message) ? e.message : "Не удалось завершить авторизацию. Попробуйте ещё раз";
     console.error("[oauth callback] failed", provider);
-    const res = NextResponse.redirect(`${process.env.APP_URL}/app?error=${encodeURIComponent(known)}`);
+    const res = NextResponse.redirect(`${process.env.APP_URL}${errorPath}?error=${encodeURIComponent(known)}`);
     res.cookies.delete(`ohmy_state_${provider}`);
     return res;
   }

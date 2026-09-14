@@ -8,17 +8,24 @@ export const runtime = "nodejs";
 export async function GET(req: NextRequest, ctx: { params: Promise<{ provider: string }> }) {
   const { provider } = await ctx.params;
   if (!isProviderId(provider)) return NextResponse.json({ error: "unknown provider" }, { status: 404 });
-  if (provider === "yandex-api") return NextResponse.redirect(`${process.env.APP_URL}/app/connect/yandex-code`);
   const user = await currentUser();
-  if (req.nextUrl.searchParams.get("mode") === "connect" && !user) {
-    return NextResponse.redirect(`${process.env.APP_URL}/?error=session_required`);
+  const mode = req.nextUrl.searchParams.get("mode");
+  const login = provider === "yandex" && mode !== "connect";
+  if (login) {
+    if (user) return NextResponse.redirect(`${process.env.APP_URL}/app`);
+    try {
+      return await oauthRedirect({ provider: "yandex", purpose: "login", userId: null, chain: false, retried: false });
+    } catch {
+      return NextResponse.redirect(`${process.env.APP_URL}/connect?error=login_unavailable`);
+    }
   }
-  // Direct must follow a verified Yandex identity, never an arbitrary session.
+  if (!user) return NextResponse.redirect(`${process.env.APP_URL}/connect?error=session_required`);
+  if (provider === "yandex-api") return NextResponse.redirect(`${process.env.APP_URL}/app/connect/yandex-code`);
   if (provider === "yandex-direct") {
     return NextResponse.redirect(`${process.env.APP_URL}/api/oauth/yandex/start?chain=1&mode=connect`);
   }
   return oauthRedirect({
-    provider, userId: user?.id ?? null,
+    provider, purpose: "connect", userId: user.id,
     chain: req.nextUrl.searchParams.get("chain") === "1", retried: false,
-  }, provider === "yandex" && user !== null);
+  }, provider === "yandex");
 }

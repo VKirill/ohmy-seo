@@ -9,7 +9,7 @@ export default async function YandexCodeConnection({ searchParams }: { searchPar
   if (!await currentUser()) redirect('/');
   const { error } = await searchParams;
   const ready = codeConnectionConfigured();
-  return <main className="wrap" style={{ maxWidth: 640 }}>
+  return <main id="main-content" className="wrap" style={{ maxWidth: 640 }}>
     <a href="/app">← Вернуться в кабинет</a>
     <h1>Подключить аккаунт Яндекса</h1>
     {!ready ? <p className="notice">Подключение через код настраивается. Попробуйте позже.</p> : <>
@@ -17,9 +17,7 @@ export default async function YandexCodeConnection({ searchParams }: { searchPar
       {process.env.YANDEX_API_DIRECT_READY !== "true" && <p className="notice">Доступ к Директу для нового подключения ожидает одобрения Яндекса. Метрика и Вебмастер уже доступны.</p>}
       {error && <p className="notice err" role="alert">{error === 'start' ? 'Не удалось начать подключение. Попробуйте ещё раз.' : 'Не удалось подключить аккаунт. Получите новый код и повторите попытку.'}</p>}
       <div className="card">
-        <form action="/api/oauth/yandex-code/start" method="post" target="_blank">
-          <button className="btn primary" type="submit">Получить код в Яндексе ↗</button>
-        </form>
+        <a className="btn primary" href="/api/oauth/yandex-code/start" target="_blank" rel="noopener">Получить код в Яндексе ↗</a>
         <p className="muted">В новой вкладке выберите аккаунт, разрешите доступ и скопируйте код. Затем вернитесь сюда.</p>
       </div>
       <form className="card" action={submitCodeConnection}>
