@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { socialMetadata, siteGraph } from "@/lib/marketing/seo";
+import { JsonLd } from "@/components/marketing/JsonLd";
 import "./globals.css";
 import "./marketing.css";
 
@@ -7,7 +9,7 @@ export const metadata: Metadata = {
   title: "ohmy-seo — бесплатный MCP для маркетологов",
   description:
     "Бесплатный инструмент специально для маркетологов: работа с рекламой, SEO и аналитикой через AI-ассистента.",
-  openGraph: { type: "website", locale: "ru_RU", siteName: "ohmy-seo", images: [{ url: "/og-image.png", width: 1200, height: 630, alt: "ohmy-seo — ваш маркетинг в диалоге с AI" }] },
+  ...socialMetadata("ohmy-seo — бесплатный MCP для маркетологов", "Реклама, SEO и аналитика через AI-ассистента."),
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -24,6 +26,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </div>
         </header>
         {children}
+        <JsonLd data={siteGraph} />
       </body>
     </html>
   );

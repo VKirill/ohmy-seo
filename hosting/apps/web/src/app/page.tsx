@@ -1,4 +1,6 @@
 import type { Metadata } from 'next';
+import { JsonLd } from '@/components/marketing/JsonLd';
+import { socialMetadata, socialImage, siteUrl, applicationId, publisherId, websiteId } from '@/lib/marketing/seo';
 import { ServiceLogo } from '@/components/marketing/ServiceLogo';
 import { MarketingShell, FinalCta } from '@/components/marketing/Shell';
 import { ScenarioDemo, CopyText } from '@/components/marketing/Interactive';
@@ -9,7 +11,7 @@ export const metadata: Metadata = {
   title: 'ohmy-seo — бесплатный MCP для маркетологов: Claude, Директ и Google Ads',
   description: 'Бесплатный инструмент для маркетологов: подключите Яндекс Директ, Google Ads, SEO и аналитику к Claude через MCP. Сценарии работы и инструкции.',
   alternates: { canonical: '/' },
-  openGraph: { images: [{ url: "https://ohmy-seo.ru/og-image.png", width: 1200, height: 630, alt: "ohmy-seo — ваш маркетинг в диалоге с AI" }], type: "website", locale: "ru_RU", siteName: "ohmy-seo", title: 'Бесплатный MCP-инструмент для маркетологов', description: 'ohmy-seo создан специально для маркетологов: реклама, SEO и аналитика в диалоге с AI. Бесплатный доступ к инструменту.', url: '/' },
+  ...socialMetadata('ohmy-seo — бесплатный MCP для маркетологов', 'Реклама, SEO и аналитика в AI-чате: подключайте сервисы, получайте отчёты и выполняйте изменения с подтверждением.', '/'),
 };
 
 export default function Home() {
@@ -26,6 +28,10 @@ export default function Home() {
     <section className="mk-section mk-container" id="access"><div className="section-heading"><div><span className="eyebrow">БЕСПЛАТНО ДЛЯ МАРКЕТОЛОГОВ</span><h2>Облако или локальная установка</h2></div><p>ohmy-seo бесплатен для маркетологов — и в облаке, и при локальной установке. AI-клиенты и сторонние сервисы могут оплачиваться отдельно по их тарифам.</p></div><div className="access-grid"><article><span className="eyebrow">ОБЛАКО · БЕСПЛАТНО</span><h3>Готовый MCP-адрес</h3><p>Кабинет, подключения и персональный ключ. Сервисы доступны в пределах прав аккаунта и возможностей облачного режима.</p><a className="mk-button" href="/connect">Открыть кабинет ↗</a></article><article><span className="eyebrow">ЛОКАЛЬНЫЕ ПАКЕТЫ · БЕСПЛАТНО · MIT</span><h3>Инструменты на вашей машине</h3><p>Установите нужные пакеты из исходного кода. Настройте доступы сервисов и подключите процессы к своему AI-клиенту.</p><a className="mk-button secondary" href="/claude-mcp#local">Посмотреть настройку ↗</a></article></div></section>
     <section className="mk-section faq-section mk-container" id="faq"><div><span className="eyebrow">FAQ</span><h2>Вопросы о сервисе</h2></div><div className="faq-list">{faqs.map(([q,a]) => <details key={q}><summary>{q}</summary><p>{a}</p></details>)}</div></section>
     <FinalCta />
-    <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify({ '@context': 'https://schema.org', '@type': 'SoftwareApplication', name: 'ohmy-seo', applicationCategory: 'BusinessApplication', operatingSystem: 'Web, macOS, Linux, Windows', url: 'https://ohmy-seo.ru', description: 'Бесплатный MCP-инструмент специально для маркетологов: реклама, SEO и аналитика', isAccessibleForFree: true, offers: { '@type': 'Offer', price: '0', priceCurrency: 'RUB' }, featureList: integrations.map(i=>i.name) }).replace(/</g, '\\u003c') }} />
+    <JsonLd data={{ '@context': 'https://schema.org', '@graph': [
+      { '@type': 'SoftwareApplication', '@id': applicationId, name: 'ohmy-seo', applicationCategory: 'BusinessApplication', operatingSystem: 'Web, macOS, Linux, Windows', url: siteUrl, description: 'Бесплатный MCP-инструмент специально для маркетологов: реклама, SEO и аналитика', isAccessibleForFree: true, offers: { '@type': 'Offer', price: '0', priceCurrency: 'RUB', url: `${siteUrl}/connect` }, featureList: integrations.map(i=>i.name), image: socialImage.url, publisher: { '@id': publisherId }, license: 'https://opensource.org/license/mit' },
+      { '@type': 'WebPage', '@id': `${siteUrl}/#page`, url: siteUrl, name: 'ohmy-seo — бесплатный MCP для маркетологов', inLanguage: 'ru-RU', isPartOf: { '@id': websiteId }, mainEntity: { '@id': applicationId }, primaryImageOfPage: { '@type': 'ImageObject', url: socialImage.url, width: 1200, height: 630 } },
+      { '@type': 'FAQPage', '@id': `${siteUrl}/#faq`, mainEntity: faqs.map(([question,answer]) => ({ '@type': 'Question', name: question, acceptedAnswer: { '@type': 'Answer', text: answer } })) },
+    ] }} />
   </main></MarketingShell>;
 }
