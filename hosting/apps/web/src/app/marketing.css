@@ -293,3 +293,51 @@ body:has(.marketing) header.top nav a { color:#505550; font-size:13px; }
  .demo-content { min-height:0; }
  .prompt-tabs { padding:16px 0; margin-bottom:22px; }
 }
+
+/* Client-specific connection guides retain native navigation and copy controls. */
+.connection-start { padding-top:32px; padding-bottom:24px; }
+.connection-start h2,.client-section>h2 { font-size:30px; }
+.connection-start>ol { list-style:none; padding:0; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:30px; counter-reset:connection; }
+.connection-start li { counter-increment:connection; border-top:1px solid var(--line); padding-top:16px; }
+.connection-start li:before { content:counter(connection) ". "; color:var(--blue); }
+.connection-start li p { font-size:14px; color:var(--subtle); margin:8px 0; }
+.client-section { padding-top:24px; padding-bottom:20px; scroll-margin-top:20px; }
+.client-section>p { font-size:14px; color:var(--subtle); }
+.client-instructions { border:1px solid var(--line); border-radius:6px; background:white; }
+.client-tabs { display:flex; flex-wrap:wrap; gap:8px; padding:20px; border-bottom:1px solid var(--line); }
+.client-tabs a { padding:9px 13px; font-size:13px; border:1px solid var(--line); border-radius:4px; color:var(--ink); }
+.client-tabs a:hover { background:var(--soft); }
+.client-tabs a[aria-current=page] { color:white; background:var(--blue); border-color:var(--blue); }
+.client-panel { padding:28px; }
+.client-panel[hidden] { display:none; }
+.client-heading { display:flex; align-items:center; flex-wrap:wrap; gap:10px 24px; margin-bottom:16px; }
+.client-heading h3 { margin:0; font-size:25px; }
+.client-heading>span { color:var(--subtle); font-size:12px; }
+.client-panel>p,.client-steps { font-size:15px; max-width:920px; }
+.client-steps { padding-left:24px; }
+.client-steps li { padding-left:5px; margin:10px 0; overflow-wrap:anywhere; }
+.client-config { border:1px solid var(--line); border-radius:5px; overflow:hidden; margin:24px 0; }
+.client-config-top { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 18px; background:var(--soft); }
+.client-config-top>span { font-size:12px; overflow-wrap:anywhere; }
+.client-config .copy-control { margin:0; }
+.client-config .copy-control [role=status]:empty { display:none; }
+.client-config pre { margin:0; border:0; border-radius:0; padding:20px; background:#fafaf7; font-size:13px; line-height:1.6; }
+.client-panel .client-note { font-size:13px; color:var(--subtle); }
+.client-check { border-top:1px solid var(--line); padding-top:18px; }
+.client-check strong { font-size:14px; }
+.client-check p { font-size:14px; margin:8px 0; }
+.client-sources,.client-shortcuts { display:flex; flex-wrap:wrap; gap:10px 20px; }
+.client-sources { margin-top:18px; font-size:12px; }
+.client-shortcuts { margin:0 0 26px; }
+.client-shortcuts a { font-size:13px; padding:6px 0; }
+@media(max-width:760px) {
+ .connection-start>ol { grid-template-columns:1fr; gap:12px; }
+ .connection-start h2,.client-section>h2 { font-size:26px; }
+ .client-tabs { padding:14px; gap:6px; }
+ .client-tabs a { font-size:12px; padding:9px 11px; }
+ .client-panel { padding:18px; }
+ .client-config-top { align-items:flex-start; flex-direction:column; padding:12px; }
+ .client-config pre { font-size:11px; padding:12px; }
+ .client-panel>p,.client-steps { font-size:14px; }
+ .client-shortcuts { gap:8px 18px; }
+}
