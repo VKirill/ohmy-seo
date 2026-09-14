@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1.7
 FROM node:24-bookworm-slim AS deps
 WORKDIR /app
-COPY package.json ./
+COPY package.json package-lock.json ./
 # Cache mount keeps rebuilds fast without baking the npm cache into a layer.
-RUN --mount=type=cache,target=/root/.npm npm install --no-audit --no-fund
+RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
 
 FROM node:24-bookworm-slim AS builder
 WORKDIR /app

@@ -16,6 +16,7 @@ export type SessionUser = { id: number; email: string | null; displayName: strin
 export async function createSession(userId: number): Promise<void> {
   const jwt = await new SignJWT({ uid: userId })
     .setProtectedHeader({ alg: "HS256" })
+    .setAudience("ohmy-cabinet")
     .setIssuedAt()
     .setExpirationTime(`${MAX_AGE}s`)
     .sign(secret());
@@ -37,8 +38,10 @@ export async function currentUser(): Promise<SessionUser | null> {
   if (!token) return null;
   let uid: number;
   try {
-    const { payload } = await jwtVerify(token, secret());
+    const { payload } = await jwtVerify(token, secret(), { algorithms: ["HS256"] });
     uid = Number(payload.uid);
+    if (!Number.isSafeInteger(uid) || uid <= 0 ||
+        (payload.aud !== undefined && payload.aud !== "ohmy-cabinet") || payload.purpose !== undefined) return null;
   } catch {
     return null;
   }

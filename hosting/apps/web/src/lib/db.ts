@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
   revoked_at   TIMESTAMPTZ,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS allow_token_export BOOLEAN NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id) WHERE revoked_at IS NULL;
 
 -- Audit trail: storing third-party refresh tokens is personal data, so every

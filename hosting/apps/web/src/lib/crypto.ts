@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createCipheriv, createDecipheriv, randomBytes, createHash, timingSafeEqual } from "node:crypto";
 
 const IV_BYTES = 12;
@@ -11,7 +12,9 @@ const ALGORITHM = "aes-256-gcm";
  * two sides must agree on this layout exactly.
  */
 function masterKey(): Buffer {
-  const raw = process.env.OHMY_SEO_MASTER_KEY ?? "";
+  const raw = process.env.OHMY_SEO_MASTER_KEY_FILE
+    ? readFileSync(process.env.OHMY_SEO_MASTER_KEY_FILE, "utf8").trim()
+    : process.env.OHMY_SEO_MASTER_KEY ?? "";
   if (!/^[0-9a-fA-F]{64}$/.test(raw)) {
     throw new Error("OHMY_SEO_MASTER_KEY missing or invalid (need 64 hex chars)");
   }

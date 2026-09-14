@@ -1,0 +1,9 @@
+node_modules
+.next
+dist
+.env
+.env.*
+*.tsbuildinfo
+.git
+AGENTS.md
+CLAUDE.md

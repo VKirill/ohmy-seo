@@ -3,6 +3,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { join } from "node:path";
 import { ensureFreshAccounts, materialize, tenantDir, type Account } from "./tenant.js";
+import { assertHostedCall, isHostedTool } from "./tool-policy.js";
 import { tenantKey } from "./crypto.js";
 
 const OHMY_ROOT = process.env.OHMY_SEO_ROOT ?? "/opt/ohmy-seo";
@@ -58,7 +59,13 @@ async function spawnPackage(userId: number, spec: PackageSpec, tenantPath: strin
   const transport = new StdioClientTransport({
     cwd: tenantDir(userId),
     command: process.env.NODE_BIN ?? "node",
-    args: [join(OHMY_ROOT, spec.entry)],
+    args: [
+      "--permission", "--allow-addons",
+      `--allow-fs-read=${OHMY_ROOT}`, `--allow-fs-read=${tenantDir(userId)}`,
+      `--allow-fs-write=${tenantDir(userId)}`,
+      join(OHMY_ROOT, spec.entry),
+    ],
+    maxBufferSize: 16 * 1024 * 1024,
     env: {
       PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
       HOME: tenantDir(userId),
@@ -70,12 +77,15 @@ async function spawnPackage(userId: number, spec: PackageSpec, tenantPath: strin
       XMLSTOCK_USER: process.env.XMLSTOCK_USER ?? "",
       XMLSTOCK_KEY: process.env.XMLSTOCK_KEY ?? "",
       // Write stays off unless the operator opts in for the whole platform.
-      OHMY_SEO_ALLOW_LIVE_MUTATIONS: process.env.OHMY_SEO_ALLOW_LIVE_MUTATIONS ?? "",
-      YANDEX_DIRECT_ALLOW_LIVE_MUTATIONS: process.env.YANDEX_DIRECT_ALLOW_LIVE_MUTATIONS ?? "",
+      OHMY_SEO_ALLOW_LIVE_MUTATIONS: "",
+      YANDEX_DIRECT_ALLOW_LIVE_MUTATIONS: "",
     },
     stderr: "pipe",
   });
-  await client.connect(transport);
+  // Drain stderr without retaining provider responses or tokens in platform logs.
+  transport.stderr?.on("data", () => undefined);
+  try { await client.connect(transport); }
+  catch (error) { await client.close().catch(() => undefined); throw error; }
   return client;
 }
 
@@ -86,6 +96,9 @@ export async function getRuntime(userId: number): Promise<Runtime> {
   if (inFlight) return inFlight;
 
   const boot = (async () => {
+    if (!runtimes.has(userId) && runtimes.size + starting.size >= 50) {
+      throw new Error("Сервис занят. Повторите запрос позже.");
+    }
     const accounts = await ensureFreshAccounts(userId);
     const signature = accounts.map(a => `${a.provider}:${a.connectionId}:${a.label}`).sort().join("|");
     const existing = runtimes.get(userId);
@@ -109,12 +122,12 @@ export async function getRuntime(userId: number): Promise<Runtime> {
         const listed = await c.listTools();
         for (const t of listed.tools) {
           // ohmy-seo tool names are already unique across packages.
-          if (toolOwner.has(t.name)) continue;
+          if (!isHostedTool(t.name) || toolOwner.has(t.name)) continue;
           toolOwner.set(t.name, spec.id);
           tools.push(t);
         }
       } catch (e) {
-        console.error(`[runtime] user ${userId}: package ${spec.id} failed to start:`, e);
+        console.error(`[runtime] user ${userId}: package ${spec.id} failed to start`);
       }
     }
 
@@ -131,7 +144,7 @@ export async function getRuntime(userId: number): Promise<Runtime> {
             const fresh = await ensureFreshAccounts(userId);
             materialize(userId, fresh);
           } catch (e) {
-            console.error(`[runtime] refresh for user ${userId} failed:`, e);
+            console.error(`[runtime] refresh for user ${userId} failed`);
           }
         })();
       }, REFRESH_MS),
@@ -149,14 +162,27 @@ export async function getRuntime(userId: number): Promise<Runtime> {
   }
 }
 
+const activeCalls = new Map<number, number>();
+let totalCalls = 0;
 export async function callTool(userId: number, name: string, args: unknown) {
-  const rt = await getRuntime(userId);
-  rt.lastUsedAt = Date.now();
-  const owner = rt.toolOwner.get(name);
-  if (!owner) throw new Error(`unknown tool: ${name}`);
-  const client = rt.clients.get(owner);
-  if (!client) throw new Error(`server ${owner} is not running`);
-  return client.callTool({ name, arguments: (args ?? {}) as Record<string, unknown> });
+  const input = (args ?? {}) as Record<string, unknown>;
+  assertHostedCall(name, input);
+  const active = activeCalls.get(userId) ?? 0;
+  if (active >= 4 || totalCalls >= 32) throw new Error("Слишком много одновременных запросов. Повторите позже.");
+  activeCalls.set(userId, active + 1); totalCalls++;
+  try {
+    const rt = await getRuntime(userId);
+    rt.lastUsedAt = Date.now();
+    const owner = rt.toolOwner.get(name);
+    if (!owner) throw new Error("Инструмент недоступен для подключённых аккаунтов.");
+    const client = rt.clients.get(owner);
+    if (!client) throw new Error("Сервис временно недоступен.");
+    return await client.callTool({ name, arguments: input }, undefined, { timeout: 120000 });
+  } finally {
+    const remaining = (activeCalls.get(userId) ?? 1) - 1;
+    if (remaining) activeCalls.set(userId, remaining); else activeCalls.delete(userId);
+    totalCalls--;
+  }
 }
 
 export async function shutdownRuntime(userId: number): Promise<void> {

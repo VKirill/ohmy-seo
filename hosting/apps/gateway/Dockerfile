@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-ARG OHMY_SEO_REF=v0.9.2
+ARG OHMY_SEO_REF=v0.9.3
 
 # ---------------------------------------------------------------------------
 # The MCP servers are built from source inside the image. Nothing on the host
@@ -22,8 +22,8 @@ FROM node:24-bookworm-slim AS gwdeps
 WORKDIR /gw
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
     && rm -rf /var/lib/apt/lists/*
-COPY package.json ./
-RUN --mount=type=cache,target=/root/.npm npm install --no-audit --no-fund
+COPY package.json package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
 
 FROM gwdeps AS gwbuild
 COPY tsconfig.json ./
@@ -38,7 +38,7 @@ RUN groupadd -g 1001 nodejs && useradd -u 1001 -g nodejs -m gateway \
 COPY --from=ohmy    /opt/ohmy-seo   /opt/ohmy-seo
 COPY --from=gwdeps  /gw/node_modules ./node_modules
 COPY --from=gwbuild /gw/dist         ./dist
-COPY package.json ./
+COPY package.json package-lock.json ./
 USER gateway
 EXPOSE 3301
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

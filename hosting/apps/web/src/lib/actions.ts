@@ -16,9 +16,9 @@ async function requireUser() {
 export async function actionCreateKey(formData: FormData): Promise<void> {
   const user = await requireUser();
   const name = String(formData.get("name") ?? "MCP");
-  const plain = await createApiKey(user.id, name);
+  const plain = await createApiKey(user.id, name, formData.get("allow_token_export") === "on");
   (await cookies()).set("ohmy_new_key", plain, {
-    httpOnly: false,
+    httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/app",

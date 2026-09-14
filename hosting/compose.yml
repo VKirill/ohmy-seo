@@ -46,8 +46,18 @@ services:
         - ohmy-seo-web:latest
     image: ohmy-seo-web:latest
     container_name: ohmy-seo-web
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    pids_limit: 128
+    mem_limit: 768m
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /app/.next/cache:size=64m,uid=1001,gid=1001
     env_file: .env
+    secrets: [ohmy_master]
     environment:
+      OHMY_SEO_MASTER_KEY_FILE: /run/secrets/ohmy_master
       DATABASE_URL: postgresql://${POSTGRES_USER:-ohmy_seo}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ohmy_seo}
       REDIS_URL: redis://redis:6379
     ports:
@@ -61,13 +71,22 @@ services:
     build:
       context: ./apps/gateway
       args:
-        OHMY_SEO_REF: ${OHMY_SEO_REF:-v0.9.2}
+        OHMY_SEO_REF: ${OHMY_SEO_REF:-v0.9.3}
       cache_from:
         - ohmy-seo-gateway:latest
     image: ohmy-seo-gateway:latest
     container_name: ohmy-seo-gateway
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    pids_limit: 256
+    mem_limit: 1536m
+    tmpfs:
+      - /tmp:size=64m,mode=1777
     env_file: .env
+    secrets: [ohmy_master]
     environment:
+      OHMY_SEO_MASTER_KEY_FILE: /run/secrets/ohmy_master
       DATABASE_URL: postgresql://${POSTGRES_USER:-ohmy_seo}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ohmy_seo}
       REDIS_URL: redis://redis:6379
     ports:
@@ -82,3 +101,7 @@ volumes:
   pg_data:
   redis_data:
   tenants:
+
+secrets:
+  ohmy_master:
+    file: ${OHMY_SEO_MASTER_KEY_SOURCE:-./secrets/ohmy_master}

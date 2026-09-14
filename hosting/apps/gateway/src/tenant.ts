@@ -284,6 +284,7 @@ export async function ensureFreshAccounts(userId: number): Promise<Account[]> {
 }
 
 export async function authenticate(presented: string): Promise<number | null> {
+  if (!/^ohmy_[A-Za-z0-9_-]{32}$/.test(presented)) return null;
   const r = await pool.query<{ user_id: string; id: string }>(
     "SELECT id, user_id FROM api_keys WHERE key_hash = $1 AND revoked_at IS NULL",
     [hashApiKey(presented)],

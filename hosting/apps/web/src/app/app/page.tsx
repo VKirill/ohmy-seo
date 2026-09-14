@@ -151,7 +151,7 @@ export default async function Dashboard({
             <tbody>
               {keys.map((k) => (
                 <tr key={k.id}>
-                  <td>{k.name}</td>
+                  <td>{k.name}{k.allowTokenExport ? <span className="connection-secondary">С экспортом токенов</span> : null}</td>
                   <td><code>{k.prefix}…</code></td>
                   <td className="muted">
                     {k.lastUsedAt ? k.lastUsedAt.toLocaleString("ru-RU") : "не использовался"}
@@ -178,6 +178,7 @@ export default async function Dashboard({
           />
           <button className="btn primary" type="submit">Выпустить ключ</button>
         </div>
+        <label className="key-export-option"><input type="checkbox" name="allow_token_export" /> Разрешить локальную синхронизацию токенов (не нужно для облачного MCP)</label>
       </form>
 
       <div className="dashboard-section-heading"><h2>Подключите AI-ассистента</h2><p className="muted"><a href="/claude-mcp">Пошаговая инструкция →</a> <a href="/prompts">Готовые вопросы к данным →</a></p></div>
@@ -191,7 +192,7 @@ export default async function Dashboard({
         )}</pre>
       </div>
       <div className="card">
-        <strong>Локальный режим</strong> — инструменты работают у вас, за токенами ходят к нам:
+        <strong>Локальный режим</strong> — используйте отдельный ключ с разрешением локальной синхронизации. Он позволяет получать рабочие токены подключённых аккаунтов:
         <pre>{`curl -sL ${appUrl}/ohmy-seo-sync.tgz | tar xz
 npm install --omit=dev
 OHMY_SEO_API_KEY=ohmy_ВАШ_КЛЮЧ OHMY_SEO_API_URL=${appUrl} node sync.mjs`}</pre>

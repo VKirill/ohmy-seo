@@ -152,9 +152,9 @@ export async function accessTokenFor(
 
   const cached = await cacheGet(`tok:${connectionId}`);
   if (cached) {
-    const c = JSON.parse(cached) as { t: string; e: number };
-    if (c.e - Date.now() > SKEW_SECONDS * 1000) {
-      return { accessToken: c.t, expiresAt: new Date(c.e), provider: row.provider };
+    const c = JSON.parse(cached) as { t?: string; enc?: string; e: number };
+    if (c.enc && c.e - Date.now() > SKEW_SECONDS * 1000) {
+      return { accessToken: decryptSecret(Buffer.from(c.enc, "base64")), expiresAt: new Date(c.e), provider: row.provider };
     }
   }
 
@@ -192,7 +192,7 @@ export async function accessTokenFor(
 async function cacheTokenValue(connectionId: number, token: string, expiresAt: Date): Promise<void> {
   const ttl = Math.floor((expiresAt.getTime() - Date.now()) / 1000) - SKEW_SECONDS;
   if (ttl > 0) {
-    await cacheSet(`tok:${connectionId}`, JSON.stringify({ t: token, e: expiresAt.getTime() }), ttl);
+    await cacheSet(`tok:${connectionId}`, JSON.stringify({ enc: encryptSecret(token).toString("base64"), e: expiresAt.getTime() }), ttl);
   }
 }
 

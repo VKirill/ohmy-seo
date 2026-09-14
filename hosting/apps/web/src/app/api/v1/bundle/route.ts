@@ -1,3 +1,4 @@
+import { audit } from "@/lib/db";
 import { NextResponse } from "next/server";
 import { authenticateApiKey } from "@/lib/apikey";
 import { listConnections, accessTokenFor } from "@/lib/connections";
@@ -14,6 +15,7 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   const owner = await authenticateApiKey(req);
   if (!owner) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!owner.allowTokenExport) return NextResponse.json({ error: "token_export_not_allowed" }, { status: 403, headers: { "Cache-Control": "no-store" } });
 
   const connections = await listConnections(owner.userId);
   const accounts = await Promise.all(
@@ -49,5 +51,6 @@ export async function GET(req: Request) {
     }),
   );
 
+  await audit(owner.userId, "token.exported", { keyId: owner.keyId, count: accounts.length });
   return NextResponse.json({ userId: owner.userId, issuedAt: new Date().toISOString(), accounts });
 }

@@ -100,3 +100,6 @@
   .dashboard .connections-table td:first-child { min-width:190px; }
   .dashboard .key-name-input { flex:auto; }
 }
+
+.dashboard .key-export-option { display:flex; align-items:center; gap:8px; margin-top:12px; font-size:12px; font-weight:400; color:var(--subtle); }
+.dashboard .key-export-option input { flex:none; width:16px; height:16px; }

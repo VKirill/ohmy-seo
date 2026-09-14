@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from "node:crypto";
 
 const IV = 12;
@@ -22,7 +23,9 @@ export function decryptWith(key: Buffer, blob: Buffer): string {
 }
 
 export function platformKey(): Buffer {
-  const raw = process.env.OHMY_SEO_MASTER_KEY ?? "";
+  const raw = process.env.OHMY_SEO_MASTER_KEY_FILE
+    ? readFileSync(process.env.OHMY_SEO_MASTER_KEY_FILE, "utf8").trim()
+    : process.env.OHMY_SEO_MASTER_KEY ?? "";
   if (!/^[0-9a-fA-F]{64}$/.test(raw)) throw new Error("OHMY_SEO_MASTER_KEY invalid");
   return Buffer.from(raw, "hex");
 }

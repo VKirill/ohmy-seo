@@ -1,4 +1,6 @@
 import express from "express";
+import { requestSecurity, users } from "./request-security.js";
+import { ToolPolicyError } from "./tool-policy.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
@@ -11,8 +13,11 @@ import { callTool, getRuntime, shutdownAll } from "./runtime.js";
 const PORT = Number(process.env.PORT ?? 3301);
 
 const app = express();
-app.set("trust proxy", true);
-app.use(express.json({ limit: "8mb" }));
+app.disable("x-powered-by");
+// Exactly one reverse-proxy hop; never trust arbitrary leftmost forwarding headers.
+app.set("trust proxy", 1);
+app.use("/mcp", requestSecurity);
+app.use(express.json({ limit: "256kb" }));
 
 app.get("/healthz", async (_req, res) => {
   try {
@@ -52,7 +57,7 @@ app.post("/mcp", async (req, res) => {
   try {
     userId = await authenticate(key);
   } catch (e) {
-    console.error("[mcp] auth backend unavailable:", e);
+    console.error("[mcp] auth backend unavailable");
     res.status(503).json({
       jsonrpc: "2.0",
       error: { code: -32002, message: "Authentication backend unavailable" },
@@ -69,6 +74,10 @@ app.post("/mcp", async (req, res) => {
     return;
   }
 
+  if (!users.allow(String(userId))) {
+    res.setHeader("Retry-After", "60"); res.status(429).json({ error: "rate_limit" }); return;
+  }
+
   const server = new Server(
     { name: "ohmy-seo", version: "0.1.0" },
     { capabilities: { tools: {} } },
@@ -83,7 +92,7 @@ app.post("/mcp", async (req, res) => {
     try {
       return await callTool(userId, request.params.name, request.params.arguments);
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
+      const message = e instanceof ToolPolicyError ? e.message : "Запрос не выполнен. Проверьте подключение или повторите позже.";
       return { content: [{ type: "text" as const, text: `Ошибка: ${message}` }], isError: true };
     }
   });
@@ -98,7 +107,7 @@ app.post("/mcp", async (req, res) => {
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
   } catch (e) {
-    console.error("[mcp] request failed:", e);
+    console.error("[mcp] request failed");
     if (!res.headersSent) {
       res.status(500).json({
         jsonrpc: "2.0",
@@ -118,6 +127,10 @@ app.get("/mcp", (_req, res) => {
   });
 });
 app.delete("/mcp", (_req, res) => res.status(204).end());
+
+app.use((error: { status?: number }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  res.status(error.status === 413 ? 413 : 400).json({ error: error.status === 413 ? "payload_too_large" : "invalid_request" });
+});
 
 /** Blocks startup until the web app has created the shared schema. */
 async function waitForSchema(): Promise<void> {
