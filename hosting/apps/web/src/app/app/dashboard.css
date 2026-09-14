@@ -59,3 +59,44 @@
 .dashboard .dashboard-config summary { cursor:pointer; padding:18px 20px; font-size:14px; }
 .dashboard .dashboard-config>.card { margin:0 16px 16px; }
 @media(max-width:640px) { .dashboard-add-accounts { flex-direction:column; } .dashboard-add-accounts .btn { width:100%; } }
+
+/* Compact account overview: one row per connected identity. */
+.dashboard .wrap { max-width:1200px; padding-top:24px; }
+.dashboard h1 { font-size:28px; margin-bottom:4px; }
+.dashboard p.lead { margin:0; }
+.dashboard-add-accounts { margin:18px 0 20px; }
+.dashboard .dashboard-section-heading { margin-top:22px; }
+.dashboard .dashboard-section-heading h2 { font-size:19px; margin:0 0 10px; }
+.dashboard .connections-table-wrap { overflow-x:auto; border:1px solid var(--line); border-radius:5px; }
+.dashboard .connections-table { width:100%; min-width:820px; border-collapse:collapse; }
+.dashboard .connections-table th { background:#f3f4ee; text-align:left; }
+.dashboard .connections-table td { font-size:13px; padding:10px 14px; vertical-align:middle; }
+.dashboard .connections-table th { padding:10px 14px; }
+.dashboard .connections-table tbody tr:hover { background:#f7f8f2; }
+.connection-identity { display:flex; align-items:center; gap:9px; }
+.connection-identity svg { flex-shrink:0; }
+.connection-identity strong { font-size:13px; font-weight:600; }
+.connection-secondary { display:block; color:var(--subtle); font-size:11px; margin-top:3px; }
+.connection-services { max-width:270px; color:var(--subtle); line-height:1.6; }
+.connection-status { font-size:12px; white-space:nowrap; }
+.connection-status::before { content:""; display:inline-block; width:6px; height:6px; border-radius:50%; background:#608552; margin-right:6px; vertical-align:middle; }
+.dashboard .connection-actions-heading { text-align:right; }
+.connection-actions { display:flex; align-items:center; justify-content:flex-end; gap:14px; white-space:nowrap; }
+.connection-reconnect { font-size:12px; color:var(--subtle); text-underline-offset:3px; }
+.connection-reconnect:hover { color:var(--blue); }
+.dashboard .connections-table .btn.danger { padding:7px 10px; }
+.dashboard .key-table-wrap { padding:0; background:transparent; }
+.dashboard .key-table-wrap td,.dashboard .key-table-wrap th { padding:9px 14px; font-size:12px; }
+.dashboard .key-create { border:0; padding:0; background:transparent; margin:10px 0 0; }
+.dashboard .key-create .row { justify-content:flex-start; }
+.dashboard .key-name-input { flex:0 1 350px; padding:9px 12px; font-size:13px; }
+.dashboard .key-create .btn { padding:9px 14px; font-size:13px; }
+.dashboard .dashboard-section-heading>p { font-size:13px; margin:0 0 12px; }
+.dashboard .dashboard-config summary { padding:12px 16px; font-size:13px; }
+@media(max-width:640px) {
+  .dashboard .wrap { padding:20px 16px 40px; }
+  .dashboard-add-accounts { flex-direction:row; gap:8px; }
+  .dashboard-add-accounts .btn { width:auto; flex:1 1 200px; padding:10px 12px; font-size:13px; }
+  .dashboard .connections-table td:first-child { min-width:190px; }
+  .dashboard .key-name-input { flex:auto; }
+}

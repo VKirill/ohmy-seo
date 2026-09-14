@@ -72,12 +72,11 @@ export default async function Dashboard({
   return (
     <main id="main-content" className="wrap dashboard-main">
       <div className="row">
-        <h1>Кабинет</h1>
+        <div><h1>Кабинет</h1><p className="lead">{user.displayName ?? user.email ?? `Пользователь #${user.id}`}</p></div>
         <form action="/api/logout" method="post">
           <button className="btn" type="submit">Выйти</button>
         </form>
       </div>
-      <p className="lead">{user.displayName ?? user.email ?? `Пользователь #${user.id}`}</p>
 
       <div className="dashboard-add-accounts">
         <a className="btn primary" href="/app/connect/yandex-code">
@@ -101,35 +100,34 @@ export default async function Dashboard({
       {accounts.length === 0 ? (
         <div className="card muted">Вы вошли в кабинет. Теперь добавьте рабочие аккаунты, из которых AI будет получать данные.</div>
       ) : (
-        accounts.map((a) => (
-          <div className="card account-card" key={`${a.family}:${a.label}`}>
-            <div className="row">
-              <div>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <ProviderMark family={a.family} size={22} />
-                  <strong>{FAMILY_LABEL[a.family]}</strong>
-                  <span className="muted">· {a.email ?? a.label}</span>
-                </div>
-                <div className="account-services">
-                  {[...new Set(a.parts.flatMap((c) => PROVIDER_SERVICES[c.provider]))].map((s) => (
-                    <span className="tag" key={s}>{s}</span>
-                  ))}
-                </div>
-                <div className="account-application">{a.family === "yandex" ? (a.parts.some(c => c.provider === "yandex-api") ? "Подключено через новое приложение Яндекса" : "Подключено через прежнее приложение Яндекса") : "Подключено через Google"}</div>
-                <div className="muted" style={{ fontSize: 13 }}>
-                  Доступ активен, обновляется автоматически · продлён до{" "}
-                  {a.earliestExpiry.toLocaleDateString("ru-RU")}
-                </div>
-              </div>
-              <form action={actionRevokeConnection}>
-                {a.parts.map((c) => (
-                  <input type="hidden" name="id" value={c.id} key={c.id} />
-                ))}
-                <button className="btn danger" type="submit">Отключить</button>
-              </form>
-            </div>
-          </div>
-        ))
+        <div className="connections-table-wrap" role="region" aria-label="Подключённые аккаунты" tabIndex={0}>
+          <table className="connections-table">
+            <thead><tr>
+              <th scope="col">Аккаунт</th><th scope="col">Сервисы</th>
+              <th scope="col">Подключение</th><th scope="col" className="connection-actions-heading">Действия</th>
+            </tr></thead>
+            <tbody>{accounts.map((a) => (
+              <tr key={`${a.family}:${a.label}`}>
+                <td>
+                  <div className="connection-identity"><ProviderMark family={a.family} size={20} />
+                    <div><strong>{a.email ?? a.label}</strong><span className="connection-secondary">{FAMILY_LABEL[a.family]}</span></div>
+                  </div>
+                </td>
+                <td className="connection-services">{[...new Set(a.parts.flatMap((c) => PROVIDER_SERVICES[c.provider]))].join(" · ")}</td>
+                <td><span className="connection-status">Подключён</span>
+                  <span className="connection-secondary">{a.family === "yandex" ? (a.parts.some(c => c.provider === "yandex-api") ? "Новое приложение" : "Прежнее приложение") : "Google OAuth"}</span>
+                </td>
+                <td><div className="connection-actions">
+                  <a className="connection-reconnect" href={a.family === "yandex" ? "/app/connect/yandex-code" : "/api/oauth/google/start?mode=connect"} aria-label={`Переподключить ${a.email ?? a.label}`}>Переподключить</a>
+                  <form action={actionRevokeConnection}>
+                    {a.parts.map((c) => <input type="hidden" name="id" value={c.id} key={c.id} />)}
+                    <button className="btn danger" type="submit" aria-label={`Отключить ${a.email ?? a.label}`}>Отключить</button>
+                  </form>
+                </div></td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
       )}
 
       <div className="dashboard-section-heading"><h2>Ваши MCP-ключи</h2></div>
@@ -172,7 +170,7 @@ export default async function Dashboard({
       ) : null}
 
       <form action={actionCreateKey} className="card key-create">
-        <label htmlFor="key-name">Название нового ключа</label>
+        <label htmlFor="key-name" className="dashboard-sr-only">Название нового ключа</label>
         <div className="row">
           <input
             id="key-name" name="name" placeholder="Название ключа, например «ноутбук»"
