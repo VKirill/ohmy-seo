@@ -2,7 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { join } from "node:path";
-import { ensureFreshAccounts, materialize, tenantDir, type Account } from "./tenant.js";
+import { ensureFreshAccounts, materialize, purgeResponseCache, tenantDir, type Account } from "./tenant.js";
 import { assertHostedCall, isHostedTool, hostedTool } from "./tool-policy.js";
 import { tenantKey } from "./crypto.js";
 
@@ -191,6 +191,7 @@ export async function shutdownRuntime(userId: number): Promise<void> {
   runtimes.delete(userId);
   clearInterval(rt.refreshTimer);
   await Promise.all([...rt.clients.values()].map((c) => c.close().catch(() => undefined)));
+  try { purgeResponseCache(userId); } catch { console.error(`[runtime] user ${userId}: cache purge failed`); }
   console.log(`[runtime] user ${userId}: stopped`);
 }
 

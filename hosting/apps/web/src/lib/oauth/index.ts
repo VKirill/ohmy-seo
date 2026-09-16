@@ -166,6 +166,24 @@ async function tokenRequest(provider: ProviderId, body: Record<string, string>):
   };
 }
 
+/**
+ * Best-effort revocation of a Google grant on disconnect. Yandex has no
+ * public revocation endpoint; local erasure of its tokens is the whole story.
+ */
+export async function revokeAtProvider(provider: ProviderId, token: string): Promise<void> {
+  if (provider !== "google") return;
+  try {
+    await fetch("https://oauth2.googleapis.com/revoke", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ token }),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch {
+    // Local erasure below still happens; the user can revoke in Google settings.
+  }
+}
+
 export function exchangeCode(provider: ProviderId, code: string): Promise<TokenSet> {
   return tokenRequest(provider, {
     grant_type: "authorization_code",

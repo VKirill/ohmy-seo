@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { Pool } from "pg";
 import { encryptWith, decryptWith, platformKey, tenantKey, hashApiKey } from "./crypto.js";
@@ -85,6 +85,19 @@ export function tenantDir(userId: number): string {
   return dir;
 }
 
+/** Drops cached provider responses once a tenant goes idle. */
+export function purgeResponseCache(userId: number): void {
+  const dbPath = join(tenantDir(userId), "state.db");
+  if (!existsSync(dbPath)) return;
+  const db = new Database(dbPath);
+  try {
+    const hasCache = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'query_cache'").get();
+    if (hasCache) db.prepare("DELETE FROM query_cache").run();
+  } finally {
+    db.close();
+  }
+}
+
 /**
  * Writes the user's current tokens into the SQLite file an ohmy-seo server
  * reads. Refresh tokens deliberately stay in Postgres: the child process is
@@ -163,9 +176,18 @@ export function materialize(userId: number, accounts: Account[]): string {
       const yandexLabels = accounts.filter(a => a.provider !== "google")
         .map(a => a.provider === "yandex-direct" ? `${a.label} (Директ)` : a.provider === "yandex-api" ? `${a.label} (API)` : a.label);
       const googleLabels = accounts.filter(a => a.provider === "google").map(a => a.label);
+      let removed = 0;
       for (const [table, labels] of [["accounts", yandexLabels], ["google_accounts", googleLabels]] as const) {
-        db.prepare(`DELETE FROM ${table} WHERE label NOT IN (SELECT value FROM json_each(?))`)
-          .run(JSON.stringify(labels));
+        removed += db.prepare(`DELETE FROM ${table} WHERE label NOT IN (SELECT value FROM json_each(?))`)
+          .run(JSON.stringify(labels)).changes;
+      }
+      // Cached API responses are created by the child servers' migrations, so
+      // the table may not exist yet. Expired rows go on every pass; a
+      // disconnect drops the whole cache so no provider data outlives access.
+      const hasCache = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'query_cache'").get();
+      if (hasCache) {
+        if (removed > 0) db.prepare("DELETE FROM query_cache").run();
+        else db.prepare("DELETE FROM query_cache WHERE expires_at <= ?").run(now);
       }
       for (const a of accounts) {
         const exp = Math.floor(a.expiresAt.getTime() / 1000);

@@ -43,4 +43,6 @@ suite('rejects cross-user token lookup and encrypts Redis values, ignoring legac
   expect((await connections.accessTokenFor(uid, c.connectionId)).accessToken).toBe(accessToken);
   await connections.revokeConnection(uid, c.connectionId);
   await expect(connections.accessTokenFor(uid, c.connectionId)).rejects.toThrow('connection not found');
+  const erased = await db.pool.query('SELECT length(access_token_enc) AS a, refresh_token_enc FROM connections WHERE id = $1', [c.connectionId]);
+  expect(erased.rows[0]).toEqual({ a: 0, refresh_token_enc: null });
 });

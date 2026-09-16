@@ -1,6 +1,6 @@
 import { pool, ensureSchema, audit } from "./db";
 import { encryptSecret, decryptSecret } from "./crypto";
-import { refreshTokens, type Identity, type TokenSet } from "./oauth";
+import { refreshTokens, revokeAtProvider, type Identity, type TokenSet } from "./oauth";
 import type { ProviderId } from "./providers";
 import { cacheDel, cacheGet, cacheSet } from "./redis";
 
@@ -212,8 +212,22 @@ export async function hasStoredRefreshToken(
 
 export async function revokeConnection(userId: number, connectionId: number): Promise<void> {
   await ensureSchema();
+  const r = await pool.query<{ provider: ProviderId; access_token_enc: Buffer; refresh_token_enc: Buffer | null }>(
+    `SELECT provider, access_token_enc, refresh_token_enc
+       FROM connections WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL`,
+    [connectionId, userId],
+  );
+  const row = r.rows[0];
+  if (row) {
+    const enc = row.refresh_token_enc ?? row.access_token_enc;
+    if (enc.length > 0) await revokeAtProvider(row.provider, decryptSecret(enc));
+  }
+  // Erase the secrets themselves, not just flag the row: the privacy policy
+  // promises that disconnecting deletes stored tokens.
   await pool.query(
-    "UPDATE connections SET revoked_at = now() WHERE id = $1 AND user_id = $2",
+    `UPDATE connections
+        SET revoked_at = now(), access_token_enc = '\\x'::bytea, refresh_token_enc = NULL, updated_at = now()
+      WHERE id = $1 AND user_id = $2`,
     [connectionId, userId],
   );
   await cacheDel(`tok:${connectionId}`);

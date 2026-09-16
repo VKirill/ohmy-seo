@@ -117,11 +117,9 @@ docker compose exec postgres psql -U ohmy_seo -d ohmy_seo
 Проект Cloud Console **vechkasov-pro** (883647253159), аккаунт kirill.vech@gmail.com.
 Клиент `ohmy-seo web`, redirect `/api/oauth/google/callback`.
 
-Скоупы только на чтение: `webmasters.readonly`, `analytics.readonly`,
-`tagmanager.readonly` плюс `openid/email/profile`. Права на запись не
-запрашиваются, потому что запись на платформе выключена глобально; чтобы её
-включить, нужны широкие скоупы (перечислены комментарием в `providers.ts`) и
-повторное согласие всех пользователей — задним числом Google их не выдаёт.
+Скоупы: `webmasters`, `analytics.readonly`, `analytics.edit`, `tagmanager.readonly`,
+`tagmanager.edit.containers`, `tagmanager.publish` плюс `openid/email/profile`
+(`providers.ts`). Запись выполняется только через подтверждённые операции шлюза.
 
 `include_granted_scopes` **не ставить**: он выполняет инкрементальную
 авторизацию и затягивает в наш экран согласия все скоупы, ранее выданные в
@@ -130,6 +128,20 @@ docker compose exec postgres psql -U ohmy_seo -d ohmy_seo
 `prompt=select_account`, не `consent`: иначе экран согласия показывается при
 каждом входе. Если Google не вернул refresh-токен и в базе его нет, колбэк
 один раз повторяет флоу с `prompt=consent` (защита от цикла — подписанный state `retried`).
+
+### Приватность: что обещает /privacy и что это обеспечивает
+
+Страница `/privacy` — основание для верификации OAuth в Google. Любое изменение
+хранения, передачи или защиты данных сверяйте с ней. Сейчас код обеспечивает:
+
+- «Отключить» (`revokeConnection`) отзывает грант Google через `oauth2.googleapis.com/revoke`
+  и стирает `access_token_enc`/`refresh_token_enc` в строке подключения.
+- Шлюз удаляет весь `query_cache` тенанта при отключении аккаунта и при выгрузке
+  простаивающего тенанта, а просроченные записи — при каждой материализации.
+- Запрос на удаление аккаунта (support@ohmy-seo.ru, срок 30 дней) выполняется вручную:
+  `DELETE FROM audit_log WHERE user_id = $1`, затем `DELETE FROM users WHERE id = $1`
+  (подключения и ключи удаляются каскадом), затем удалить каталог тенанта
+  `/data/tenants/<id>` в томе `tenants`.
 
 ## Одна кнопка на провайдера
 
