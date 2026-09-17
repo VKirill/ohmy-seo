@@ -94,7 +94,7 @@ export async function runGtmDeleteContainer(args: {
     });
 
     const responseText =
-      result.status === 204
+      result.ok
         ? JSON.stringify({ deleted: true, containerId: args.containerId, path }, null, 2)
         : JSON.stringify(result.data, null, 2);
 

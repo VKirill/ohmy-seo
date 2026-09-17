@@ -86,7 +86,7 @@ export async function runGtmDeleteTag(args: {
     });
 
     const responseText =
-      result.status === 204
+      result.ok
         ? JSON.stringify({ deleted: true, tagId, path }, null, 2)
         : JSON.stringify(result.data, null, 2);
 

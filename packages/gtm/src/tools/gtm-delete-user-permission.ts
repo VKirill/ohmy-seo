@@ -95,7 +95,7 @@ export async function runGtmDeleteUserPermission(args: {
     });
 
     const responseText =
-      result.status === 204
+      result.ok
         ? JSON.stringify({ deleted: true, permissionId: args.permissionId, path }, null, 2)
         : JSON.stringify(result.data, null, 2);
 

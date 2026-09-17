@@ -140,22 +140,15 @@ export async function runGtmRollback(args: {
     );
   }
 
-  // Execute: create_version_from_old → publish new version
-  const createRes = await executeGtmCall({
-    account, scope: SCOPE_GTM_PUBLISH, method: "POST",
-    path: `accounts/${args.accountId}/containers/${args.containerId}/versions/${args.to_version_id}:create_version_from_old`,
-  });
-  if (!createRes.ok) throw new Error(`create_version_from_old failed: HTTP ${createRes.status}`);
-
-  const createData = createRes.data as Record<string, unknown>;
-  const newVersionData = (createData["containerVersion"] ?? createData) as Record<string, unknown>;
-  const newVersionId = String(newVersionData["containerVersionId"] ?? newVersionData["versionId"] ?? "");
-
+  // Execute: GTM has no "copy old version" method; rolling back means making the
+  // target version live again via versions.publish.
   const publishRes = await executeGtmCall({
     account, scope: SCOPE_GTM_PUBLISH, method: "POST",
-    path: `accounts/${args.accountId}/containers/${args.containerId}/versions/${newVersionId}:publish`,
+    path: `accounts/${args.accountId}/containers/${args.containerId}/versions/${args.to_version_id}:publish`,
   });
-  if (!publishRes.ok) throw new Error(`publish failed for new version ${newVersionId}: HTTP ${publishRes.status}`);
+  if (!publishRes.ok) throw new Error(`publish failed for version ${args.to_version_id}: HTTP ${publishRes.status}`);
+
+  const newVersionId = args.to_version_id;
 
   return {
     success: true,
