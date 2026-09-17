@@ -63,7 +63,10 @@ export function assertHostedCall(name: string, args: Record<string, unknown>): v
   if (!isHostedTool(name)) throw new ToolPolicyError();
   if (WRITE_TOOLS.has(name)) {
     if (name === 'yandex_direct_upload_image' && (args.file_path !== undefined || args.url !== undefined || typeof args.base64 !== 'string')) throw new ToolPolicyError('В облаке передайте изображение через base64; серверные пути и скачивание произвольных URL недоступны.');
-    requireWriteConfirmation(args);
+    // gtm_rollback step 1 only reads versions and stores a short-lived plan; step 2
+    // (plan_id + confirm + acknowledge_live) is the write and stays gated.
+    const rollbackPreview = name === 'gtm_rollback' && args.confirm !== true && args.plan_id === undefined;
+    if (!rollbackPreview) requireWriteConfirmation(args);
   }
   if (!GENERIC_TOOLS.has(name)) return;
   const endpoint = args.endpoint;

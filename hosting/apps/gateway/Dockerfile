@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-ARG OHMY_SEO_REF=v0.9.5
+ARG OHMY_SEO_REF=v0.9.6
 
 # ---------------------------------------------------------------------------
 # The MCP servers are built from source inside the image. Nothing on the host

@@ -71,6 +71,12 @@ export async function runGtmDeleteTag(args: {
 
     const account = await resolveAccount(PKG_NAME, SCOPE_GTM_EDIT, accountLabel);
 
+    // The fingerprint is cached per item path; read the tag first to seed If-Match.
+    const current = await executeGtmCall({ account, scope: SCOPE_GTM_EDIT, method: "GET", path });
+    if (!current.ok) {
+      return { isError: true as const, content: [{ type: "text" as const, text: JSON.stringify(current.data, null, 2) }] };
+    }
+
     const result = await executeGtmCall({
       account,
       scope: SCOPE_GTM_EDIT,

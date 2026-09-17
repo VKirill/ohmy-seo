@@ -69,7 +69,16 @@ export async function runGtmUpdateTag(args: {
 
     const account = await resolveAccount(PKG_NAME, SCOPE_GTM_EDIT, accountLabel);
 
-    const result = await executeGtmCall({ account, scope: SCOPE_GTM_EDIT, method: "PUT", path, body: tagSpec, requireEtag: true });
+    // PUT replaces the whole tag, and the fingerprint is cached per item path, so
+    // read the current tag first: it seeds If-Match and keeps unspecified fields.
+    const current = await executeGtmCall({ account, scope: SCOPE_GTM_EDIT, method: "GET", path });
+    if (!current.ok) {
+      return { isError: true as const, content: [{ type: "text" as const, text: JSON.stringify(current.data, null, 2) }] };
+    }
+    const changes = Object.fromEntries(Object.entries(tagSpec).filter(([, v]) => v !== undefined));
+    const body = { ...(current.data as Record<string, unknown>), ...changes };
+
+    const result = await executeGtmCall({ account, scope: SCOPE_GTM_EDIT, method: "PUT", path, body, requireEtag: true });
     return { content: [{ type: "text" as const, text: JSON.stringify(result.data, null, 2) }] };
   } catch (e) {
     if (e instanceof MissingEtagError) {

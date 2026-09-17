@@ -15,6 +15,8 @@ describe('hosted tool authorization', () => {
     }
     expect(() => assertHostedCall('gtm_list_user_permissions', {})).not.toThrow();
     expect(isHostedTool('gsc_indexing_publish')).toBe(false);
+    expect(() => assertHostedCall('gtm_rollback', { to_version_id: '1' })).not.toThrow();
+    expect(() => assertHostedCall('gtm_rollback', { to_version_id: '1', plan_id: 'p' })).toThrow('confirm');
   });
   it.each(['register_google_service_account', 'yandex_direct_render_to_xlsx', 'delete_account', 'start_oauth_flow',
     'yandex_direct_upload_from_yaml', 'unknown_tool'])('denies %s before execution', name => {

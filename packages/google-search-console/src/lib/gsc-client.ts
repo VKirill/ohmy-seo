@@ -4,6 +4,7 @@ import {
   GoogleAuthError,
 } from "@ohmy-seo/mcp-core/google-oauth";
 import { request } from "@ohmy-seo/mcp-core/http";
+import { deleteWhere } from "@ohmy-seo/mcp-core/cache";
 import { ApiError, AuthError, RateLimitError } from "@ohmy-seo/mcp-core/errors";
 import { hasScope, type AccountRow } from "./account-resolver.js";
 import { listOAuthApps, findOAuthAppByLabel } from "./db/oauth-apps-repo.js";
@@ -87,6 +88,14 @@ export async function executeGscCall(params: GscCallParams): Promise<GscCallResu
 
   try {
     const response = await request(url, init);
+    // A successful write (sitemap submit/delete) makes cached listings stale.
+    if (method !== "GET") {
+      try {
+        deleteWhere({ account_id: account.id }, PKG_NAME);
+      } catch {
+        // cache is best-effort
+      }
+    }
     return { ok: true, status: response.status, data: response.data };
   } catch (err) {
     if (err instanceof AuthError) {

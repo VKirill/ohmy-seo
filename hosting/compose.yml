@@ -71,7 +71,7 @@ services:
     build:
       context: ./apps/gateway
       args:
-        OHMY_SEO_REF: ${OHMY_SEO_REF:-v0.9.5}
+        OHMY_SEO_REF: ${OHMY_SEO_REF:-v0.9.6}
       cache_from:
         - ohmy-seo-gateway:latest
     image: ohmy-seo-gateway:latest
