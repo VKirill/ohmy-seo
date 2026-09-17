@@ -36,17 +36,15 @@ export const YANDEX_API_SCOPES = [
 ] as const;
 
 /**
- * Read-only by design. The platform keeps OHMY_SEO_ALLOW_LIVE_MUTATIONS unset,
- * so asking for write scopes would mean holding rights we never exercise.
- * The read-only variants are also merely "sensitive" rather than "restricted",
- * which keeps Google verification to a review instead of a security audit.
- *
- * To enable writing later, swap in the wider scopes below and have users
- * re-authorise — Google will not grant them retroactively:
- *   webmasters                        (sitemaps, Indexing API)
- *   analytics.edit                    (GA4 Admin writes)
- *   tagmanager.edit.containers        (create/update tags)
- *   tagmanager.publish                (publish/rollback versions)
+ * Must match the Data Access list in Google Cloud Console string for string:
+ * OAuth verification rejects any discrepancy. Each scope backs a hosted tool:
+ *   webmasters                          sitemaps submit/delete (+ reads)
+ *   analytics.readonly                  GA4 reports and Admin API listings
+ *   tagmanager.readonly                 GTM listings
+ *   tagmanager.edit.containers          workspaces, tags, triggers, variables
+ *   tagmanager.edit.containerversions   workspaces.create_version (version, rollback)
+ *   tagmanager.publish                  versions.publish (publish, rollback)
+ * Add analytics.edit only together with GA4 write tools and a new verification.
  */
 export const GOOGLE_SCOPES = [
   "openid",
@@ -54,9 +52,9 @@ export const GOOGLE_SCOPES = [
   "profile",
   "https://www.googleapis.com/auth/webmasters",
   "https://www.googleapis.com/auth/analytics.readonly",
-  "https://www.googleapis.com/auth/analytics.edit",
   "https://www.googleapis.com/auth/tagmanager.readonly",
   "https://www.googleapis.com/auth/tagmanager.edit.containers",
+  "https://www.googleapis.com/auth/tagmanager.edit.containerversions",
   "https://www.googleapis.com/auth/tagmanager.publish",
 ] as const;
 

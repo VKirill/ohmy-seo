@@ -117,9 +117,14 @@ docker compose exec postgres psql -U ohmy_seo -d ohmy_seo
 Проект Cloud Console **vechkasov-pro** (883647253159), аккаунт kirill.vech@gmail.com.
 Клиент `ohmy-seo web`, redirect `/api/oauth/google/callback`.
 
-Скоупы: `webmasters`, `analytics.readonly`, `analytics.edit`, `tagmanager.readonly`,
-`tagmanager.edit.containers`, `tagmanager.publish` плюс `openid/email/profile`
-(`providers.ts`). Запись выполняется только через подтверждённые операции шлюза.
+Проект Cloud Console, который проходит верификацию: **ohmyseo** (577679941140).
+
+Скоупы: `webmasters`, `analytics.readonly`, `tagmanager.readonly`,
+`tagmanager.edit.containers`, `tagmanager.edit.containerversions`, `tagmanager.publish`
+плюс `openid/email/profile` (`providers.ts`). Список в Data Access консоли должен
+совпадать с кодом строка в строку — иначе Google отклоняет верификацию.
+`analytics.edit` убран до появления инструментов записи в GA4.
+Запись выполняется только через подтверждённые операции шлюза.
 
 `include_granted_scopes` **не ставить**: он выполняет инкрементальную
 авторизацию и затягивает в наш экран согласия все скоупы, ранее выданные в

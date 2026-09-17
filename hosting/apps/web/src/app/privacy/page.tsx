@@ -44,15 +44,16 @@ export default function Privacy() {
                 sitemaps. Write access is used only to submit or delete a sitemap when you explicitly confirm that action.
               </li>
               <li>
-                <strong>Google Analytics</strong> (<code>analytics.readonly</code>, <code>analytics.edit</code>): the list of
-                accounts and properties, property metadata, custom dimensions, conversion events and reports you request
-                (sessions, traffic sources, events, conversions, realtime data).
+                <strong>Google Analytics</strong> (<code>analytics.readonly</code>, read-only): the list of accounts and
+                properties, property metadata, custom dimensions, conversion events and reports you request (sessions,
+                traffic sources, events, conversions, realtime data). We cannot change your Analytics settings.
               </li>
               <li>
                 <strong>Google Tag Manager</strong> (<code>tagmanager.readonly</code>, <code>tagmanager.edit.containers</code>,{" "}
-                <code>tagmanager.publish</code>): accounts, containers, workspaces, tags, triggers, variables and versions.
-                Write access is used only to create or change tags, triggers, variables and versions, publish a version or
-                roll back, and only when you explicitly confirm that action.
+                <code>tagmanager.edit.containerversions</code>, <code>tagmanager.publish</code>): accounts, containers, workspaces,
+                tags, triggers, variables and versions. Write access is used only to create workspaces, create, change or
+                delete tags, create triggers and variables, create a container version, publish a version or roll back to a
+                previous one, and only when you explicitly confirm that action.
               </li>
               <li>
                 <strong>OAuth tokens</strong>: the access token and refresh token Google issues for the connection.
@@ -235,13 +236,16 @@ export default function Privacy() {
                 Запись используется только для отправки или удаления Sitemap после вашего явного подтверждения.
               </li>
               <li>
-                <strong>Google Analytics</strong> (<code>analytics.readonly</code>, <code>analytics.edit</code>): аккаунты и
-                ресурсы, их метаданные, пользовательские параметры, конверсии и запрошенные вами отчёты.
+                <strong>Google Analytics</strong> (<code>analytics.readonly</code>, только чтение): аккаунты и ресурсы, их
+                метаданные, пользовательские параметры, конверсии и запрошенные вами отчёты. Менять настройки Analytics
+                сервис не может.
               </li>
               <li>
                 <strong>Google Tag Manager</strong> (<code>tagmanager.readonly</code>, <code>tagmanager.edit.containers</code>,{" "}
-                <code>tagmanager.publish</code>): аккаунты, контейнеры, рабочие области, теги, триггеры, переменные и версии.
-                Изменения и публикация выполняются только после вашего явного подтверждения.
+                <code>tagmanager.edit.containerversions</code>, <code>tagmanager.publish</code>): аккаунты, контейнеры, рабочие
+                области, теги, триггеры, переменные и версии. Создание рабочих областей, тегов, триггеров и переменных,
+                изменение и удаление тегов, создание версий, публикация и откат выполняются только после вашего явного
+                подтверждения.
               </li>
               <li>
                 <strong>OAuth-токены</strong>: токен доступа и токен обновления для подключения.
