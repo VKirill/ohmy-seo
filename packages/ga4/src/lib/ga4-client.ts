@@ -15,7 +15,7 @@ const PKG_NAME = "ga4";
 export interface Ga4CallParams {
   account: AccountRow;
   scope: string;
-  method: "GET" | "POST" | "PUT" | "DELETE";
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;
   baseUrl?: string;
   query?: Record<string, string>;

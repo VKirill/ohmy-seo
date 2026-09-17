@@ -10,6 +10,7 @@
  */
 
 import { getGoogleAccessToken } from "@ohmy-seo/mcp-core/google-oauth";
+import { deleteWhere } from "@ohmy-seo/mcp-core/cache";
 import { getEtag, setEtag } from "./etag-cache.js";
 import type { AccountRow } from "./account-resolver.js";
 
@@ -159,6 +160,16 @@ export async function executeGtmCall(params: GtmCallParams): Promise<GtmCallResu
   // On successful GET: capture etag from HTTP header or body fingerprint
   if (ok && READ_METHODS.has(method)) {
     captureEtag(path, response.headers, data);
+  }
+
+  // A successful change makes this account's cached listings stale (containers,
+  // tags, versions…). Dropping them is cheap; a failure here must not mask the write.
+  if (ok && WRITE_METHODS.has(method)) {
+    try {
+      deleteWhere({ account_id: account.id }, "gtm");
+    } catch {
+      // cache is best-effort
+    }
   }
 
   return { ok, status, data };

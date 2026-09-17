@@ -5,7 +5,7 @@ import {
 } from "@ohmy-seo/mcp-core/google-oauth";
 import { request } from "@ohmy-seo/mcp-core/http";
 import { ApiError, AuthError, RateLimitError } from "@ohmy-seo/mcp-core/errors";
-import type { AccountRow } from "./account-resolver.js";
+import { hasScope, type AccountRow } from "./account-resolver.js";
 import { listOAuthApps, findOAuthAppByLabel } from "./db/oauth-apps-repo.js";
 
 const DEFAULT_BASE_URL = "https://searchconsole.googleapis.com";
@@ -42,8 +42,7 @@ export async function executeGscCall(params: GscCallParams): Promise<GscCallResu
   const baseUrl = params.baseUrl ?? DEFAULT_BASE_URL;
 
   // 1. Defensive scope check
-  const granted = (account.scopes_granted ?? "").split(" ").filter(Boolean);
-  if (!granted.includes(scope)) {
+  if (!hasScope(account.scopes_granted, scope)) {
     throw new Error(
       `Account "${account.label}" is missing required scope "${scope}". ` +
         `Re-authorize via start_google_oauth_flow.`

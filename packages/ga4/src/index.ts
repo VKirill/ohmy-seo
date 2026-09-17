@@ -10,6 +10,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { resolvePackageConfig } from "@ohmy-seo/mcp-core/config";
 import { registerCacheableTool } from "@ohmy-seo/mcp-core/cache";
+import { confirmField } from "./lib/confirm-gate.js";
 
 import { runListGoogleOauthApps } from "./tools/list-google-oauth-apps.js";
 import { runRegisterGoogleOauthApp } from "./tools/register-google-oauth-app.js";
@@ -28,6 +29,13 @@ import { runGa4RunReport } from "./tools/ga4-run-report.js";
 import { runGa4RunRealtimeReport } from "./tools/ga4-run-realtime-report.js";
 import { runGa4BatchRunReports } from "./tools/ga4-batch-run-reports.js";
 import { runGa4RunPivotReport } from "./tools/ga4-run-pivot-report.js";
+import { runGa4UpdateProperty } from "./tools/ga4-update-property.js";
+import { runGa4CreateCustomDimension } from "./tools/ga4-create-custom-dimension.js";
+import { runGa4UpdateCustomDimension } from "./tools/ga4-update-custom-dimension.js";
+import { runGa4ArchiveCustomDimension } from "./tools/ga4-archive-custom-dimension.js";
+import { runGa4CreateKeyEvent } from "./tools/ga4-create-key-event.js";
+import { runGa4DeleteKeyEvent } from "./tools/ga4-delete-key-event.js";
+import { runGa4UpdateDataRetention } from "./tools/ga4-update-data-retention.js";
 
 // Cache registration — 16 tools are cacheable.
 // ga4_run_realtime_report is intentionally excluded (realtime data must not be stale).
@@ -45,18 +53,22 @@ const require = createRequire(import.meta.url);
 const pkg = require("../package.json") as { version: string };
 
 const RO = { readOnlyHint: true, openWorldHint: true, idempotentHint: false };
+const WRITE = { readOnlyHint: false, openWorldHint: true, idempotentHint: false };
 
 const server = new McpServer(
   { name: "mcp-ga4", version: pkg.version },
   {
     instructions:
-      "mcp-ga4: 17 GA4 tools. " +
+      "mcp-ga4: 24 GA4 tools. " +
       "OAuth (9): list_google_oauth_apps, register_google_oauth_app, delete_google_oauth_app, " +
       "list_google_accounts, start_google_oauth_flow, complete_google_oauth_flow, " +
       "delete_google_account, set_default_google_account, register_google_service_account. " +
       "Read/cached-24h (4): ga4_list_properties, ga4_get_metadata, ga4_list_custom_dimensions, ga4_list_conversion_events. " +
       "Reports/cached-1h (3): ga4_run_report, ga4_batch_run_reports, ga4_run_pivot_report. " +
-      "Realtime/not-cached (1): ga4_run_realtime_report.",
+      "Realtime/not-cached (1): ga4_run_realtime_report. " +
+      "Write/analytics.edit (7): ga4_update_property, ga4_create_custom_dimension, ga4_update_custom_dimension, " +
+      "ga4_archive_custom_dimension (irreversible), ga4_create_key_event, ga4_delete_key_event (irreversible), " +
+      "ga4_update_data_retention. All write tools default to confirm:false (dry-run preview); pass confirm:true to execute.",
   },
 );
 
@@ -286,6 +298,139 @@ reg("ga4_run_pivot_report",
     dimensionFilter: args.dimensionFilter as object | undefined,
     metricFilter: args.metricFilter as object | undefined,
     keepEmptyRows: args.keepEmptyRows, returnPropertyQuota: args.returnPropertyQuota,
+  }));
+
+// --- Write tools (7) — Admin API, require analytics.edit (SCOPE_GA4_EDIT) ---
+// All default confirm:false (dry-run preview, no API call, no token fetch).
+
+reg("ga4_update_property",
+  { title: "GA4 — Update Property",
+    description: "WRITE — updates a GA4 property's displayName, timeZone, currencyCode and/or " +
+      "industryCategory (Admin API PATCH v1beta/{property}). " +
+      "confirm:false returns a dry-run preview; confirm:true executes the update.",
+    inputSchema: {
+      account: ACCT, property: PROP,
+      displayName: z.string().optional().describe("New display name (optional)"),
+      timeZone: z.string().optional().describe("IANA time zone, e.g. 'America/Los_Angeles' (optional)"),
+      currencyCode: z.string().optional().describe("ISO 4217 currency code, e.g. 'USD' (optional)"),
+      industryCategory: z.string().optional().describe("Industry category enum, e.g. 'TECHNOLOGY' (optional)"),
+      confirm: confirmField,
+    }, annotations: WRITE },
+  async (args) => runGa4UpdateProperty({
+    account: args.account, property: args.property,
+    displayName: args.displayName, timeZone: args.timeZone,
+    currencyCode: args.currencyCode, industryCategory: args.industryCategory,
+    confirm: args.confirm,
+  }));
+
+reg("ga4_create_custom_dimension",
+  { title: "GA4 — Create Custom Dimension",
+    description: "WRITE — creates a custom dimension (Admin API POST v1beta/{property}/customDimensions). " +
+      "confirm:false returns a dry-run preview; confirm:true executes the create.",
+    inputSchema: {
+      account: ACCT, property: PROP,
+      parameterName: z.string().min(1).describe("Tagging parameter name (immutable once created)"),
+      displayName: z.string().min(1).describe("Display name shown in Analytics UI"),
+      scope: z.enum(["EVENT", "USER", "ITEM"]).describe("Dimension scope (immutable once created)"),
+      description: z.string().optional().describe("Description (optional)"),
+      disallowAdsPersonalization: z.boolean().optional()
+        .describe("Disable ads personalization for this dimension. Only valid when scope is USER (optional)"),
+      confirm: confirmField,
+    }, annotations: WRITE },
+  async (args) => runGa4CreateCustomDimension({
+    account: args.account, property: args.property,
+    parameterName: args.parameterName, displayName: args.displayName, scope: args.scope,
+    description: args.description, disallowAdsPersonalization: args.disallowAdsPersonalization,
+    confirm: args.confirm,
+  }));
+
+reg("ga4_update_custom_dimension",
+  { title: "GA4 — Update Custom Dimension",
+    description: "WRITE — updates a custom dimension's displayName, description and/or " +
+      "disallowAdsPersonalization (Admin API PATCH v1beta/{property}/customDimensions/{id}). " +
+      "confirm:false returns a dry-run preview; confirm:true executes the update.",
+    inputSchema: {
+      account: ACCT, property: PROP,
+      customDimension: z.string().min(1).describe("Custom dimension ID or full 'properties/.../customDimensions/...' name"),
+      displayName: z.string().optional().describe("New display name (optional)"),
+      description: z.string().optional().describe("New description (optional)"),
+      disallowAdsPersonalization: z.boolean().optional().describe("Disable ads personalization (optional)"),
+      confirm: confirmField,
+    }, annotations: WRITE },
+  async (args) => runGa4UpdateCustomDimension({
+    account: args.account, property: args.property, customDimension: args.customDimension,
+    displayName: args.displayName, description: args.description,
+    disallowAdsPersonalization: args.disallowAdsPersonalization,
+    confirm: args.confirm,
+  }));
+
+reg("ga4_archive_custom_dimension",
+  { title: "GA4 — Archive Custom Dimension (irreversible)",
+    description: "WRITE, IRREVERSIBLE — archives a custom dimension (Admin API POST " +
+      "v1beta/{property}/customDimensions/{id}:archive). The parameterName cannot be reused afterwards. " +
+      "confirm:false returns a dry-run preview; confirm:true executes the archive.",
+    inputSchema: {
+      account: ACCT, property: PROP,
+      customDimension: z.string().min(1).describe("Custom dimension ID or full 'properties/.../customDimensions/...' name"),
+      confirm: confirmField,
+    }, annotations: WRITE },
+  async (args) => runGa4ArchiveCustomDimension({
+    account: args.account, property: args.property, customDimension: args.customDimension,
+    confirm: args.confirm,
+  }));
+
+reg("ga4_create_key_event",
+  { title: "GA4 — Create Key Event",
+    description: "WRITE — creates a key event (formerly conversion event) via Admin API " +
+      "POST v1beta/{property}/keyEvents. " +
+      "confirm:false returns a dry-run preview; confirm:true executes the create.",
+    inputSchema: {
+      account: ACCT, property: PROP,
+      eventName: z.string().min(1).describe("Event name to mark as a key event (immutable once created)"),
+      countingMethod: z.enum(["ONCE_PER_EVENT", "ONCE_PER_SESSION"])
+        .describe("How this key event is counted across a session"),
+      confirm: confirmField,
+    }, annotations: WRITE },
+  async (args) => runGa4CreateKeyEvent({
+    account: args.account, property: args.property,
+    eventName: args.eventName, countingMethod: args.countingMethod,
+    confirm: args.confirm,
+  }));
+
+reg("ga4_delete_key_event",
+  { title: "GA4 — Delete Key Event (irreversible)",
+    description: "WRITE, IRREVERSIBLE — deletes a key event via Admin API DELETE v1beta/{property}/keyEvents/{id}. " +
+      "confirm:false returns a dry-run preview; confirm:true executes the delete.",
+    inputSchema: {
+      account: ACCT, property: PROP,
+      keyEvent: z.string().min(1).describe("Key event ID or full 'properties/.../keyEvents/...' name"),
+      confirm: confirmField,
+    }, annotations: WRITE },
+  async (args) => runGa4DeleteKeyEvent({
+    account: args.account, property: args.property, keyEvent: args.keyEvent,
+    confirm: args.confirm,
+  }));
+
+reg("ga4_update_data_retention",
+  { title: "GA4 — Update Data Retention Settings",
+    description: "WRITE — updates event/user data retention settings (Admin API PATCH " +
+      "v1beta/{property}/dataRetentionSettings). " +
+      "confirm:false returns a dry-run preview; confirm:true executes the update.",
+    inputSchema: {
+      account: ACCT, property: PROP,
+      eventDataRetention: z.enum(["TWO_MONTHS", "FOURTEEN_MONTHS", "TWENTY_SIX_MONTHS", "THIRTY_EIGHT_MONTHS", "FIFTY_MONTHS"])
+        .optional().describe("Event-level data retention duration (optional)"),
+      userDataRetention: z.enum(["TWO_MONTHS", "FOURTEEN_MONTHS", "TWENTY_SIX_MONTHS", "THIRTY_EIGHT_MONTHS", "FIFTY_MONTHS"])
+        .optional().describe("User-level data retention duration (optional)"),
+      resetUserDataOnNewActivity: z.boolean().optional()
+        .describe("Reset the user retention period on each new user activity (optional)"),
+      confirm: confirmField,
+    }, annotations: WRITE },
+  async (args) => runGa4UpdateDataRetention({
+    account: args.account, property: args.property,
+    eventDataRetention: args.eventDataRetention, userDataRetention: args.userDataRetention,
+    resetUserDataOnNewActivity: args.resetUserDataOnNewActivity,
+    confirm: args.confirm,
   }));
 
 async function main(): Promise<void> {

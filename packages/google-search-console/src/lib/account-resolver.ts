@@ -27,6 +27,16 @@ export class InsufficientScopeError extends Error {
   }
 }
 
+/**
+ * The full `webmasters` scope includes read access, so an account granted only
+ * the full scope (what the hosted app requests) satisfies `webmasters.readonly`.
+ */
+export function hasScope(scopesGranted: string | null | undefined, required: string): boolean {
+  const granted = (scopesGranted ?? "").split(" ").filter(Boolean);
+  if (granted.includes(required)) return true;
+  return required.endsWith(".readonly") && granted.includes(required.slice(0, -".readonly".length));
+}
+
 export async function resolveAccount(
   packageName: string,
   requiredScope: string,
@@ -46,8 +56,7 @@ export async function resolveAccount(
     }
   }
 
-  const granted = (account.scopes_granted ?? "").split(" ").filter(Boolean);
-  if (!granted.includes(requiredScope)) {
+  if (!hasScope(account.scopes_granted, requiredScope)) {
     throw new InsufficientScopeError(
       `Account "${account.label}" is missing required scope "${requiredScope}". ` +
         `Re-authorize via start_google_oauth_flow with scope included.`

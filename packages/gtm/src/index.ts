@@ -40,10 +40,19 @@ import { runGtmCreateVariable } from "./tools/gtm-create-variable.js";
 import { runGtmUpdateTag } from "./tools/gtm-update-tag.js";
 import { runGtmDeleteTag } from "./tools/gtm-delete-tag.js";
 import { runGtmCreateVersion } from "./tools/gtm-create-version.js";
+import { runGtmCreateContainer } from "./tools/gtm-create-container.js";
+import { runGtmUpdateAccount } from "./tools/gtm-update-account.js";
+import { runGtmCreateUserPermission } from "./tools/gtm-create-user-permission.js";
+import { runGtmUpdateUserPermission } from "./tools/gtm-update-user-permission.js";
+
+// Admin read tool (not cacheable — see registration below)
+import { runGtmListUserPermissions } from "./tools/gtm-list-user-permissions.js";
 
 // DANGER tools
 import { runGtmPublishVersion } from "./tools/gtm-publish-version.js";
 import { runGtmRollback } from "./tools/gtm-rollback.js";
+import { runGtmDeleteContainer } from "./tools/gtm-delete-container.js";
+import { runGtmDeleteUserPermission } from "./tools/gtm-delete-user-permission.js";
 
 const PKG_VERSION: string = pkg.version;
 
@@ -55,16 +64,19 @@ const server = new McpServer(
   { name: "mcp-gtm", version: PKG_VERSION },
   {
     instructions:
-      "You have access to mcp-gtm: 26 tools for Google Tag Manager. " +
+      "You have access to mcp-gtm: 33 tools for Google Tag Manager. " +
       "OAuth management (9 tools): list_google_oauth_apps, register_google_oauth_app, delete_google_oauth_app, " +
       "list_google_accounts, start_google_oauth_flow, complete_google_oauth_flow (deprecated), " +
       "delete_google_account, set_default_google_account, register_google_service_account. " +
       "Read tools (8, cacheable): gtm_list_accounts, gtm_list_containers, gtm_list_workspaces, " +
       "gtm_list_tags, gtm_list_triggers, gtm_list_variables (TTL 1 h); " +
       "gtm_list_versions, gtm_get_version (TTL 5 min). " +
-      "Write tools (7): gtm_create_workspace, gtm_create_tag, gtm_create_trigger, gtm_create_variable, " +
-      "gtm_update_tag, gtm_delete_tag, gtm_create_version. " +
-      "DANGER tools (2): gtm_publish_version, gtm_rollback — affect live containers. " +
+      "Read tool (1, NOT cacheable — permissions change out-of-band): gtm_list_user_permissions. " +
+      "Write tools (11): gtm_create_workspace, gtm_create_tag, gtm_create_trigger, gtm_create_variable, " +
+      "gtm_update_tag, gtm_delete_tag, gtm_create_version, gtm_create_container, gtm_update_account, " +
+      "gtm_create_user_permission, gtm_update_user_permission. " +
+      "DANGER tools (4): gtm_publish_version, gtm_rollback, gtm_delete_container, gtm_delete_user_permission " +
+      "— affect live containers or revoke access; require confirm:true + acknowledge_live. " +
       "Requires MCP_GTM_MASTER_KEY in .env.",
   },
 );
@@ -114,6 +126,8 @@ registerCacheableTool("gtm_get_version", {
   ttlEnvKey: "MCP_GTM_CACHE_TTL_VERSIONS",
   ttlDefaultSeconds: 300,
 });
+// gtm_list_user_permissions is intentionally NOT registered as cacheable — permission grants
+// change out-of-band and staleness has access-control consequences (see tool file comment).
 
 // ---------------------------------------------------------------------------
 // OAuth management tools (9)
@@ -493,7 +507,33 @@ server.registerTool(
 );
 
 // ---------------------------------------------------------------------------
-// Write tools (7) — NOT cacheable
+// Read tool (1) — NOT cacheable (permissions change out-of-band)
+// ---------------------------------------------------------------------------
+
+server.registerTool(
+  "gtm_list_user_permissions",
+  {
+    title: "GTM — List User Permissions",
+    description:
+      "Lists all users with access to a GTM account and their account/container permissions. " +
+      "Not cached — permission grants change out-of-band and staleness has access-control consequences.",
+    inputSchema: {
+      account: z.string().optional().describe("Label of a registered Google account (optional; uses default if omitted)."),
+      accountId: z.string().describe("GTM Account ID (numeric string)."),
+    },
+    annotations: READ_ONLY,
+  },
+  async (args) =>
+    normalizeMcpResult(
+      await runGtmListUserPermissions({
+        account: args.account,
+        accountId: args.accountId as string,
+      }),
+    ),
+);
+
+// ---------------------------------------------------------------------------
+// Write tools (11) — NOT cacheable
 // ---------------------------------------------------------------------------
 
 server.registerTool(
@@ -737,8 +777,149 @@ server.registerTool(
     ),
 );
 
+server.registerTool(
+  "gtm_create_container",
+  {
+    title: "GTM — Create Container",
+    description: "WRITE — creates a GTM Container in the given Account. Requires confirm:true.",
+    inputSchema: {
+      account: z.string().optional().describe("Label of a registered Google account (optional; uses default if omitted)."),
+      accountId: z.string().describe("GTM Account ID (numeric string)."),
+      name: z.string().describe("Container display name."),
+      usageContext: z.array(z.string()).describe("Usage contexts, e.g. ['web'], ['android'], ['ios']."),
+      domainName: z.array(z.string()).optional().describe("Domain names associated with the container (optional)."),
+      notes: z.string().optional().describe("Container notes (optional)."),
+      confirm: z.boolean().default(false).describe("Set to true to execute. False returns dry-run preview."),
+    },
+    annotations: WRITE,
+  },
+  async (args) =>
+    normalizeMcpResult(
+      await runGtmCreateContainer({
+        account: args.account,
+        accountId: args.accountId as string,
+        name: args.name as string,
+        usageContext: args.usageContext as string[],
+        domainName: args.domainName as string[] | undefined,
+        notes: args.notes as string | undefined,
+        confirm: args.confirm as boolean,
+      }),
+    ),
+);
+
+server.registerTool(
+  "gtm_update_account",
+  {
+    title: "GTM — Update Account",
+    description:
+      "WRITE — updates a GTM Account (name, shareData). Fetches the current account first to obtain " +
+      "a fresh fingerprint/etag and the full resource, then PUTs the merged resource. " +
+      "confirm:false returns dry-run preview with NO network call; confirm:true executes the read + update.",
+    inputSchema: {
+      account: z.string().optional().describe("Registered Google account label (optional)."),
+      accountId: z.string().describe("GTM Account ID to update."),
+      name: z.string().optional().describe("Account display name."),
+      shareData: z.boolean().optional().describe("Whether data may be shared anonymously with Google."),
+      confirm: z.boolean().default(false).describe("true = execute; false = dry-run preview."),
+    },
+    annotations: WRITE,
+  },
+  async (args) =>
+    normalizeMcpResult(
+      await runGtmUpdateAccount({
+        account: args.account,
+        accountId: args.accountId as string,
+        name: args.name as string | undefined,
+        shareData: args.shareData as boolean | undefined,
+        confirm: args.confirm as boolean,
+      }),
+    ),
+);
+
+server.registerTool(
+  "gtm_create_user_permission",
+  {
+    title: "GTM — Create User Permission",
+    description:
+      "WRITE — grants a user Account and/or Container access on a GTM account. Requires confirm:true.",
+    inputSchema: {
+      account: z.string().optional().describe("Label of a registered Google account (optional; uses default if omitted)."),
+      accountId: z.string().describe("GTM Account ID (numeric string)."),
+      emailAddress: z.string().describe("Email address of the user to grant access to."),
+      accountPermission: z.enum(["noAccess", "user", "admin"]).describe("Account-level permission for the user."),
+      containerAccess: z
+        .array(
+          z.object({
+            containerId: z.string().describe("GTM Container ID."),
+            permission: z.enum(["noAccess", "read", "edit", "approve", "publish"]).describe("Container-level permission."),
+          }),
+        )
+        .optional()
+        .describe("Per-container permissions to grant (optional)."),
+      confirm: z.boolean().default(false).describe("Set to true to execute. False returns dry-run preview."),
+    },
+    annotations: WRITE,
+  },
+  async (args) =>
+    normalizeMcpResult(
+      await runGtmCreateUserPermission({
+        account: args.account,
+        accountId: args.accountId as string,
+        emailAddress: args.emailAddress as string,
+        accountPermission: args.accountPermission as "noAccess" | "user" | "admin",
+        containerAccess: args.containerAccess as
+          | Array<{ containerId: string; permission: "noAccess" | "read" | "edit" | "approve" | "publish" }>
+          | undefined,
+        confirm: args.confirm as boolean,
+      }),
+    ),
+);
+
+server.registerTool(
+  "gtm_update_user_permission",
+  {
+    title: "GTM — Update User Permission",
+    description:
+      "WRITE — updates a user's Account/Container access on a GTM account via PUT. " +
+      "Requires permissionId (from gtm_list_user_permissions). confirm:false returns dry-run preview; " +
+      "confirm:true executes the update.",
+    inputSchema: {
+      account: z.string().optional().describe("Registered Google account label (optional)."),
+      accountId: z.string().describe("GTM Account ID (numeric string)."),
+      permissionId: z.string().describe("UserPermission ID to update."),
+      emailAddress: z.string().optional().describe("Email address of the user (usually unchanged)."),
+      accountPermission: z.enum(["noAccess", "user", "admin"]).optional().describe("Account-level permission for the user."),
+      containerAccess: z
+        .array(
+          z.object({
+            containerId: z.string().describe("GTM Container ID."),
+            permission: z.enum(["noAccess", "read", "edit", "approve", "publish"]).describe("Container-level permission."),
+          }),
+        )
+        .optional()
+        .describe("Per-container permissions (replaces the existing set when provided)."),
+      confirm: z.boolean().default(false).describe("true = execute; false = dry-run preview."),
+    },
+    annotations: WRITE,
+  },
+  async (args) =>
+    normalizeMcpResult(
+      await runGtmUpdateUserPermission({
+        account: args.account,
+        accountId: args.accountId as string,
+        permissionId: args.permissionId as string,
+        emailAddress: args.emailAddress as string | undefined,
+        accountPermission: args.accountPermission as "noAccess" | "user" | "admin" | undefined,
+        containerAccess: args.containerAccess as
+          | Array<{ containerId: string; permission: "noAccess" | "read" | "edit" | "approve" | "publish" }>
+          | undefined,
+        confirm: args.confirm as boolean,
+      }),
+    ),
+);
+
 // ---------------------------------------------------------------------------
-// DANGER tools (2) — live container impact
+// DANGER tools (4) — live container impact / access revocation
 // ---------------------------------------------------------------------------
 
 server.registerTool(
@@ -804,6 +985,66 @@ server.registerTool(
         to_version_id: args.to_version_id as string,
         plan_id: args.plan_id as string | undefined,
         confirm: args.confirm as boolean,
+        acknowledge_live: args.acknowledge_live as string | undefined,
+      }),
+    ),
+);
+
+server.registerTool(
+  "gtm_delete_container",
+  {
+    title: "GTM — Delete Container (DANGER)",
+    description:
+      "DANGER — irreversibly deletes a GTM Container and everything inside it (tags, triggers, " +
+      "variables, workspaces, versions). Verify containerId with gtm_list_containers first. " +
+      "Two-step gate: confirm:true + acknowledge_live:'I-UNDERSTAND-THIS-IS-LIVE:<containerId>'. " +
+      "With confirm:false (default) returns a dry-run preview with a warning.",
+    inputSchema: {
+      account: z.string().optional().describe("Label of a registered Google account (optional; uses default if omitted)."),
+      accountId: z.string().describe("GTM Account ID (numeric string)."),
+      containerId: z.string().describe("GTM Container ID to delete (numeric string)."),
+      confirm: z.boolean().default(false).describe("Set to true to execute the delete. False (default) returns dry-run preview."),
+      acknowledge_live: z.string().optional().describe("Required when confirm:true. Must be: I-UNDERSTAND-THIS-IS-LIVE:<containerId>"),
+    },
+    annotations: DANGER,
+  },
+  async (args) =>
+    normalizeMcpResult(
+      await runGtmDeleteContainer({
+        account: args.account,
+        accountId: args.accountId as string,
+        containerId: args.containerId as string,
+        confirm: args.confirm as boolean | undefined,
+        acknowledge_live: args.acknowledge_live as string | undefined,
+      }),
+    ),
+);
+
+server.registerTool(
+  "gtm_delete_user_permission",
+  {
+    title: "GTM — Delete User Permission (DANGER)",
+    description:
+      "DANGER — revokes a user's access to a GTM account and all of its containers. Verify permissionId " +
+      "with gtm_list_user_permissions first. Two-step gate: confirm:true + " +
+      "acknowledge_live:'I-UNDERSTAND-THIS-IS-LIVE:<permissionId>'. With confirm:false (default) returns " +
+      "a dry-run preview with a warning.",
+    inputSchema: {
+      account: z.string().optional().describe("Label of a registered Google account (optional; uses default if omitted)."),
+      accountId: z.string().describe("GTM Account ID (numeric string)."),
+      permissionId: z.string().describe("UserPermission ID to revoke."),
+      confirm: z.boolean().default(false).describe("Set to true to execute the delete. False (default) returns dry-run preview."),
+      acknowledge_live: z.string().optional().describe("Required when confirm:true. Must be: I-UNDERSTAND-THIS-IS-LIVE:<permissionId>"),
+    },
+    annotations: DANGER,
+  },
+  async (args) =>
+    normalizeMcpResult(
+      await runGtmDeleteUserPermission({
+        account: args.account,
+        accountId: args.accountId as string,
+        permissionId: args.permissionId as string,
+        confirm: args.confirm as boolean | undefined,
         acknowledge_live: args.acknowledge_live as string | undefined,
       }),
     ),

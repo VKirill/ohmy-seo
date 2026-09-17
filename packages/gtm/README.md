@@ -1,11 +1,13 @@
 # @ohmy-seo/gtm v0.1.0
 
-MCP server for Claude Code providing 27 tools for Google Tag Manager: read access
-to accounts, containers, workspaces, tags, triggers, variables, and versions; write
-operations for creating and updating entities; and version publish and rollback with
-a two-step confirmation gate. Secrets are encrypted in a local SQLite database using
-AES-256-GCM. Write tools require `confirm: true`; publish and rollback additionally
-require `acknowledge_live: "I-UNDERSTAND-THIS-IS-LIVE"`.
+MCP server for Claude Code providing 33 tools for Google Tag Manager: read access
+to accounts, containers, workspaces, tags, triggers, variables, versions, and user
+permissions; write operations for creating and updating entities (including
+containers, accounts, and user permissions); and destructive/live operations
+(publish, rollback, container delete, user-permission delete) behind a two-step
+confirmation gate. Secrets are encrypted in a local SQLite database using
+AES-256-GCM. Write tools require `confirm: true`; DANGER tools additionally
+require `acknowledge_live: "I-UNDERSTAND-THIS-IS-LIVE:<target_id>"`.
 
 ## Install
 
@@ -37,6 +39,8 @@ Copy `.env.example` to `.env` and fill in the values:
 - `gtm_list_variables` — list variables in a workspace (1h cache)
 - `gtm_list_versions` — list container versions (5-min cache)
 - `gtm_get_version` — get a specific container version (1h cache)
+- `gtm_list_user_permissions` — list users with access to an account and their permissions
+  (NOT cached — access grants change out-of-band)
 
 ### Write (require `confirm: true`)
 
@@ -47,11 +51,17 @@ Copy `.env.example` to `.env` and fill in the values:
 - `gtm_create_trigger` — create a trigger in a workspace
 - `gtm_create_variable` — create a variable in a workspace
 - `gtm_create_version` — create a container version from a workspace
+- `gtm_create_container` — create a new container in an account
+- `gtm_update_account` — update account name/shareData (reads current account first, then PUTs)
+- `gtm_create_user_permission` — grant a user account/container access
+- `gtm_update_user_permission` — update an existing user's account/container access
 
-### Danger (require `confirm: true` + `acknowledge_live: "I-UNDERSTAND-THIS-IS-LIVE"`)
+### Danger (require `confirm: true` + `acknowledge_live: "I-UNDERSTAND-THIS-IS-LIVE:<target_id>"`)
 
 - `gtm_publish_version` — publish a version to live (two-step: preview then confirm)
 - `gtm_rollback` — roll back to a previous version (two-step within 60s window)
+- `gtm_delete_container` — irreversibly delete a container and everything inside it
+- `gtm_delete_user_permission` — revoke a user's access to an account and all its containers
 
 ### OAuth / Account management (8 tools)
 
@@ -82,8 +92,10 @@ Follow the quickstart in `~/.claude/skills/google-cloud-auth/SKILL.md`.
 6. `set_default_google_account({label})`
 
 > WARNING: `gtm_publish_version` and `gtm_rollback` affect live containers.
-> Always verify the target container with `gtm_list_containers` first. Use separate
-> GTM accounts or workspaces to isolate production containers during development.
+> `gtm_delete_container` irreversibly deletes a container and everything inside it.
+> `gtm_delete_user_permission` irreversibly revokes a user's account/container access.
+> Always verify the target with `gtm_list_containers` / `gtm_list_user_permissions` first.
+> Use separate GTM accounts or workspaces to isolate production containers during development.
 
 ## Build
 

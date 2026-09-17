@@ -1,10 +1,12 @@
 # @ohmy-seo/ga4 v0.1.0
 
-MCP server for Claude Code providing 18 tools for Google Analytics 4: report
+MCP server for Claude Code providing 24 tools for Google Analytics 4: report
 queries (standard, batch, pivot, realtime), property metadata, custom dimensions,
-conversion events, and OAuth account management. Secrets are encrypted in a local
-SQLite database using AES-256-GCM. Results are cached locally to minimise API
-quota usage. Realtime reports are never cached by design.
+conversion events, Admin API write operations (property settings, custom
+dimensions, key events, data retention), and OAuth account management. Secrets
+are encrypted in a local SQLite database using AES-256-GCM. Results are cached
+locally to minimise API quota usage. Realtime reports are never cached by
+design.
 
 ## Install
 
@@ -39,6 +41,30 @@ Copy `.env.example` to `.env` and fill in the values:
 - `ga4_get_metadata` — get available dimensions and metrics for a property (24h cache)
 - `ga4_list_custom_dimensions` — list custom dimensions for a property (24h cache)
 - `ga4_list_conversion_events` — list conversion events for a property (24h cache)
+
+### Admin API writes — require `analytics.edit` scope (7 tools)
+
+All write tools default to `confirm:false`, which returns a dry-run preview and
+makes **no** API call or token fetch. Pass `confirm:true` to execute. Writes
+invalidate the matching read-tool cache for the account (properties, custom
+dimensions, key events) where one exists.
+
+- `ga4_update_property` — update a property's displayName, timeZone, currencyCode
+  and/or industryCategory (PATCH `v1beta/{property}`)
+- `ga4_create_custom_dimension` — create a custom dimension (POST
+  `v1beta/{property}/customDimensions`)
+- `ga4_update_custom_dimension` — update a custom dimension's displayName,
+  description and/or disallowAdsPersonalization (PATCH
+  `v1beta/{property}/customDimensions/{id}`)
+- `ga4_archive_custom_dimension` — **irreversible.** Archive a custom dimension;
+  its parameterName cannot be reused (POST
+  `v1beta/{property}/customDimensions/{id}:archive`)
+- `ga4_create_key_event` — create a key event / conversion event (POST
+  `v1beta/{property}/keyEvents`)
+- `ga4_delete_key_event` — **irreversible.** Delete a key event (DELETE
+  `v1beta/{property}/keyEvents/{id}`)
+- `ga4_update_data_retention` — update event/user data retention settings
+  (PATCH `v1beta/{property}/dataRetentionSettings`)
 
 ### OAuth / Account management (8 tools)
 
