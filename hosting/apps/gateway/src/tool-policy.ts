@@ -12,6 +12,7 @@ const READ_TOOLS = new Set([
   'ga4_run_report', 'ga4_run_realtime_report', 'ga4_batch_run_reports', 'ga4_run_pivot_report',
   'gtm_list_accounts', 'gtm_list_containers', 'gtm_list_workspaces', 'gtm_list_tags',
   'gtm_list_triggers', 'gtm_list_variables', 'gtm_list_versions', 'gtm_get_version',
+  'gtm_list_user_permissions',
 ]);
 
 const WRITE_TOOLS = new Set([
@@ -22,9 +23,14 @@ const WRITE_TOOLS = new Set([
   'yandex_direct_create_promo_extension', 'yandex_direct_update_adgroup_autotargeting',
   'yandex_direct_set_bid_modifiers', 'yandex_direct_update_campaign', 'yandex_direct_update_adgroup',
   'yandex_direct_update_ad', 'yandex_direct_feeds',
-  'gsc_submit_sitemap', 'gsc_delete_sitemap', 'gsc_indexing_publish',
+  // gsc_indexing_publish is not hosted: it needs the indexing scope, which the app does not request.
+  'gsc_submit_sitemap', 'gsc_delete_sitemap',
+  'ga4_update_property', 'ga4_create_custom_dimension', 'ga4_update_custom_dimension', 'ga4_archive_custom_dimension',
+  'ga4_create_key_event', 'ga4_delete_key_event', 'ga4_update_data_retention',
   'gtm_create_workspace', 'gtm_create_tag', 'gtm_create_trigger', 'gtm_create_variable',
   'gtm_update_tag', 'gtm_delete_tag', 'gtm_create_version', 'gtm_publish_version', 'gtm_rollback',
+  'gtm_create_container', 'gtm_delete_container', 'gtm_update_account',
+  'gtm_create_user_permission', 'gtm_update_user_permission', 'gtm_delete_user_permission',
 ]);
 const GENERIC_TOOLS = new Set(['yandex_metrika_api', 'yandex_webmaster_api', 'yandex_direct_api']);
 

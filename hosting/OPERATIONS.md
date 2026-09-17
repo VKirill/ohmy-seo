@@ -119,11 +119,13 @@ docker compose exec postgres psql -U ohmy_seo -d ohmy_seo
 
 Проект Cloud Console, который проходит верификацию: **ohmyseo** (577679941140).
 
-Скоупы: `webmasters`, `analytics.readonly`, `tagmanager.readonly`,
-`tagmanager.edit.containers`, `tagmanager.edit.containerversions`, `tagmanager.publish`
+Скоупы: `webmasters`, `analytics.readonly`, `analytics.edit`, `tagmanager.readonly`,
+`tagmanager.edit.containers`, `tagmanager.edit.containerversions`, `tagmanager.publish`,
+`tagmanager.delete.containers`, `tagmanager.manage.accounts`, `tagmanager.manage.users`
 плюс `openid/email/profile` (`providers.ts`). Список в Data Access консоли должен
-совпадать с кодом строка в строку — иначе Google отклоняет верификацию.
-`analytics.edit` убран до появления инструментов записи в GA4.
+совпадать с кодом строка в строку — иначе Google отклоняет верификацию. У каждого
+скоупа есть инструмент, который его использует (таблица в комментарии `GOOGLE_SCOPES`);
+новый скоуп добавляется только вместе с инструментом и демо для верификации.
 Запись выполняется только через подтверждённые операции шлюза.
 
 `include_granted_scopes` **не ставить**: он выполняет инкрементальную

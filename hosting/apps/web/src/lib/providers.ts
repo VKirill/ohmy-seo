@@ -38,13 +38,17 @@ export const YANDEX_API_SCOPES = [
 /**
  * Must match the Data Access list in Google Cloud Console string for string:
  * OAuth verification rejects any discrepancy. Each scope backs a hosted tool:
- *   webmasters                          sitemaps submit/delete (+ reads)
+ *   webmasters                          Search Console reads, sitemap submit/delete
  *   analytics.readonly                  GA4 reports and Admin API listings
+ *   analytics.edit                      GA4 property, custom dimension, key event, retention writes
  *   tagmanager.readonly                 GTM listings
- *   tagmanager.edit.containers          workspaces, tags, triggers, variables
+ *   tagmanager.edit.containers          containers, workspaces, tags, triggers, variables
  *   tagmanager.edit.containerversions   workspaces.create_version (version, rollback)
  *   tagmanager.publish                  versions.publish (publish, rollback)
- * Add analytics.edit only together with GA4 write tools and a new verification.
+ *   tagmanager.delete.containers        gtm_delete_container
+ *   tagmanager.manage.accounts          gtm_update_account
+ *   tagmanager.manage.users             GTM user permissions
+ * Never add a scope without a tool that uses it and a verification demo.
  */
 export const GOOGLE_SCOPES = [
   "openid",
@@ -52,10 +56,14 @@ export const GOOGLE_SCOPES = [
   "profile",
   "https://www.googleapis.com/auth/webmasters",
   "https://www.googleapis.com/auth/analytics.readonly",
+  "https://www.googleapis.com/auth/analytics.edit",
   "https://www.googleapis.com/auth/tagmanager.readonly",
   "https://www.googleapis.com/auth/tagmanager.edit.containers",
   "https://www.googleapis.com/auth/tagmanager.edit.containerversions",
   "https://www.googleapis.com/auth/tagmanager.publish",
+  "https://www.googleapis.com/auth/tagmanager.delete.containers",
+  "https://www.googleapis.com/auth/tagmanager.manage.accounts",
+  "https://www.googleapis.com/auth/tagmanager.manage.users",
 ] as const;
 
 export const PROVIDER_LABEL: Record<ProviderId, string> = {

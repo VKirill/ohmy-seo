@@ -3,6 +3,19 @@ import { assertHostedCall, isHostedTool, hostedTool } from '../apps/gateway/src/
 import { WindowLimiter } from '../apps/gateway/src/request-security';
 
 describe('hosted tool authorization', () => {
+  it('hosts every Google write tool backing a requested scope, each behind confirm:true', () => {
+    const writes = ['gsc_submit_sitemap', 'ga4_update_property', 'ga4_create_custom_dimension', 'ga4_update_custom_dimension',
+      'ga4_archive_custom_dimension', 'ga4_create_key_event', 'ga4_delete_key_event', 'ga4_update_data_retention',
+      'gtm_create_container', 'gtm_delete_container', 'gtm_update_account', 'gtm_create_user_permission',
+      'gtm_update_user_permission', 'gtm_delete_user_permission', 'gtm_create_version', 'gtm_publish_version'];
+    for (const name of writes) {
+      expect(isHostedTool(name)).toBe(true);
+      expect(() => assertHostedCall(name, {})).toThrow('confirm');
+      expect(() => assertHostedCall(name, { confirm: true })).not.toThrow();
+    }
+    expect(() => assertHostedCall('gtm_list_user_permissions', {})).not.toThrow();
+    expect(isHostedTool('gsc_indexing_publish')).toBe(false);
+  });
   it.each(['register_google_service_account', 'yandex_direct_render_to_xlsx', 'delete_account', 'start_oauth_flow',
     'yandex_direct_upload_from_yaml', 'unknown_tool'])('denies %s before execution', name => {
     expect(isHostedTool(name)).toBe(false);
