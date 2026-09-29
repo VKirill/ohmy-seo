@@ -265,46 +265,18 @@ describe("buildResponsiveAdPayload — VideoExtensionIds + optional fields", () 
   });
 });
 
-describe("buildResponsiveAdPayload — Carousel (RSYa)", () => {
-  it("wires Carousel.Items[].ImageHash (not AdImageHash)", () => {
+describe("buildResponsiveAdPayload — Carousel is not in Direct JSON API", () => {
+  it("never emits Carousel even if hashes are passed", () => {
     const payload = buildResponsiveAdPayload({
       ad_group_id: 1,
       Titles: ["Заголовок"],
       Texts: ["Текст"],
       Href: "https://example.com",
-      CarouselImageHashes: ["hash_a", "hash_b", "hash_c"],
-    });
-    const { responsiveAd } = extractResponsiveAd(payload);
-    expect(responsiveAd["Carousel"]).toEqual({
-      Items: [{ ImageHash: "hash_a" }, { ImageHash: "hash_b" }, { ImageHash: "hash_c" }],
-    });
-    expect(responsiveAd["AdImageHashes"]).toBeUndefined();
-  });
-
-  it("slices carousel hashes to max 10", () => {
-    const hashes = Array.from({ length: 12 }, (_, i) => `h${i + 1}`);
-    const payload = buildResponsiveAdPayload({
-      ad_group_id: 1,
-      Titles: ["Заголовок"],
-      Texts: ["Текст"],
-      Href: "https://example.com",
-      CarouselImageHashes: hashes,
-    });
-    const { responsiveAd } = extractResponsiveAd(payload);
-    const carousel = responsiveAd["Carousel"] as { Items: unknown[] };
-    expect(carousel.Items).toHaveLength(10);
-  });
-
-  it("omits Carousel when fewer than 2 hashes", () => {
-    const payload = buildResponsiveAdPayload({
-      ad_group_id: 1,
-      Titles: ["Заголовок"],
-      Texts: ["Текст"],
-      Href: "https://example.com",
-      CarouselImageHashes: ["only_one"],
+      AdImageHashes: ["img1"],
     });
     const { responsiveAd } = extractResponsiveAd(payload);
     expect(responsiveAd["Carousel"]).toBeUndefined();
+    expect(responsiveAd["AdImageHashes"]).toEqual(["img1"]);
   });
 });
 

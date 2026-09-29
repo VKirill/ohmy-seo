@@ -244,6 +244,7 @@ export function registerDirectWrite(server: McpServer): void {
         "A combinatorial ad carries a POOL of 1–7 titles and 1–3 texts; Yandex assembles the best combination and serves it on search+networks. " +
         "This is the ONLY ad type we create — classic single-title TextAd (ТГО) and RSYa TextImageAd are retired. " +
         "Posted to /json/v501/ads (v5 returns error 3500). Max 3 non-archived combinatorial ads per group. " +
+        "RSYa carousel is not in the JSON API — omit carousel_image_hashes and add slides in the Direct UI. " +
         "confirm: true is required. Returns { ad_id (exact string), ad_group_id, type: 'RESPONSIVE_AD', status: 'DRAFT' }.",
       inputSchema: {
         ad_group_id: z
@@ -276,7 +277,7 @@ export function registerDirectWrite(server: McpServer): void {
           .min(2)
           .max(10)
           .optional()
-          .describe("RSYa carousel: 2–10 AdImageHashes from yandex_direct_upload_image (≥450×450, ≤10 MB). Distinct from image_hashes."),
+          .describe("Not supported by Direct JSON API — Ads.add rejects Carousel. Add 2–10 slides in the Direct UI."),
         sitelinks_set_id: z
           .number()
           .int()
@@ -916,7 +917,8 @@ export function registerDirectWrite(server: McpServer): void {
       title: "Yandex Direct — Update Combinatorial Ad / Point Edit (DANGER lite)",
       description:
         "Surgically edit an existing combinatorial RESPONSIVE_AD via /json/v501/ads update. Pass only the fields to change. " +
-        "Covers: titles (1–7), texts (1–3), href, image_hashes, carousel_image_hashes (2–10), video_extension_ids, sitelinks_set_id, ad_extensions, business_id. " +
+        "Covers: titles (1–7), texts (1–3), href, image_hashes, video_extension_ids, sitelinks_set_id, ad_extensions, business_id. " +
+        "carousel_image_hashes is rejected: Direct JSON API has no Carousel field (UI only). " +
         "IMPORTANT: pass ad_id as a STRING of digits — Yandex ad IDs exceed 2^53 and a JSON number yields 'Ad not found' (8800). Edited ads may re-enter moderation. " +
         "Gate: confirm:true + OHMY_SEO_ALLOW_LIVE_MUTATIONS=true + YANDEX_DIRECT_ALLOW_LIVE_MUTATIONS=true.",
       inputSchema: {
@@ -925,7 +927,7 @@ export function registerDirectWrite(server: McpServer): void {
         texts: z.array(z.string().min(1).max(81)).min(1).max(3).optional(),
         href: z.string().min(1).max(1024).optional(),
         image_hashes: z.array(z.string().min(1)).max(5).optional(),
-        carousel_image_hashes: z.array(z.string().min(1)).min(2).max(10).optional().describe("Replace RSYa carousel (2–10 AdImageHashes)"),
+        carousel_image_hashes: z.array(z.string().min(1)).min(2).max(10).optional().describe("Not supported — Direct Ads.update rejects Carousel. Use the Direct UI."),
         video_extension_ids: z.array(z.number().int().positive()).min(1).max(6).optional(),
         sitelinks_set_id: z.number().int().positive().optional(),
         ad_extensions: z.array(z.number().int().positive()).max(50).optional(),

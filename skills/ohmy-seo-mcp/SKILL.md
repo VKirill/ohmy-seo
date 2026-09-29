@@ -83,8 +83,7 @@ Everything is **v501**. Order: **Campaign → AdGroup → images/videos (optiona
 | `Titles` | array, **1–7**, each ≤56 chars, each word ≤22 |
 | `Texts` | array, **1–3**, each ≤81 chars, each word ≤23 |
 | `Href` | **singular** string ≤1024 — NOT `Hrefs` |
-| `AdImageHashes` | MCP `image_hashes`, array **1–5** — combinatorial images, NOT carousel |
-| `Carousel` | MCP `carousel_image_hashes`, **2–10** hashes → `Carousel.Items[].ImageHash` (NOT `AdImageHash`; no per-slide `Href`) |
+| `AdImageHashes` | MCP `image_hashes`, array **1–5** — combinatorial images. RSYa carousel (2–10 slides) is **not in the JSON API** — add in the Direct UI |
 | `SitelinkSetId` | singular id from `create_sitelinks_set` |
 | `AdExtensionIds` | flat array of callout ids (≤50) — NOT `AdExtensions:{Items}` |
 | `VideoExtensionIds` | MCP `video_extension_ids`: **1–6 CreativeIds** from `upload_video` (not AdVideos hex ids). On **add** send a bare array; on **update** the tool wraps `{Items:[…]}` — a bare array on update returns 8000 «cannot contain an array» |
@@ -102,7 +101,7 @@ Beyond upload, the MCP surgically edits **existing** objects. Each update tool s
 
 - **`update_campaign`** — routes each field to the right place. Campaign top level: `name`, `daily_budget_micros` (manual strategy only), `excluded_sites` (площадки‑исключения РСЯ), `negative_keywords`, `notification` (email under `EmailSettings`, not `.Email`), `time_targeting` (hourly schedule). Inside `UnifiedCampaign`: typed `strategy` (below), `attribution_model` (short codes `LC`/`LSC`/`FC`/`LYDC`/`LSCCD`/`FCCD`/`LYDCCD`/`AUTO`), `settings` toggles, `tracking_params`, `counter_ids`, `priority_goals:[{goal_id, value}]` (value = conversion value / ценность конверсии). ExtendedGeoTargeting = the `settings` options `ENABLE_AREA_OF_INTEREST_TARGETING` / `ENABLE_CURRENT_AREA_TARGETING` / `ENABLE_REGULAR_AREA_TARGETING`. Escape hatches: `raw_fields` / `raw_unified_fields`.
 - **`update_adgroup`** — `name`, `region_ids`, `negative_keywords`, `tracking_params`.
-- **`update_ad`** — a combinatorial `RESPONSIVE_AD`: `titles`, `texts`, `href`, `image_hashes` (1–5), `carousel_image_hashes` (2–10), `video_extension_ids` (1–6 **CreativeIds** from `upload_video`), `sitelinks_set_id`, `ad_extensions`, `business_id`. **Pass `ad_id` as a STRING of digits** — never a JSON number. Update wraps `VideoExtensionIds` as `{Items:[…]}`. Editing creative can re‑trigger moderation.
+- **`update_ad`** — a combinatorial `RESPONSIVE_AD`: `titles`, `texts`, `href`, `image_hashes` (1–5), `video_extension_ids` (1–6 **CreativeIds** from `upload_video`), `sitelinks_set_id`, `ad_extensions`, `business_id`. **`carousel_image_hashes` is rejected** (`CAROUSEL_UI_ONLY`) — Direct Ads.add/update have no `Carousel`. **Pass `ad_id` as a STRING of digits** — never a JSON number. Update wraps `VideoExtensionIds` as `{Items:[…]}`. Editing creative can re‑trigger moderation.
 - **`set_bid_modifiers`** (корректировки, `mode: add|set|delete|get`) — `bid_modifier` is a **percent coefficient** (100 = no change, 50 = −50 %, 130 = +30 %). No enable/disable toggle — change via `mode:set`. **On ЕПК only `mobile` / `desktop` / `desktop_only` / `video` apply**; demographics/regional/retargeting belong to classic types. On `add` their API keys are plural arrays: `DemographicsAdjustments` / `RegionalAdjustments` / `RetargetingAdjustments` (singular is unknown parameter). `get` still uses `DemographicsAdjustmentFieldNames`.
 - **`negative_keywords_add`** — campaign or group, `mode: replace | append | get`. Prefer `append` (reads + merges + dedupes) so you don't wipe the existing list.
 - **YAML bundle** — optional `epk_settings:` in `_campaign.yaml`, applied **post‑create to every campaign** the strategy creates (при `one-per-cluster` — к каждой `cluster-*` кампании).
@@ -130,7 +129,7 @@ Pick a strategy without hand‑building JSON. `strategy: { type, placement?, wee
 |---|---|---|
 | Create ЕПК / group / combinatorial ad | `create_campaign` / `create_adgroup` / `create_ad_unified` | ✅ |
 | Upload image / video extension | `upload_image` / `upload_video` | ✅ |
-| RSYa carousel (2–10 slides) | `create_ad_unified` / `update_ad` (`carousel_image_hashes`) | ✅ |
+| RSYa carousel (2–10 slides) | — (Direct UI / bulk actions) | ❌ not in Ads.add/update |
 | Budget, bidding strategies, placements, hourly schedule | `create_campaign` + `update_campaign` (typed `strategy`, `time_targeting`) | ✅ |
 | Bid adjustments — device + video | `set_bid_modifiers` | ✅ |
 | Bid adjustments — demographics / regional / retargeting | `set_bid_modifiers` (pass‑through) | ❌ classic campaigns only |

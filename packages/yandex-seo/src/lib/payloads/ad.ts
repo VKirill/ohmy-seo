@@ -19,14 +19,14 @@
  *   - SitelinkSetId: number   — optional, singular
  *   - AdExtensionIds: number[]— optional, array of IDs directly
  *                              (NOT AdExtensions:{Items})
- *   - Carousel.Items[].ImageHash — optional RSYa carousel, 2–10 hashes
- *     (live-verified; official EN ads/add docs omit this field)
  *   - No Title2s (not in ResponsiveAd spec)
+ *   - RSYa carousel is NOT in Ads.add/update (official ResponsiveAdAdd/Update
+ *     have no Carousel; live v5/v501 return 8000 unknown parameter / not supported).
+ *     Add 2–10 slides in the Direct UI or bulk ad actions.
  */
 
-function buildCarousel(hashes: string[]): { Items: Array<{ ImageHash: string }> } {
-  return { Items: hashes.slice(0, 10).map((ImageHash) => ({ ImageHash })) };
-}
+export const CAROUSEL_API_UNSUPPORTED =
+  "Direct JSON API does not support RSYa carousel. Ads.add/update reject Carousel (unknown parameter / not supported). Add 2–10 slides (≥450×450, ≤10 MB) in the Direct UI or bulk ad actions. Combinatorial AdImageHashes (1–5) still work via image_hashes.";
 
 export function buildResponsiveAdPayload(input: {
   ad_group_id: number;
@@ -38,7 +38,6 @@ export function buildResponsiveAdPayload(input: {
   SitelinkSetId?: number;
   AdExtensionIds?: number[];
   BusinessId?: number;                  // Yandex.Business organization id to attach to the ad
-  CarouselImageHashes?: string[];       // RSYa carousel slides, 2–10 AdImageHashes
 }): { method: "add"; params: { Ads: Array<unknown> } } {
   const responsiveAd: Record<string, unknown> = {
     Titles: input.Titles,
@@ -59,9 +58,6 @@ export function buildResponsiveAdPayload(input: {
   }
   if (input.BusinessId !== undefined) {
     responsiveAd["BusinessId"] = input.BusinessId;
-  }
-  if (input.CarouselImageHashes && input.CarouselImageHashes.length >= 2) {
-    responsiveAd["Carousel"] = buildCarousel(input.CarouselImageHashes);
   }
 
   return {
@@ -90,7 +86,6 @@ export function buildResponsiveAdUpdatePayload(input: {
   SitelinkSetId?: number;
   AdExtensionIds?: number[];
   BusinessId?: number;
-  CarouselImageHashes?: string[];
 }): { method: "update"; params: { Ads: Array<unknown> } } {
   const ra: Record<string, unknown> = {};
   if (input.Titles !== undefined) ra["Titles"] = input.Titles;
@@ -101,8 +96,5 @@ export function buildResponsiveAdUpdatePayload(input: {
   if (input.SitelinkSetId !== undefined) ra["SitelinkSetId"] = input.SitelinkSetId;
   if (input.AdExtensionIds !== undefined) ra["AdExtensionIds"] = input.AdExtensionIds;
   if (input.BusinessId !== undefined) ra["BusinessId"] = input.BusinessId;
-  if (input.CarouselImageHashes !== undefined && input.CarouselImageHashes.length >= 2) {
-    ra["Carousel"] = buildCarousel(input.CarouselImageHashes);
-  }
   return { method: "update", params: { Ads: [{ Id: input.ad_id, ResponsiveAd: ra }] } };
 }

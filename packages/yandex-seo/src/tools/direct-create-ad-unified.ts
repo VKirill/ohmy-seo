@@ -1,6 +1,6 @@
 import { executeApiCall } from "../lib/api-gateway.js";
 import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
-import { buildResponsiveAdPayload } from "../lib/payload-builder.js";
+import { buildResponsiveAdPayload, CAROUSEL_API_UNSUPPORTED } from "../lib/payload-builder.js";
 import { z } from "zod";
 
 // Combinatorial ad (ЕПК RESPONSIVE_AD). One ad carries a POOL of 1–7 titles and
@@ -29,7 +29,7 @@ const InputSchema = z.object({
     .min(2)
     .max(10)
     .optional()
-    .describe("RSYa carousel: 2–10 AdImageHashes from yandex_direct_upload_image (≥450×450, ≤10 MB). Distinct from image_hashes."),
+    .describe("Not supported by Direct JSON API. Ads.add rejects Carousel. Add 2–10 slides in the Direct UI."),
   sitelinks_set_id: z.number().int().positive().optional().describe("Sitelinks set ID (optional)"),
   ad_extensions: z
     .array(z.number().int().positive())
@@ -62,6 +62,10 @@ export async function runDirectCreateAdUnified(input: AdUnifiedInput) {
     throw new Error("confirm: true required");
   }
 
+  if (parsed.carousel_image_hashes?.length) {
+    return { content: [{ type: "text" as const, text: JSON.stringify({ error: CAROUSEL_API_UNSUPPORTED, code: "CAROUSEL_UI_ONLY" }) }] };
+  }
+
   try {
     const payload = buildResponsiveAdPayload({
       ad_group_id: parsed.ad_group_id,
@@ -69,7 +73,6 @@ export async function runDirectCreateAdUnified(input: AdUnifiedInput) {
       Texts: parsed.texts,
       Href: parsed.href,
       AdImageHashes: parsed.image_hashes,
-      CarouselImageHashes: parsed.carousel_image_hashes,
       VideoExtensionIds: parsed.video_extension_ids,
       SitelinkSetId: parsed.sitelinks_set_id,
       AdExtensionIds: parsed.ad_extensions,
@@ -126,7 +129,6 @@ export async function runDirectCreateAdUnified(input: AdUnifiedInput) {
               titles: parsed.titles.length,
               texts: parsed.texts.length,
               images: parsed.image_hashes?.length ?? 0,
-              carousel: parsed.carousel_image_hashes?.length ?? 0,
               has_sitelinks: parsed.sitelinks_set_id !== undefined,
               type: "RESPONSIVE_AD",
               status: "DRAFT",

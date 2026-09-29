@@ -126,7 +126,7 @@ CounterIds + Metrika goals + conversion value work on ЕПК: `UnifiedCampaign.C
 
 ## 19. `Ads.update` needs a STRING Id; edits can re-trigger moderation
 
-Editing a `RESPONSIVE_AD` via `Ads.update` (v501) hits the same big-int trap as #3: pass `Id` as a **string** or you get 8800 «Ad not found». `runDirectUpdateAd` always stringifies `ad_id`. Only the `ResponsiveAd` sub-fields you pass are changed; changing creative (titles/texts/href/images/carousel/video) can send the ad back to moderation. `Notification.EmailSettings.SendWarnings` may return warning 10165 «Parameter will not be applied» depending on account config — benign, the rest of the update still applies (the tool surfaces `warnings[]`).
+Editing a `RESPONSIVE_AD` via `Ads.update` (v501) hits the same big-int trap as #3: pass `Id` as a **string** or you get 8800 «Ad not found». `runDirectUpdateAd` always stringifies `ad_id`. Only the `ResponsiveAd` sub-fields you pass are changed; changing creative (titles/texts/href/images/video) can send the ad back to moderation. Carousel is not an update field — see §23. `Notification.EmailSettings.SendWarnings` may return warning 10165 «Parameter will not be applied» depending on account config — benign, the rest of the update still applies (the tool surfaces `warnings[]`).
 
 **`VideoExtensionIds` on update is `{Items:[CreativeId,…]}`**, not a bare array. Live error 8000: «Ads.ResponsiveAd.VideoExtensionIds cannot contain an array». `create_ad_unified` (Ads.add) still sends a bare array of 1–6 CreativeIds. IDs are **VideoExtension CreativeIds** from `yandex_direct_upload_video` / Creatives.add — not AdVideos hex ids.
 
@@ -141,15 +141,11 @@ Full ЕПК Search `BiddingStrategyType` enum (live): `AVERAGE_CPC, AVERAGE_CPA,
 
 The `create_campaign`/`update_campaign` tools (and bundle `epk_settings`) expose a typed `strategy` param — `{ type: manual|max_clicks|avg_cpc|max_conversions|avg_cpa|pay_for_conversion|avg_crr|pay_for_conversion_crr|serving_off, placement: search|network|both, weekly_budget_micros?, bid_ceiling_micros?, goal_id?, avg_cpc_micros?, avg_cpa_micros?, cpa_micros?, crr? }` — and `buildEpkBiddingStrategy` maps it to a live-compatible `{ Search, Network }`, so you never hand-assemble the pair (the raw `bidding_strategy` escape hatch still exists).
 
-## 23. RSYa carousel is `Carousel.Items[].ImageHash` (not in official EN ads/add)
+## 23. RSYa carousel is **not** in the public JSON API
 
-UI «Карусель»: 2–10 slides, ≥450×450, ≤10 MB. Official EN `Ads.add` omits the field; live `/json/v501/ads` accepts:
+UI «Карусель»: 2–10 slides, ≥450×450, ≤10 MB, ЕПК combinatorial ads, shown in РСЯ Smart Design. Official `ResponsiveAdAdd` / `ResponsiveAdUpdate` have **no `Carousel` field**. Live `Ads.add` returns «not supported»; `Ads.update` returns 8000 «Unknown parameter: Carousel». `Ads.get` returns combinatorial `AdImages.Items[].ImageHash` (1–5), not carousel order.
 
-```json
-"ResponsiveAd": { "Carousel": { "Items": [{ "ImageHash": "<hash>" }, { "ImageHash": "<hash>" }] } }
-```
-
-Required field name is **`ImageHash`**, not `AdImageHash`. Per-slide `Href` is rejected. This is **not** `AdImageHashes` (1–5 combinatorial images). MCP: `carousel_image_hashes` on `create_ad_unified` / `update_ad`; hashes from `yandex_direct_upload_image`.
+MCP: `carousel_image_hashes` on `create_ad_unified` / `update_ad` is **rejected** with `CAROUSEL_UI_ONLY` — do not send it. Add slides in the Direct UI or bulk ad actions. `image_hashes` (1–5) still maps to `AdImageHashes`.
 
 ## 24. Video extensions: AdVideos → Creatives → VideoExtensionIds
 

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { executeApiCall } from "../lib/api-gateway.js";
 import { AdId } from "../lib/ad-id.js";
-import { buildResponsiveAdUpdatePayload } from "../lib/payload-builder.js";
+import { buildResponsiveAdUpdatePayload, CAROUSEL_API_UNSUPPORTED } from "../lib/payload-builder.js";
 import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
 
 // Surgical point-edit of a combinatorial RESPONSIVE_AD via /json/v501/ads update.
@@ -18,7 +18,7 @@ const InputSchema = z.object({
     .min(2)
     .max(10)
     .optional()
-    .describe("Replace RSYa carousel (2–10 AdImageHashes from yandex_direct_upload_image)"),
+    .describe("Not supported by Direct JSON API. Ads.update rejects Carousel. Add slides in the Direct UI."),
   video_extension_ids: z.array(z.number().int().positive()).min(1).max(6).optional().describe("Replace video extensions (1–6 CreativeIds from yandex_direct_upload_video)"),
   sitelinks_set_id: z.number().int().positive().optional().describe("Replace sitelinks set ID"),
   ad_extensions: z.array(z.number().int().positive()).max(50).optional().describe("Replace callout extension IDs (≤50)"),
@@ -39,6 +39,10 @@ export async function runDirectUpdateAd(input: Input) {
   if (process.env.YANDEX_DIRECT_ALLOW_LIVE_MUTATIONS !== "true") throw new Error("YANDEX_DIRECT_ALLOW_LIVE_MUTATIONS=true required");
   if (parsed.confirm !== true) throw new Error("confirm: true required");
 
+  if (parsed.carousel_image_hashes?.length) {
+    return { content: [{ type: "text" as const, text: JSON.stringify({ error: CAROUSEL_API_UNSUPPORTED, code: "CAROUSEL_UI_ONLY" }) }] };
+  }
+
   const provided = EDITABLE_KEYS.filter((k) => parsed[k] !== undefined);
   if (provided.length === 0) throw new Error("no editable fields provided — pass at least one of: " + EDITABLE_KEYS.join(", "));
 
@@ -49,7 +53,6 @@ export async function runDirectUpdateAd(input: Input) {
       Texts: parsed.texts,
       Href: parsed.href,
       AdImageHashes: parsed.image_hashes,
-      CarouselImageHashes: parsed.carousel_image_hashes,
       VideoExtensionIds: parsed.video_extension_ids,
       SitelinkSetId: parsed.sitelinks_set_id,
       AdExtensionIds: parsed.ad_extensions,

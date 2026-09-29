@@ -12,7 +12,9 @@ import {
   buildCampaignUpdatePayload,
   buildAdGroupUpdatePayload,
   buildResponsiveAdUpdatePayload,
+  CAROUSEL_API_UNSUPPORTED,
 } from "../src/lib/payload-builder.js";
+import { runDirectCreateAdUnified } from "../src/tools/direct-create-ad-unified.js";
 
 // ---------------------------------------------------------------------------
 // 1-3. BidModifiers add / set / delete
@@ -266,14 +268,15 @@ describe("buildResponsiveAdUpdatePayload", () => {
     expect(ad.ResponsiveAd).toEqual({ Href: "https://only-href.example" });
   });
 
-  it("wires Carousel.Items[].ImageHash on update", () => {
+  it("does not emit Carousel on update (JSON API rejects the field)", () => {
     const payload = buildResponsiveAdUpdatePayload({
       ad_id: "1914861097123806822",
-      CarouselImageHashes: ["c1", "c2"],
+      Href: "https://example.com",
     });
     const ad = payload.params.Ads[0] as Record<string, unknown>;
     const ra = ad.ResponsiveAd as Record<string, unknown>;
-    expect(ra.Carousel).toEqual({ Items: [{ ImageHash: "c1" }, { ImageHash: "c2" }] });
+    expect(ra.Carousel).toBeUndefined();
+    expect(ra.Href).toBe("https://example.com");
   });
 
   it("wraps VideoExtensionIds as {Items} on update (bare array is rejected live)", () => {
@@ -284,5 +287,21 @@ describe("buildResponsiveAdUpdatePayload", () => {
     const ad = payload.params.Ads[0] as Record<string, unknown>;
     const ra = ad.ResponsiveAd as Record<string, unknown>;
     expect(ra.VideoExtensionIds).toEqual({ Items: [1165964908, 1165964917] });
+  });
+});
+
+describe("carousel is UI-only", () => {
+  it("create_ad_unified rejects carousel_image_hashes before calling Direct", async () => {
+    const out = await runDirectCreateAdUnified({
+      ad_group_id: 1,
+      titles: ["Заголовок"],
+      texts: ["Текст"],
+      href: "https://example.com",
+      carousel_image_hashes: ["h1", "h2"],
+      confirm: true,
+    });
+    const body = JSON.parse(out.content[0].text) as { error: string; code: string };
+    expect(body.code).toBe("CAROUSEL_UI_ONLY");
+    expect(body.error).toBe(CAROUSEL_API_UNSUPPORTED);
   });
 });
