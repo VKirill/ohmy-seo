@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { strategySpecSchema } from "../lib/strategy-schema.js";
 import { runDirectUploadImage } from "../tools/direct-upload-image.js";
+import { runDirectUploadVideo } from "../tools/direct-upload-video.js";
 import { runDirectCreateCampaign } from "../tools/direct-create-campaign.js";
 import { runDirectCreateAdGroup } from "../tools/direct-create-adgroup.js";
 import { runDirectCreateAdUnified } from "../tools/direct-create-ad-unified.js";
@@ -20,6 +21,7 @@ import { runDirectUpdateCampaign } from "../tools/direct-update-campaign.js";
 import { runDirectUpdateAdGroup } from "../tools/direct-update-adgroup.js";
 import { runDirectUpdateAd } from "../tools/direct-update-ad.js";
 import { runDirectFeeds } from "../tools/direct-feeds.js";
+import { AdId, AdIds } from "../lib/ad-id.js";
 
 export function registerDirectWrite(server: McpServer): void {
   server.registerTool(
@@ -54,6 +56,37 @@ export function registerDirectWrite(server: McpServer): void {
         file_path: args.file_path,
         base64: args.base64,
         account: args.account,
+      }),
+  );
+
+  server.registerTool(
+    "yandex_direct_upload_video",
+    {
+      title: "Yandex Direct — Upload Video and Create VideoExtension Creative",
+      description:
+        "Upload a video to AdVideos (/json/v5/advideos add) and create a VIDEO_EXTENSION_CREATIVE (/json/v5/creatives add). " +
+        "Pass url (Direct fetches it), local file_path, or base64 — or video_id to finish a converting upload. " +
+        "Returns { video_id, creative_id, video_status }. Use creative_id in video_extension_ids on create_ad_unified / update_ad (1–6). " +
+        "Requirements: MP4/WebM/MOV/AVI, 5–60 s, ≥360p, ≤100 MB. Converting videos may need a second call with video_id.",
+      inputSchema: {
+        url: z.string().url().optional().describe("Public video URL — Direct fetches it"),
+        file_path: z.string().optional().describe("Absolute path to a local video file (≤100 MB)"),
+        base64: z.string().optional().describe("Base64-encoded video (≤100 MB decoded)"),
+        video_id: z.string().min(1).optional().describe("Existing AdVideos Id — skip upload, create the creative"),
+        name: z.string().min(1).max(255).optional().describe("AdVideos Name (≤255)"),
+        account: z.string().optional().describe("Account label from list_accounts"),
+        client_login: z.string().optional().describe("Agency client login for sub-client cabinets"),
+      },
+    },
+    async (args) =>
+      runDirectUploadVideo({
+        url: args.url,
+        file_path: args.file_path,
+        base64: args.base64,
+        video_id: args.video_id,
+        name: args.name,
+        account: args.account,
+        client_login: args.client_login,
       }),
   );
 
@@ -237,6 +270,12 @@ export function registerDirectWrite(server: McpServer): void {
           .max(5)
           .optional()
           .describe("1–5 AdImageHashes from yandex_direct_upload_image (optional; text-only combinatorial ads are allowed)"),
+        carousel_image_hashes: z
+          .array(z.string().min(1))
+          .min(2)
+          .max(10)
+          .optional()
+          .describe("RSYa carousel: 2–10 AdImageHashes from yandex_direct_upload_image (≥450×450, ≤10 MB). Distinct from image_hashes."),
         sitelinks_set_id: z
           .number()
           .int()
@@ -253,7 +292,7 @@ export function registerDirectWrite(server: McpServer): void {
           .min(1)
           .max(6)
           .optional()
-          .describe("1–6 VideoExtension IDs (optional)"),
+          .describe("1–6 VideoExtension CreativeIds from yandex_direct_upload_video (optional)"),
         business_id: z
           .number()
           .int()
@@ -282,6 +321,7 @@ export function registerDirectWrite(server: McpServer): void {
         texts: args.texts,
         href: args.href,
         image_hashes: args.image_hashes,
+        carousel_image_hashes: args.carousel_image_hashes,
         sitelinks_set_id: args.sitelinks_set_id,
         ad_extensions: args.ad_extensions,
         video_extension_ids: args.video_extension_ids,
@@ -439,10 +479,8 @@ export function registerDirectWrite(server: McpServer): void {
           .array(z.number().int().positive())
           .min(1)
           .describe("Campaign IDs whose DRAFT ads should be sent to moderation (required, at least 1)"),
-        ad_ids: z
-          .array(z.union([z.number().int().positive(), z.string().min(1)]))
-          .optional()
-          .describe("Explicit Ad IDs to moderate (numbers, or exact-string Ids for big-int ad Ids > 2^53); when omitted, all DRAFT ads of the campaigns are fetched automatically"),
+        ad_ids: AdIds.optional()
+          .describe("Explicit Ad IDs as strings of digits (19-digit combinatorial Ids exceed JS Number precision); when omitted, all DRAFT ads of the campaigns are fetched automatically"),
         confirm: z.boolean().describe("Must be true — explicit intent confirmation required"),
         acknowledge_live: z
           .string()
@@ -877,15 +915,16 @@ export function registerDirectWrite(server: McpServer): void {
       title: "Yandex Direct — Update Combinatorial Ad / Point Edit (DANGER lite)",
       description:
         "Surgically edit an existing combinatorial RESPONSIVE_AD via /json/v501/ads update. Pass only the fields to change. " +
-        "Covers: titles (1–7), texts (1–3), href, image_hashes, video_extension_ids, sitelinks_set_id, ad_extensions, business_id. " +
-        "IMPORTANT: pass ad_id as a STRING — Yandex ad IDs exceed 2^53 and a rounded number yields 'Ad not found' (8800). Edited ads may re-enter moderation. " +
+        "Covers: titles (1–7), texts (1–3), href, image_hashes, carousel_image_hashes (2–10), video_extension_ids, sitelinks_set_id, ad_extensions, business_id. " +
+        "IMPORTANT: pass ad_id as a STRING of digits — Yandex ad IDs exceed 2^53 and a JSON number yields 'Ad not found' (8800). Edited ads may re-enter moderation. " +
         "Gate: confirm:true + OHMY_SEO_ALLOW_LIVE_MUTATIONS=true + YANDEX_DIRECT_ALLOW_LIVE_MUTATIONS=true.",
       inputSchema: {
-        ad_id: z.union([z.string().min(1), z.number()]).describe("Ad ID — pass as STRING to preserve the full big-int"),
+        ad_id: AdId,
         titles: z.array(z.string().min(1).max(56)).min(1).max(7).optional(),
         texts: z.array(z.string().min(1).max(81)).min(1).max(3).optional(),
         href: z.string().min(1).max(1024).optional(),
         image_hashes: z.array(z.string().min(1)).max(5).optional(),
+        carousel_image_hashes: z.array(z.string().min(1)).min(2).max(10).optional().describe("Replace RSYa carousel (2–10 AdImageHashes)"),
         video_extension_ids: z.array(z.number().int().positive()).min(1).max(6).optional(),
         sitelinks_set_id: z.number().int().positive().optional(),
         ad_extensions: z.array(z.number().int().positive()).max(50).optional(),
@@ -902,6 +941,7 @@ export function registerDirectWrite(server: McpServer): void {
         texts: args.texts,
         href: args.href,
         image_hashes: args.image_hashes,
+        carousel_image_hashes: args.carousel_image_hashes,
         video_extension_ids: args.video_extension_ids,
         sitelinks_set_id: args.sitelinks_set_id,
         ad_extensions: args.ad_extensions,

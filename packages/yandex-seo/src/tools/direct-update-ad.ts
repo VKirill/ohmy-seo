@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { executeApiCall } from "../lib/api-gateway.js";
+import { AdId } from "../lib/ad-id.js";
 import { buildResponsiveAdUpdatePayload } from "../lib/payload-builder.js";
 import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
 
@@ -7,12 +8,18 @@ import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
 // ad_id is a STRING — Yandex ad ids exceed 2^53; passing a rounded number → "Ad not found".
 // Only provided ResponsiveAd fields change. DANGER-lite gate (env flags + confirm).
 const InputSchema = z.object({
-  ad_id: z.union([z.string().min(1), z.number()]).describe("Ad ID (pass as STRING to preserve the full big-int; number risks precision loss)"),
+  ad_id: AdId,
   titles: z.array(z.string().min(1).max(56)).min(1).max(7).optional().describe("Replace the headline pool (1–7 titles, ≤56 chars each)"),
   texts: z.array(z.string().min(1).max(81)).min(1).max(3).optional().describe("Replace the text pool (1–3 texts, ≤81 chars each)"),
   href: z.string().min(1).max(1024).optional().describe("Replace the target URL"),
   image_hashes: z.array(z.string().min(1)).max(5).optional().describe("Replace image set (1–5 AdImageHashes)"),
-  video_extension_ids: z.array(z.number().int().positive()).min(1).max(6).optional().describe("Replace video extensions (1–6 IDs)"),
+  carousel_image_hashes: z
+    .array(z.string().min(1))
+    .min(2)
+    .max(10)
+    .optional()
+    .describe("Replace RSYa carousel (2–10 AdImageHashes from yandex_direct_upload_image)"),
+  video_extension_ids: z.array(z.number().int().positive()).min(1).max(6).optional().describe("Replace video extensions (1–6 CreativeIds from yandex_direct_upload_video)"),
   sitelinks_set_id: z.number().int().positive().optional().describe("Replace sitelinks set ID"),
   ad_extensions: z.array(z.number().int().positive()).max(50).optional().describe("Replace callout extension IDs (≤50)"),
   business_id: z.number().int().positive().optional().describe("Replace attached Yandex.Business organization ID"),
@@ -23,7 +30,7 @@ const InputSchema = z.object({
 
 type Input = z.infer<typeof InputSchema>;
 
-const EDITABLE_KEYS = ["titles", "texts", "href", "image_hashes", "video_extension_ids", "sitelinks_set_id", "ad_extensions", "business_id"] as const;
+const EDITABLE_KEYS = ["titles", "texts", "href", "image_hashes", "carousel_image_hashes", "video_extension_ids", "sitelinks_set_id", "ad_extensions", "business_id"] as const;
 
 export async function runDirectUpdateAd(input: Input) {
   const parsed = InputSchema.parse(input);
@@ -42,6 +49,7 @@ export async function runDirectUpdateAd(input: Input) {
       Texts: parsed.texts,
       Href: parsed.href,
       AdImageHashes: parsed.image_hashes,
+      CarouselImageHashes: parsed.carousel_image_hashes,
       VideoExtensionIds: parsed.video_extension_ids,
       SitelinkSetId: parsed.sitelinks_set_id,
       AdExtensionIds: parsed.ad_extensions,

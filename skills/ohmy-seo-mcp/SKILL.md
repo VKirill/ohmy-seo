@@ -28,7 +28,7 @@ Prefer these **typed MCP tools** — they embed the quirks (v501 endpoints, big�
 | **Inspect / read** (no gate) | `yandex_direct_list_campaigns`, `…_list_adgroups`, `…_list_ads`, `…_list_keywords`, `…_get_stats`, `…_get_search_terms`, `…_get_change_history`; get-modes of `…_feeds`, `…_set_bid_modifiers`, `…_negative_keywords_add` |
 | **Build from YAML folder** | `yandex_direct_upload_from_yaml` — **папка** с `_campaign.yaml` + `group-*.yaml`; dry‑run → `plan_hash` → live; `epk_settings` post‑create |
 | **Build from CSV** | `yandex_direct_upload_campaign_bundle` |
-| **Create piece‑by‑piece (DRAFT)** | `yandex_direct_create_campaign`, `…_create_adgroup`, `…_create_ad_unified`, `…_create_sitelinks_set`, `…_create_promo_extension`, `…_upload_image` |
+| **Create piece‑by‑piece (DRAFT)** | `yandex_direct_create_campaign`, `…_create_adgroup`, `…_create_ad_unified`, `…_create_sitelinks_set`, `…_create_promo_extension`, `…_upload_image`, `…_upload_video` |
 | **Point‑edit live objects** | `yandex_direct_update_campaign`, `…_update_adgroup`, `…_update_ad`, `…_update_budgets`, `…_update_adgroup_autotargeting` |
 | **Targeting & corrections** | `yandex_direct_set_bid_modifiers`, `…_negative_keywords_add`, `…_link_metrika_goals` |
 | **Product feeds** | `yandex_direct_feeds` |
@@ -59,7 +59,7 @@ folder/                      ← 1 бандл (аргумент folder)
 
 ## Combinatorial ЕПК upload recipe (verified live)
 
-Everything is **v501**. Order: **Campaign → AdGroup → images (optional) → sitelinks set (optional) → callouts (optional) → combinatorial ad → verify → (human OK) → moderate.** Do this with the typed tools; the JSON below is the underlying API shape (also what `yandex_direct_api` would POST).
+Everything is **v501**. Order: **Campaign → AdGroup → images/videos (optional) → sitelinks set (optional) → callouts (optional) → combinatorial ad → verify → (human OK) → moderate.** Do this with the typed tools; the JSON below is the underlying API shape (also what `yandex_direct_api` would POST).
 
 **Step 0 — currency minimums** (never hardcode rubles). Money is integer **micros** (amount × 1 000 000), same multiplier for every currency. Read floors from `Dictionaries.get{Currencies}` (e.g. USD `MinimumDailyBudget` = 10000000 = $10/day, `MinimumBid` = 10000, `MinimumWeeklySpendLimit` = 10000000). `DailyBudget` sits at campaign level with **no** `Currency` sub‑field — it follows the account.
 
@@ -76,18 +76,21 @@ Everything is **v501**. Order: **Campaign → AdGroup → images (optional) → 
 
 **Step 2 — ad group** → `create_adgroup` / `POST /json/v501/adgroups`. **Do NOT send `Type`** (error 8000 — the group inherits it from the ЕПК). `RegionIds` is required on the group, not the campaign.
 
-**Step 3 — combinatorial ad** → `create_ad_unified` / `POST /json/v501/ads`. One `ResponsiveAd` object is the whole pool:
+**Step 3 — combinatorial ad** → `create_ad_unified` / `POST /json/v501/ads`. One `ResponsiveAd` object is the whole pool. Optional media first: `upload_image` → hashes; `upload_video` → `creative_id`.
 
 | Field | Rule |
 |---|---|
 | `Titles` | array, **1–7**, each ≤56 chars, each word ≤22 |
 | `Texts` | array, **1–3**, each ≤81 chars, each word ≤23 |
 | `Href` | **singular** string ≤1024 — NOT `Hrefs` |
-| `AdImageHashes` | array **1–5** — NOT `ImageHashes` / `AdImageHash` |
+| `AdImageHashes` | MCP `image_hashes`, array **1–5** — combinatorial images, NOT carousel |
+| `Carousel` | MCP `carousel_image_hashes`, **2–10** hashes → `Carousel.Items[].ImageHash` (NOT `AdImageHash`; no per-slide `Href`) |
 | `SitelinkSetId` | singular id from `create_sitelinks_set` |
 | `AdExtensionIds` | flat array of callout ids (≤50) — NOT `AdExtensions:{Items}` |
-| `VideoExtensionIds` | array 1–6 video ids (optional) |
+| `VideoExtensionIds` | MCP `video_extension_ids`: **1–6 CreativeIds** from `upload_video` (not AdVideos hex ids). On **add** send a bare array; on **update** the tool wraps `{Items:[…]}` — a bare array on update returns 8000 «cannot contain an array» |
 | `BusinessId` | Yandex.Business organisation id (optional; ad level only) |
+
+**Media tools.** `yandex_direct_upload_image` → `{ad_image_hash}` (JPEG/PNG ≤10 MB). `yandex_direct_upload_video` → `{video_id, creative_id}`: AdVideos.add (`url` / `file_path` / `base64`) → poll until `READY` → Creatives.add `VideoExtensionCreative`. If still converting, retry with `video_id`. Attach `creative_id` via `video_extension_ids`. Spec: MP4/WebM/MOV/AVI, 5–60 s, ≥360p, ≤100 MB. Hosted cloud: image = `base64` only; video = `url` (Direct fetches) / `base64` / `video_id`, no `file_path`.
 
 **Cap: ≤3 non‑archived `RESPONSIVE_AD` per group** (error 7001). One combinatorial ad already holds up to 7×3 combinations — one per group is normal. Do **not** explode a pool into 21 single‑title ads (that's the retired model).
 
@@ -99,7 +102,7 @@ Beyond upload, the MCP surgically edits **existing** objects. Each update tool s
 
 - **`update_campaign`** — routes each field to the right place. Campaign top level: `name`, `daily_budget_micros` (manual strategy only), `excluded_sites` (площадки‑исключения РСЯ), `negative_keywords`, `notification` (email under `EmailSettings`, not `.Email`), `time_targeting` (hourly schedule). Inside `UnifiedCampaign`: typed `strategy` (below), `attribution_model` (short codes `LC`/`LSC`/`FC`/`LYDC`/`LSCCD`/`FCCD`/`LYDCCD`/`AUTO`), `settings` toggles, `tracking_params`, `counter_ids`, `priority_goals:[{goal_id, value}]` (value = conversion value / ценность конверсии). ExtendedGeoTargeting = the `settings` options `ENABLE_AREA_OF_INTEREST_TARGETING` / `ENABLE_CURRENT_AREA_TARGETING` / `ENABLE_REGULAR_AREA_TARGETING`. Escape hatches: `raw_fields` / `raw_unified_fields`.
 - **`update_adgroup`** — `name`, `region_ids`, `negative_keywords`, `tracking_params`.
-- **`update_ad`** — a combinatorial `RESPONSIVE_AD`: `titles`, `texts`, `href`, `image_hashes`, `video_extension_ids`, `sitelinks_set_id`, `ad_extensions`, `business_id`. **Pass `ad_id` as a STRING** — ad IDs exceed 2⁵³; a rounded number → error 8800 «Ad not found». Editing creative can re‑trigger moderation.
+- **`update_ad`** — a combinatorial `RESPONSIVE_AD`: `titles`, `texts`, `href`, `image_hashes` (1–5), `carousel_image_hashes` (2–10), `video_extension_ids` (1–6 **CreativeIds** from `upload_video`), `sitelinks_set_id`, `ad_extensions`, `business_id`. **Pass `ad_id` as a STRING of digits** — never a JSON number. Update wraps `VideoExtensionIds` as `{Items:[…]}`. Editing creative can re‑trigger moderation.
 - **`set_bid_modifiers`** (корректировки, `mode: add|set|delete|get`) — `bid_modifier` is a **percent coefficient** (100 = no change, 50 = −50 %, 130 = +30 %). No enable/disable toggle — change via `mode:set`. **On ЕПК only `mobile` / `desktop` / `desktop_only` / `video` apply**; demographics/regional/retargeting are rejected on ЕПК (they belong to classic campaign types).
 - **`negative_keywords_add`** — campaign or group, `mode: replace | append | get`. Prefer `append` (reads + merges + dedupes) so you don't wipe the existing list.
 - **YAML bundle** — optional `epk_settings:` in `_campaign.yaml`, applied **post‑create to every campaign** the strategy creates (при `one-per-cluster` — к каждой `cluster-*` кампании).
@@ -126,6 +129,8 @@ Pick a strategy without hand‑building JSON. `strategy: { type, placement?, wee
 | Area | Tool | ЕПК via API |
 |---|---|---|
 | Create ЕПК / group / combinatorial ad | `create_campaign` / `create_adgroup` / `create_ad_unified` | ✅ |
+| Upload image / video extension | `upload_image` / `upload_video` | ✅ |
+| RSYa carousel (2–10 slides) | `create_ad_unified` / `update_ad` (`carousel_image_hashes`) | ✅ |
 | Budget, bidding strategies, placements, hourly schedule | `create_campaign` + `update_campaign` (typed `strategy`, `time_targeting`) | ✅ |
 | Bid adjustments — device + video | `set_bid_modifiers` | ✅ |
 | Bid adjustments — demographics / regional / retargeting | `set_bid_modifiers` (pass‑through) | ❌ classic campaigns only |
@@ -158,7 +163,11 @@ These read/gateway tools need no live‑mutation flags. For write endpoints reac
 
 ## The big‑int ad‑Id trap
 
-Yandex **ad** IDs exceed JavaScript's `2⁵³` (e.g. `1914841739704982433`). `JSON.parse` silently rounds them, so a delete/moderate/update by a rounded id hits the wrong object or 404s. The MCP tools handle this (they pass ad IDs as strings). If you script against the raw API yourself, read responses as **raw text** and extract the id with a regex, then send it back verbatim — never round‑trip through a JS `Number`. Campaign (~10⁹) and group IDs are safe.
+Yandex **ad** IDs exceed JavaScript's `2⁵³` (e.g. `1914841739704982433`). `JSON.parse` silently rounds them (`…2433` → `…2500`), so a delete/moderate/update by a rounded id hits 8800 «Ad not found» or the wrong object.
+
+**MCP contract:** `ad_id` / `ad_ids` are **strings of digits**. The gateway parses JSON with `parseJsonSafe` (quotes unsafe integers before `JSON.parse`) and rejects already-rounded numbers. Tools stringify the Id on the wire.
+
+If you script the raw API yourself: read responses as **raw text**, extract the id with a regex, send it back **quoted** (`"Id":"1914…2433"`), never as a JSON number. Campaign (~10⁹) and group IDs are safe as numbers.
 
 ## Constraints
 

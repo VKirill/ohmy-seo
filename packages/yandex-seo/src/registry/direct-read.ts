@@ -9,6 +9,7 @@ import { runDirectGetChangeHistory } from "../tools/direct-get-change-history.js
 import { runDirectGetSearchTerms } from "../tools/direct-get-search-terms.js";
 import { runDirectRenderToXlsx } from "../tools/direct-render-to-xlsx.js";
 import { READ_ONLY } from "./_shared.js";
+import { AdIds } from "../lib/ad-id.js";
 
 export function registerDirectRead(server: McpServer): void {
   server.registerTool(
@@ -156,10 +157,9 @@ export function registerDirectRead(server: McpServer): void {
           .array(z.string())
           .optional()
           .describe("Filter by ad type, e.g. TEXT_AD, TEXT_IMAGE_AD (optional)"),
-        ids: z
-          .array(z.number())
-          .optional()
-          .describe("Filter by specific ad IDs (optional)"),
+        ids: AdIds.optional().describe(
+          "Filter by specific ad IDs as strings of digits (optional). Combinatorial Ids exceed JS Number precision — never pass JSON numbers.",
+        ),
         limit: z
           .number()
           .int()
@@ -358,10 +358,9 @@ export function registerDirectRead(server: McpServer): void {
           .array(z.number())
           .optional()
           .describe("Limit change check to these ad group IDs (optional)"),
-        ad_ids: z
-          .array(z.number())
-          .optional()
-          .describe("Limit change check to these ad IDs (optional)"),
+        ad_ids: AdIds.optional().describe(
+          "Limit change check to these ad IDs as strings of digits (optional). Combinatorial Ids exceed JS Number precision.",
+        ),
         field_names: z
           .array(z.enum(["CampaignIds", "AdGroupIds", "AdIds", "CampaignsStat"]))
           .optional()

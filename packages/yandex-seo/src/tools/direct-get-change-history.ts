@@ -1,4 +1,5 @@
 import { executeApiCall } from "../lib/api-gateway.js";
+import { AdIds } from "../lib/ad-id.js";
 import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
 import { z } from "zod";
 
@@ -16,7 +17,7 @@ const InputSchema = z.object({
   since_timestamp: z.string().optional(),
   campaign_ids: z.array(z.number()).optional(),
   ad_group_ids: z.array(z.number()).optional(),
-  ad_ids: z.array(z.number()).optional(),
+  ad_ids: AdIds.optional(),
   field_names: z.array(z.enum(CHANGE_FIELD_NAMES)).optional(),
   account: z.string().optional(),
 });

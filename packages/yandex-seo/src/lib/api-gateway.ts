@@ -48,9 +48,32 @@ export function normalizeBody(body: unknown): unknown {
   const trimmed = body.trim();
   if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return body;
   try {
-    return JSON.parse(trimmed);
+    // Same big-int trap as Response.json(): a 19-digit Direct ad Id in a
+    // JSON *string* body is rounded by JSON.parse before it ever reaches Yandex.
+    return parseJsonSafe(trimmed);
   } catch {
     return body;
+  }
+}
+
+/** Reject already-rounded integer Ids in an object body (JSON-RPC parsed them as Number). */
+export function assertSafeIntegerIds(value: unknown, path = "body"): void {
+  if (typeof value === "number") {
+    if (Number.isInteger(value) && !Number.isSafeInteger(value)) {
+      throw new Error(
+        `${path}=${value} is outside JSON Number precision (max 2^53-1). Pass this Id as a quoted string of digits.`,
+      );
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, i) => assertSafeIntegerIds(item, `${path}[${i}]`));
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      assertSafeIntegerIds(v, `${path}.${k}`);
+    }
   }
 }
 
@@ -83,6 +106,7 @@ export async function executeApiCall(opts: ExecuteOpts): Promise<ExecuteResult> 
   }
 
   const normalizedBody = normalizeBody(opts.body);
+  assertSafeIntegerIds(normalizedBody);
 
   const init: Parameters<typeof request>[1] = {
     method,

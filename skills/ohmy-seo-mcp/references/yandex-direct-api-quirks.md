@@ -29,12 +29,16 @@ Sending `Type: "UNIFIED_AD_GROUP"` (or any `Type`) in the group body returns err
 
 ## 3. Ad Ids exceed 2^53 — never round-trip them through a JS Number
 
-Combinatorial **ad** Ids look like `1914841739704982433` — larger than `Number.MAX_SAFE_INTEGER`. `JSON.parse` / `response.json()` silently rounds them, so a later `delete`/`moderate` by that Id returns **8800** «Объект не найден» (or hits the wrong object). Read ad responses as **raw text** and extract the Id with a regex, pass it back verbatim:
+Combinatorial **ad** Ids look like `1914841739704982433` — larger than `Number.MAX_SAFE_INTEGER`. `JSON.parse` / `response.json()` silently rounds them (`…2433` → `…2500`), so a later `delete`/`moderate`/`update` by that Id returns **8800** «Объект не найден» (or hits the wrong object).
+
+**MCP:** `ad_id` / `ad_ids` are Zod **strings of digits**. Gateway `parseJsonSafe` quotes unsafe integers before parse; already-rounded numbers are rejected. `list_ads` / `update_ad` / `moderate_ads` / change-history keep the exact digits and send `Id` as a string.
+
+If you script the raw API: read as **raw text**, extract digits, send them **quoted**:
 
 ```js
 const body = await resp.text();                  // NOT resp.json()
 const adId = (body.match(/"Id":(\d+)/) || [])[1]; // exact digits as string
-// delete: body string with the exact digits, no Number()
+// update/delete: "Id":"<adId>"  — never a JSON number
 ```
 
 Campaign Ids (~9-digit) and group Ids (~10-digit) are under 2^53 and safe as numbers; only ad Ids need this.
@@ -122,7 +126,9 @@ CounterIds + Metrika goals + conversion value work on ЕПК: `UnifiedCampaign.C
 
 ## 19. `Ads.update` needs a STRING Id; edits can re-trigger moderation
 
-Editing a `RESPONSIVE_AD` via `Ads.update` (v501) hits the same big-int trap as #3: pass `Id` as a **string** or you get 8800 «Ad not found». `runDirectUpdateAd` always stringifies `ad_id`. Only the `ResponsiveAd` sub-fields you pass are changed; changing creative (titles/texts/href/images) can send the ad back to moderation. `Notification.EmailSettings.SendWarnings` may return warning 10165 «Parameter will not be applied» depending on account config — benign, the rest of the update still applies (the tool surfaces `warnings[]`).
+Editing a `RESPONSIVE_AD` via `Ads.update` (v501) hits the same big-int trap as #3: pass `Id` as a **string** or you get 8800 «Ad not found». `runDirectUpdateAd` always stringifies `ad_id`. Only the `ResponsiveAd` sub-fields you pass are changed; changing creative (titles/texts/href/images/carousel/video) can send the ad back to moderation. `Notification.EmailSettings.SendWarnings` may return warning 10165 «Parameter will not be applied» depending on account config — benign, the rest of the update still applies (the tool surfaces `warnings[]`).
+
+**`VideoExtensionIds` on update is `{Items:[CreativeId,…]}`**, not a bare array. Live error 8000: «Ads.ResponsiveAd.VideoExtensionIds cannot contain an array». `create_ad_unified` (Ads.add) still sends a bare array of 1–6 CreativeIds. IDs are **VideoExtension CreativeIds** from `yandex_direct_upload_video` / Creatives.add — not AdVideos hex ids.
 
 ## 22. ЕПК bidding strategies — the strategy lives on ONE side; Search+Network compat is strict
 
@@ -134,3 +140,23 @@ Full ЕПК Search `BiddingStrategyType` enum (live): `AVERAGE_CPC, AVERAGE_CPA,
 - **Daily budget is meaningful only for manual** — an auto strategy with `DailyBudget` warns 10162 «Дневной бюджет имеет смысл только для ручных стратегий»; auto strategies use `WeeklySpendLimit`.
 
 The `create_campaign`/`update_campaign` tools (and bundle `epk_settings`) expose a typed `strategy` param — `{ type: manual|max_clicks|avg_cpc|max_conversions|avg_cpa|pay_for_conversion|avg_crr|pay_for_conversion_crr|serving_off, placement: search|network|both, weekly_budget_micros?, bid_ceiling_micros?, goal_id?, avg_cpc_micros?, avg_cpa_micros?, cpa_micros?, crr? }` — and `buildEpkBiddingStrategy` maps it to a live-compatible `{ Search, Network }`, so you never hand-assemble the pair (the raw `bidding_strategy` escape hatch still exists).
+
+## 23. RSYa carousel is `Carousel.Items[].ImageHash` (not in official EN ads/add)
+
+UI «Карусель»: 2–10 slides, ≥450×450, ≤10 MB. Official EN `Ads.add` omits the field; live `/json/v501/ads` accepts:
+
+```json
+"ResponsiveAd": { "Carousel": { "Items": [{ "ImageHash": "<hash>" }, { "ImageHash": "<hash>" }] } }
+```
+
+Required field name is **`ImageHash`**, not `AdImageHash`. Per-slide `Href` is rejected. This is **not** `AdImageHashes` (1–5 combinatorial images). MCP: `carousel_image_hashes` on `create_ad_unified` / `update_ad`; hashes from `yandex_direct_upload_image`.
+
+## 24. Video extensions: AdVideos → Creatives → VideoExtensionIds
+
+Three live-verified steps (v5 upload/creatives, v501 ads):
+
+1. `POST /json/v5/advideos` add `{AdVideos:[{Url}|{VideoData,Name}]}` → hex `video_id` (queued, Status `NEW`/`CONVERTING`/`READY`/`ERROR` via AdVideos.get).
+2. Wait `READY`, then `POST /json/v5/creatives` add `{Creatives:[{VideoExtensionCreative:{VideoId}}]}` → numeric `creative_id`. Retry if the video is still processing.
+3. Attach 1–6 CreativeIds to the ad: Ads.add `VideoExtensionIds:[…]`; Ads.update `VideoExtensionIds:{Items:[…]}`.
+
+Tool: `yandex_direct_upload_video` (url / file_path / base64, or `video_id` to finish). Do **not** put AdVideos ids into `video_extension_ids`. Spec: MP4/WebM/MOV/AVI, 5–60 s, ≥360p, ≤100 MB.

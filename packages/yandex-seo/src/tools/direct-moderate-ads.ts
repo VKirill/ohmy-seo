@@ -1,4 +1,5 @@
 import { executeApiCall } from "../lib/api-gateway.js";
+import { AdIds } from "../lib/ad-id.js";
 import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
 import { requireConfirmGate, ConfirmGateError } from "../lib/api/confirm-gate.js";
 import { z } from "zod";
@@ -6,8 +7,8 @@ import { z } from "zod";
 const InputSchema = z.object({
   campaign_ids: z.array(z.number().int().positive()).min(1)
     .describe("Campaign IDs whose DRAFT ads should be sent to moderation (required, at least 1)"),
-  ad_ids: z.array(z.union([z.number().int().positive(), z.string().min(1)])).optional()
-    .describe("Explicit Ad IDs to moderate (numbers, or exact-string Ids for big-int ad Ids > 2^53); when omitted, all DRAFT ads of the campaigns are fetched automatically"),
+  ad_ids: AdIds.optional()
+    .describe("Explicit Ad IDs as strings of digits (19-digit combinatorial Ids exceed JS Number precision); when omitted, all DRAFT ads of the campaigns are fetched automatically"),
   confirm: z.boolean().describe("Must be true — explicit intent confirmation required"),
   acknowledge_live: z.string()
     .describe("Exact ack string: I-UNDERSTAND-MODERATE-LIVE:<account_or_default>:<sorted_campaign_ids_csv>"),

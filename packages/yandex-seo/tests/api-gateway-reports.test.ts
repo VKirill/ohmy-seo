@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeBody } from "../src/lib/api-gateway.js";
+import { normalizeBody, assertSafeIntegerIds } from "../src/lib/api-gateway.js";
 import { parseReportTsv } from "../src/lib/api/reports-polling.js";
 
 describe("normalizeBody", () => {
@@ -9,11 +9,30 @@ describe("normalizeBody", () => {
       params: {},
     });
     expect(normalizeBody('[1,2]')).toEqual([1, 2]);
+    expect(normalizeBody('{"method":"update","params":{"Ads":[{"Id":1914841739704982433}]}}')).toEqual({
+      method: "update",
+      params: { Ads: [{ Id: "1914841739704982433" }] },
+    });
+    expect(normalizeBody('{"method":"update","params":{"Ads":[{"Id":"1914841739704982433"}]}}')).toEqual({
+      method: "update",
+      params: { Ads: [{ Id: "1914841739704982433" }] },
+    });
   });
 
   it("preserves ordinary and malformed strings", () => {
     expect(normalizeBody("plain text")).toBe("plain text");
     expect(normalizeBody("{not json}")).toBe("{not json}");
+  });
+});
+
+describe("assertSafeIntegerIds", () => {
+  it("rejects already-rounded integer Ids in object bodies", () => {
+    expect(() => assertSafeIntegerIds({ Id: Number("1914841739704982433") })).toThrow(/quoted string of digits/);
+  });
+
+  it("allows quoted-string Ids, safe integers and fractions", () => {
+    expect(() => assertSafeIntegerIds({ Id: "1914841739704982433" })).not.toThrow();
+    expect(() => assertSafeIntegerIds({ CampaignId: 713665166, ctr: 0.018 })).not.toThrow();
   });
 });
 

@@ -265,4 +265,24 @@ describe("buildResponsiveAdUpdatePayload", () => {
     const ad = payload.params.Ads[0] as Record<string, unknown>;
     expect(ad.ResponsiveAd).toEqual({ Href: "https://only-href.example" });
   });
+
+  it("wires Carousel.Items[].ImageHash on update", () => {
+    const payload = buildResponsiveAdUpdatePayload({
+      ad_id: "1914861097123806822",
+      CarouselImageHashes: ["c1", "c2"],
+    });
+    const ad = payload.params.Ads[0] as Record<string, unknown>;
+    const ra = ad.ResponsiveAd as Record<string, unknown>;
+    expect(ra.Carousel).toEqual({ Items: [{ ImageHash: "c1" }, { ImageHash: "c2" }] });
+  });
+
+  it("wraps VideoExtensionIds as {Items} on update (bare array is rejected live)", () => {
+    const payload = buildResponsiveAdUpdatePayload({
+      ad_id: "1914861097123806822",
+      VideoExtensionIds: [1165964908, 1165964917],
+    });
+    const ad = payload.params.Ads[0] as Record<string, unknown>;
+    const ra = ad.ResponsiveAd as Record<string, unknown>;
+    expect(ra.VideoExtensionIds).toEqual({ Items: [1165964908, 1165964917] });
+  });
 });

@@ -31,6 +31,10 @@ describe('hosted tool authorization', () => {
   it.each(['/../user', '/%2e%2e/user', '/%252e%252e/user', '//evil.test', '/test?method=delete', '/test#x', '/test\\x', '/test%0ax'])('rejects ambiguous endpoint %s', endpoint => {
     expect(() => assertHostedCall('yandex_webmaster_api', { endpoint })).toThrow();
   });
+  it('keeps 19-digit Direct ad Ids when the generic body is a JSON string', () => {
+    const raw = '{"method":"get","params":{"SelectionCriteria":{"Ids":[1914841739704982433]}}}';
+    expect(() => assertHostedCall('yandex_direct_api', { endpoint: '/json/v5/ads', body: raw })).not.toThrow();
+  });
   it('allows Direct reads including JSON strings, legacy params promotion and reports', () => {
     for (const args of [{ body: { method: 'get' } }, { body: '{"method":"get"}' }, { params: { method: 'get' } }]) {
       expect(() => assertHostedCall('yandex_direct_api', { endpoint: '/json/v5/campaigns', ...args })).not.toThrow();
@@ -85,4 +89,11 @@ it('allows image data but rejects server-file and arbitrary-URL uploads', () => 
   for (const args of [{ file_path: '/etc/passwd' }, { url: 'http://127.0.0.1/' }]) {
     expect(() => assertHostedCall('yandex_direct_upload_image', { ...args, confirm: true })).toThrow();
   }
+});
+it('allows Direct-fetched video URLs and base64, rejects server file paths', () => {
+  expect(() => assertHostedCall('yandex_direct_upload_video', { url: 'https://cdn.example/v.mp4', confirm: true })).not.toThrow();
+  expect(() => assertHostedCall('yandex_direct_upload_video', { base64: 'AAAA', confirm: true })).not.toThrow();
+  expect(() => assertHostedCall('yandex_direct_upload_video', { video_id: '6ab6a59cd3856b50316563d2005', confirm: true })).not.toThrow();
+  expect(() => assertHostedCall('yandex_direct_upload_video', { file_path: '/tmp/v.mp4', confirm: true })).toThrow();
+  expect(() => assertHostedCall('yandex_direct_upload_video', { url: 'https://cdn.example/v.mp4', base64: 'AAAA', confirm: true })).toThrow();
 });

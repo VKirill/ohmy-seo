@@ -24,6 +24,12 @@ const InputSchema = z.object({
     .max(5)
     .optional()
     .describe("1–5 AdImageHashes from direct_upload_image (optional; text-only combinatorial ads are allowed)"),
+  carousel_image_hashes: z
+    .array(z.string().min(1))
+    .min(2)
+    .max(10)
+    .optional()
+    .describe("RSYa carousel: 2–10 AdImageHashes from yandex_direct_upload_image (≥450×450, ≤10 MB). Distinct from image_hashes."),
   sitelinks_set_id: z.number().int().positive().optional().describe("Sitelinks set ID (optional)"),
   ad_extensions: z
     .array(z.number().int().positive())
@@ -35,7 +41,7 @@ const InputSchema = z.object({
     .min(1)
     .max(6)
     .optional()
-    .describe("1–6 VideoExtension IDs (optional)"),
+    .describe("1–6 VideoExtension CreativeIds from yandex_direct_upload_video (optional)"),
   business_id: z
     .number()
     .int()
@@ -63,6 +69,7 @@ export async function runDirectCreateAdUnified(input: AdUnifiedInput) {
       Texts: parsed.texts,
       Href: parsed.href,
       AdImageHashes: parsed.image_hashes,
+      CarouselImageHashes: parsed.carousel_image_hashes,
       VideoExtensionIds: parsed.video_extension_ids,
       SitelinkSetId: parsed.sitelinks_set_id,
       AdExtensionIds: parsed.ad_extensions,
@@ -119,6 +126,7 @@ export async function runDirectCreateAdUnified(input: AdUnifiedInput) {
               titles: parsed.titles.length,
               texts: parsed.texts.length,
               images: parsed.image_hashes?.length ?? 0,
+              carousel: parsed.carousel_image_hashes?.length ?? 0,
               has_sitelinks: parsed.sitelinks_set_id !== undefined,
               type: "RESPONSIVE_AD",
               status: "DRAFT",

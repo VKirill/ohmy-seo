@@ -67,7 +67,7 @@ export function registerGateways(server: McpServer): void {
         "MCP_YANDEX_SEO_CACHE_TTL_API, default 3600 s), and error normalisation. " +
         "GET responses are cached; POST/PUT/DELETE bypass cache and invalidate related GET entries. " +
         "Endpoint catalog and usage examples: see skill yandex-direct (cookbook.md). " +
-        "Pass client_login for agency sub-client access.",
+        "Pass client_login for agency sub-client access. Combinatorial ad Ids exceed 2^53 — pass them as quoted strings of digits inside `body`, never as JSON numbers.",
       inputSchema: {
         ...GENERIC_API_INPUT,
         client_login: z.string().optional().describe("Yandex Direct agency client login for sub-client access (optional)"),

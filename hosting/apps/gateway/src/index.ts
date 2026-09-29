@@ -9,6 +9,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { authenticate, pool } from "./tenant.js";
 import { callTool, getRuntime, shutdownAll } from "./runtime.js";
+import { parseJsonSafe } from "./json-safe.js";
 
 const PORT = Number(process.env.PORT ?? 3301);
 
@@ -17,7 +18,8 @@ app.disable("x-powered-by");
 // Exactly one reverse-proxy hop; never trust arbitrary leftmost forwarding headers.
 app.set("trust proxy", 1);
 app.use("/mcp", requestSecurity);
-app.use(express.json({ limit: "256kb" }));
+// Keep 19-digit Direct ad Ids: express.json()/JSON.parse would round them.
+app.use(express.text({ type: "application/json", limit: "256kb" }));
 
 app.get("/healthz", async (_req, res) => {
   try {
@@ -105,7 +107,20 @@ app.post("/mcp", async (req, res) => {
 
   try {
     await server.connect(transport);
-    await transport.handleRequest(req, res, req.body);
+    let rpcBody: unknown = req.body;
+    if (typeof req.body === "string") {
+      if (req.body.length === 0) {
+        res.status(400).json({ jsonrpc: "2.0", error: { code: -32700, message: "Parse error" }, id: null });
+        return;
+      }
+      try {
+        rpcBody = parseJsonSafe(req.body);
+      } catch {
+        res.status(400).json({ jsonrpc: "2.0", error: { code: -32700, message: "Parse error" }, id: null });
+        return;
+      }
+    }
+    await transport.handleRequest(req, res, rpcBody);
   } catch (e) {
     console.error("[mcp] request failed");
     if (!res.headersSent) {

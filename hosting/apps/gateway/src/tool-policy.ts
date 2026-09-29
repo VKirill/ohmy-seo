@@ -1,4 +1,5 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { parseJsonSafe } from "./json-safe.js";
 /** The hosted surface is explicit: SDK readOnlyHint annotations are not authorization. */
 const READ_TOOLS = new Set([
   'list_accounts', 'list_google_accounts', 'list_sites', 'list_counters', 'find_property',
@@ -16,7 +17,7 @@ const READ_TOOLS = new Set([
 ]);
 
 const WRITE_TOOLS = new Set([
-  'yandex_direct_upload_image', 'yandex_direct_create_campaign', 'yandex_direct_create_adgroup',
+  'yandex_direct_upload_image', 'yandex_direct_upload_video', 'yandex_direct_create_campaign', 'yandex_direct_create_adgroup',
   'yandex_direct_create_ad_unified', 'yandex_direct_link_metrika_goals', 'yandex_direct_pause_campaigns',
   'yandex_direct_resume_campaigns', 'yandex_direct_moderate_ads', 'yandex_direct_delete_campaigns',
   'yandex_direct_negative_keywords_add', 'yandex_direct_update_budgets', 'yandex_direct_create_sitelinks_set',
@@ -63,6 +64,11 @@ export function assertHostedCall(name: string, args: Record<string, unknown>): v
   if (!isHostedTool(name)) throw new ToolPolicyError();
   if (WRITE_TOOLS.has(name)) {
     if (name === 'yandex_direct_upload_image' && (args.file_path !== undefined || args.url !== undefined || typeof args.base64 !== 'string')) throw new ToolPolicyError('В облаке передайте изображение через base64; серверные пути и скачивание произвольных URL недоступны.');
+    if (name === 'yandex_direct_upload_video') {
+      if (args.file_path !== undefined) throw new ToolPolicyError('В облаке передайте видео через url (Direct сам скачает) или base64; серверные пути недоступны.');
+      const sources = [typeof args.url === 'string', typeof args.base64 === 'string', typeof args.video_id === 'string'].filter(Boolean).length;
+      if (sources !== 1) throw new ToolPolicyError('В облаке передайте ровно одно из: url, base64, video_id.');
+    }
     // gtm_rollback step 1 only reads versions and stores a short-lived plan; step 2
     // (plan_id + confirm + acknowledge_live) is the write and stays gated.
     const rollbackPreview = name === 'gtm_rollback' && args.confirm !== true && args.plan_id === undefined;
@@ -91,7 +97,7 @@ export function assertHostedCall(name: string, args: Record<string, unknown>): v
   // Match the child's body normalization and params promotion before authorizing.
   let body = args.body ?? args.params;
   if (typeof body === 'string') {
-    try { body = JSON.parse(body); } catch { throw new ToolPolicyError(); }
+    try { body = parseJsonSafe(body); } catch { throw new ToolPolicyError(); }
   }
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new ToolPolicyError();
   const payload = body as Record<string, unknown>;

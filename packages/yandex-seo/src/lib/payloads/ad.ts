@@ -19,8 +19,15 @@
  *   - SitelinkSetId: number   — optional, singular
  *   - AdExtensionIds: number[]— optional, array of IDs directly
  *                              (NOT AdExtensions:{Items})
+ *   - Carousel.Items[].ImageHash — optional RSYa carousel, 2–10 hashes
+ *     (live-verified; official EN ads/add docs omit this field)
  *   - No Title2s (not in ResponsiveAd spec)
  */
+
+function buildCarousel(hashes: string[]): { Items: Array<{ ImageHash: string }> } {
+  return { Items: hashes.slice(0, 10).map((ImageHash) => ({ ImageHash })) };
+}
+
 export function buildResponsiveAdPayload(input: {
   ad_group_id: number;
   Titles: string[];
@@ -31,6 +38,7 @@ export function buildResponsiveAdPayload(input: {
   SitelinkSetId?: number;
   AdExtensionIds?: number[];
   BusinessId?: number;                  // Yandex.Business organization id to attach to the ad
+  CarouselImageHashes?: string[];       // RSYa carousel slides, 2–10 AdImageHashes
 }): { method: "add"; params: { Ads: Array<unknown> } } {
   const responsiveAd: Record<string, unknown> = {
     Titles: input.Titles,
@@ -51,6 +59,9 @@ export function buildResponsiveAdPayload(input: {
   }
   if (input.BusinessId !== undefined) {
     responsiveAd["BusinessId"] = input.BusinessId;
+  }
+  if (input.CarouselImageHashes && input.CarouselImageHashes.length >= 2) {
+    responsiveAd["Carousel"] = buildCarousel(input.CarouselImageHashes);
   }
 
   return {
@@ -79,15 +90,19 @@ export function buildResponsiveAdUpdatePayload(input: {
   SitelinkSetId?: number;
   AdExtensionIds?: number[];
   BusinessId?: number;
+  CarouselImageHashes?: string[];
 }): { method: "update"; params: { Ads: Array<unknown> } } {
   const ra: Record<string, unknown> = {};
   if (input.Titles !== undefined) ra["Titles"] = input.Titles;
   if (input.Texts !== undefined) ra["Texts"] = input.Texts;
   if (input.Href !== undefined) ra["Href"] = input.Href;
   if (input.AdImageHashes !== undefined) ra["AdImageHashes"] = input.AdImageHashes;
-  if (input.VideoExtensionIds !== undefined) ra["VideoExtensionIds"] = input.VideoExtensionIds;
+  if (input.VideoExtensionIds !== undefined) ra["VideoExtensionIds"] = { Items: input.VideoExtensionIds };
   if (input.SitelinkSetId !== undefined) ra["SitelinkSetId"] = input.SitelinkSetId;
   if (input.AdExtensionIds !== undefined) ra["AdExtensionIds"] = input.AdExtensionIds;
   if (input.BusinessId !== undefined) ra["BusinessId"] = input.BusinessId;
+  if (input.CarouselImageHashes !== undefined && input.CarouselImageHashes.length >= 2) {
+    ra["Carousel"] = buildCarousel(input.CarouselImageHashes);
+  }
   return { method: "update", params: { Ads: [{ Id: input.ad_id, ResponsiveAd: ra }] } };
 }

@@ -38,3 +38,4 @@ docs/plans/*/runs/
 
 # Mounted production encryption key; never include in source or build contexts.
 hosting/secrets/
+.gitnexus/

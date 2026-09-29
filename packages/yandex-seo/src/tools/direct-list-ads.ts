@@ -1,4 +1,5 @@
 import { executeApiCall } from "../lib/api-gateway.js";
+import { AdIds } from "../lib/ad-id.js";
 import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
 import { z } from "zod";
 
@@ -8,7 +9,7 @@ const InputSchema = z.object({
   states: z.array(z.string()).optional(),
   statuses: z.array(z.enum(["DRAFT", "MODERATION", "ACCEPTED", "REJECTED"])).optional(),
   types: z.array(z.string()).optional(),
-  ids: z.array(z.number()).optional(),
+  ids: AdIds.optional(),
   limit: z.number().int().positive().max(10000).default(100),
   account: z.string().optional(),
 });
