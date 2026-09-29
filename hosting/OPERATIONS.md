@@ -87,7 +87,7 @@ docker compose build web gateway && docker compose up -d   # выкатить и
 docker compose exec postgres psql -U ohmy_seo -d ohmy_seo
 ```
 
-Обновить версию MCP-серверов: поменять `OHMY_SEO_REF` в `.env` и пересобрать шлюз.
+Обновить версию MCP-серверов: тег на `main`, `OHMY_SEO_REF` в `.env` стека, rsync `hosting/` на `/home/ohmy-seo/stack`, `docker compose build web gateway && docker compose up -d`. Push в git сам прод не обновляет — см. корневой `AGENTS.md` (Ship protocol).
 
 ## Запись в рекламные кабинеты
 

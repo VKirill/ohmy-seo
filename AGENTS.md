@@ -44,3 +44,51 @@ This project is indexed by GitNexus as **ohmy-seo** (7321 symbols, 14263 relatio
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+
+# Ship protocol (MCP + сайт + прод)
+
+Задача не сдана, пока изменения не на **GitHub `main`** и не в **живом** `https://mcp.ohmy-seo.ru/mcp` / `https://ohmy-seo.ru`. Push в git ≠ выкладка: шлюз печёт MCP из **тега** `OHMY_SEO_REF` при `docker compose build`, контейнеры сами не обновляются.
+
+Не спрашивать «нужен commit / push / деплой?». После рабочей правки — сразу все поверхности, коммит, push `main`, тег, выкладка. Не коммитить секреты (`.env`, `hosting/secrets/`) и автоген Next.js `hosting/apps/web/AGENTS.md`, `hosting/apps/web/CLAUDE.md`.
+
+## Поверхности (менять одним заходом)
+
+| Что меняется | Куда ещё |
+|---|---|
+| Инструмент MCP (`packages/*/src`) | реестр тула; тесты |
+| Тул должен быть в облаке | `hosting/apps/gateway/src/tool-policy.ts` (`WRITE_TOOLS` / `READ_TOOLS` + политика url/path/base64) и `hosting/tests/tool-policy.test.ts` |
+| Имя/смысл тула для людей | `README.md`, `skills/ohmy-seo-mcp/SKILL.md`, при API-quirk — `skills/ohmy-seo-mcp/references/yandex-direct-api-quirks.md` |
+| Карточка на сайте | `hosting/apps/web/src/lib/marketing/catalog.ts` |
+
+Локальный stdio-MCP читает исходники пакета. Облачный MCP читает **клон GitHub внутри образа gateway** (`Dockerfile`: `git clone --branch $OHMY_SEO_REF`). Код шлюза и сайта — из каталога стека на VPS (`/home/ohmy-seo/stack` = содержимое `hosting/`), не из `main` само собой.
+
+## Git
+
+1. `detect_changes({scope:"all", repo:"ohmy-seo"})` до коммита (GitNexus).
+2. Коммит в `main`, сообщение — зачем.
+3. `git push origin main`.
+4. Аннотированный тег semver (`v0.10.1`, …) на этот коммит: `git tag -a vX.Y.Z -m "…" && git push origin vX.Y.Z`.
+5. Проставить тот же тег в `hosting/.env.example`, `hosting/compose.yml` (`OHMY_SEO_REF:-…`), `hosting/apps/gateway/Dockerfile` (`ARG OHMY_SEO_REF=…`) — и закоммитить, если ещё не в том же коммите.
+
+`ad_id` комбинаторных объявлений — **строка цифр** (19 знаков > 2⁵³). Не учить агентов передавать JSON-number.
+
+## Прод (обязательно после push тега)
+
+Хост: SSH `ovh-main` (VPS). Стек: `/home/ohmy-seo/stack` (владелец `ohmy-seo`). Docker с `sudo`. Не печатать `.env` и секреты.
+
+```bash
+# с машины разработки, из корня репо:
+rsync -az --exclude '.env' --exclude '.env.*' --exclude 'secrets/' \
+  --exclude 'node_modules/' --exclude '.next/' --exclude 'dist/' --exclude '.gitnexus/' \
+  hosting/ ovh-main:/tmp/ohmy-seo-hosting-sync/
+
+ssh ovh-main 'sudo rsync -a --exclude ".env" --exclude ".env.*" --exclude "secrets/" \
+  /tmp/ohmy-seo-hosting-sync/ /home/ohmy-seo/stack/ && \
+  sudo sed -i "s/^OHMY_SEO_REF=.*/OHMY_SEO_REF=vX.Y.Z/" /home/ohmy-seo/stack/.env && \
+  sudo grep "^OHMY_SEO_REF=" /home/ohmy-seo/stack/.env && \
+  sudo docker compose -f /home/ohmy-seo/stack/compose.yml --project-directory /home/ohmy-seo/stack \
+    build web gateway && \
+  sudo docker compose -f /home/ohmy-seo/stack/compose.yml --project-directory /home/ohmy-seo/stack up -d'
+```
+
+Подставить фактический тег вместо `vX.Y.Z`. Сборка gateway клонирует GitHub — без свежего тега на origin образ останется старым. После `up` проверить `/healthz` и что в `tools/list` облачного MCP есть новые имена. Подробности: `hosting/OPERATIONS.md`, `hosting/AGENTS.md`.
