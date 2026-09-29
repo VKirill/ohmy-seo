@@ -32,7 +32,14 @@ function text(payload: unknown) {
 }
 
 function addItem(data: unknown): Record<string, unknown> | undefined {
-  return ((data as { result?: { AddResults?: Array<Record<string, unknown>> } })?.result?.AddResults)?.[0];
+  const root = data as { result?: { AddResults?: Array<Record<string, unknown>> }; AddResults?: Array<Record<string, unknown>> };
+  return (root?.result?.AddResults ?? root?.AddResults)?.[0];
+}
+
+function nonemptyErrors(item: Record<string, unknown> | undefined): unknown[] | undefined {
+  const e = item?.Errors;
+  if (!Array.isArray(e) || e.length === 0) return undefined;
+  return e;
 }
 
 function topError(data: unknown): unknown {
@@ -100,13 +107,13 @@ export async function runDirectUploadVideo(input: z.infer<typeof InputSchema>) {
       const err = topError(uploaded.data);
       if (err) return text({ error: "AdVideos.add failed", details: err });
       const add = addItem(uploaded.data);
-      const itemErrors = add?.Errors;
-      if (itemErrors) return text({ error: "AdVideos.add failed", errors: itemErrors });
+      const fail = nonemptyErrors(add);
+      if (fail) return text({ error: "AdVideos.add failed", errors: fail });
       const id = add?.Id;
-      if (typeof id !== "string" || id.length === 0) {
+      if ((typeof id !== "string" || id.length === 0) && (typeof id !== "number" || !Number.isFinite(id))) {
         return text({ error: "AdVideos.add returned no Id", details: uploaded.data });
       }
-      videoId = id;
+      videoId = String(id);
     }
 
     let status: string | undefined;
@@ -156,8 +163,8 @@ export async function runDirectUploadVideo(input: z.infer<typeof InputSchema>) {
       const err = topError(created.data);
       if (err) return text({ error: "Creatives.add failed", video_id: videoId, details: err });
       const add = addItem(created.data);
-      const itemErrors = add?.Errors;
-      if (!itemErrors) {
+      const fail = nonemptyErrors(add);
+      if (!fail) {
         const creativeId = add?.Id;
         if (typeof creativeId !== "number" && typeof creativeId !== "string") {
           return text({ error: "Creatives.add returned no Id", video_id: videoId, details: created.data });
@@ -169,7 +176,7 @@ export async function runDirectUploadVideo(input: z.infer<typeof InputSchema>) {
           video_status: "READY",
         });
       }
-      lastCreativeErrors = itemErrors;
+      lastCreativeErrors = fail;
     }
 
     return text({

@@ -65,9 +65,9 @@ export function assertHostedCall(name: string, args: Record<string, unknown>): v
   if (WRITE_TOOLS.has(name)) {
     if (name === 'yandex_direct_upload_image' && (args.file_path !== undefined || args.url !== undefined || typeof args.base64 !== 'string')) throw new ToolPolicyError('В облаке передайте изображение через base64; серверные пути и скачивание произвольных URL недоступны.');
     if (name === 'yandex_direct_upload_video') {
-      if (args.file_path !== undefined) throw new ToolPolicyError('В облаке передайте видео через url (Direct сам скачает) или base64; серверные пути недоступны.');
-      const sources = [typeof args.url === 'string', typeof args.base64 === 'string', typeof args.video_id === 'string'].filter(Boolean).length;
-      if (sources !== 1) throw new ToolPolicyError('В облаке передайте ровно одно из: url, base64, video_id.');
+      if (args.file_path !== undefined || args.base64 !== undefined) throw new ToolPolicyError('В облаке передайте видео через url (Direct сам скачает) или video_id; base64 и серверные пути недоступны — лимит MCP-запроса не тянет файл ролика.');
+      const sources = [typeof args.url === 'string', typeof args.video_id === 'string'].filter(Boolean).length;
+      if (sources !== 1) throw new ToolPolicyError('В облаке передайте ровно одно из: url, video_id.');
     }
     // gtm_rollback step 1 only reads versions and stores a short-lived plan; step 2
     // (plan_id + confirm + acknowledge_live) is the write and stays gated.

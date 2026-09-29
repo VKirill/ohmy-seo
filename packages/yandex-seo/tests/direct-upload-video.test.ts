@@ -21,8 +21,8 @@ function parse(result: { content: Array<{ text: string }> }) {
 const VIDEO_ID = "6ab6a59cd3856b50316563d2005";
 const CREATIVE_ID = 1165964908;
 
-function okAdd(id: string | number) {
-  return { ok: true, status: 200, data: { result: { AddResults: [{ Id: id }] } } };
+function okAdd(id: string | number, extra: Record<string, unknown> = {}) {
+  return { ok: true, status: 200, data: { result: { AddResults: [{ Id: id, Errors: [], ...extra }] } } };
 }
 
 function okGet(status: string) {
@@ -92,6 +92,25 @@ describe("runDirectUploadVideo", () => {
     const out = parse(await runDirectUploadVideo({ video_id: VIDEO_ID }));
     expect(out.error).toBe("Video conversion failed");
     expect(out.video_id).toBe(VIDEO_ID);
+  });
+
+  it("treats empty Errors arrays as success, nonempty as failure", async () => {
+    mockExecuteApiCall
+      .mockResolvedValueOnce(okAdd(VIDEO_ID))
+      .mockResolvedValueOnce(okGet("READY"))
+      .mockResolvedValueOnce(okAdd(CREATIVE_ID));
+    const ok = parse(await runDirectUploadVideo({ url: "https://cdn.example/clip.mp4" }));
+    expect(ok.error).toBeUndefined();
+    expect(ok.creative_id).toBe(CREATIVE_ID);
+
+    mockExecuteApiCall.mockReset();
+    mockExecuteApiCall.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { result: { AddResults: [{ Id: VIDEO_ID, Errors: [{ Code: 8000, Message: "fail" }] }] } },
+    });
+    const bad = parse(await runDirectUploadVideo({ url: "https://cdn.example/clip.mp4" }));
+    expect(bad.error).toBe("AdVideos.add failed");
   });
 
   it("rejects providing both url and video_id", async () => {

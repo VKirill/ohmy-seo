@@ -49,7 +49,7 @@ describe("buildBidModifierAdjustment", () => {
     expect(adj).toEqual({ CampaignId: 712, VideoAdjustment: { BidModifier: 50 } });
   });
 
-  it("demographics → DemographicsAdjustment with Age + Gender", () => {
+  it("demographics → DemographicsAdjustments array (not singular DemographicsAdjustment)", () => {
     const adj = buildBidModifierAdjustment({
       campaign_id: 712,
       type: "demographics",
@@ -59,16 +59,16 @@ describe("buildBidModifierAdjustment", () => {
     });
     expect(adj).toEqual({
       CampaignId: 712,
-      DemographicsAdjustment: { BidModifier: 30, Age: "AGE_25_34", Gender: "GENDER_MALE" },
+      DemographicsAdjustments: [{ BidModifier: 30, Age: "AGE_25_34", Gender: "GENDER_MALE" }],
     });
   });
 
-  it("regional → RegionalAdjustment with RegionId", () => {
+  it("regional → RegionalAdjustments array", () => {
     const adj = buildBidModifierAdjustment({ campaign_id: 712, type: "regional", bid_modifier: 20, region_id: 225 });
-    expect(adj).toEqual({ CampaignId: 712, RegionalAdjustment: { BidModifier: 20, RegionId: 225 } });
+    expect(adj).toEqual({ CampaignId: 712, RegionalAdjustments: [{ BidModifier: 20, RegionId: 225 }] });
   });
 
-  it("retargeting → RetargetingAdjustment with RetargetingConditionId", () => {
+  it("retargeting → RetargetingAdjustments array", () => {
     const adj = buildBidModifierAdjustment({
       campaign_id: 712,
       type: "retargeting",
@@ -77,7 +77,7 @@ describe("buildBidModifierAdjustment", () => {
     });
     expect(adj).toEqual({
       CampaignId: 712,
-      RetargetingAdjustment: { BidModifier: 15, RetargetingConditionId: 9 },
+      RetargetingAdjustments: [{ BidModifier: 15, RetargetingConditionId: 9 }],
     });
   });
 

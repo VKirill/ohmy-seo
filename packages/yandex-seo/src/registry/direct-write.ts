@@ -66,6 +66,7 @@ export function registerDirectWrite(server: McpServer): void {
       description:
         "Upload a video to AdVideos (/json/v5/advideos add) and create a VIDEO_EXTENSION_CREATIVE (/json/v5/creatives add). " +
         "Pass url (Direct fetches it), local file_path, or base64 — or video_id to finish a converting upload. " +
+        "Hosted MCP: url or video_id only (no base64 — body limit). " +
         "Returns { video_id, creative_id, video_status }. Use creative_id in video_extension_ids on create_ad_unified / update_ad (1–6). " +
         "Requirements: MP4/WebM/MOV/AVI, 5–60 s, ≥360p, ≤100 MB. Converting videos may need a second call with video_id.",
       inputSchema: {

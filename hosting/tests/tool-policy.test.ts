@@ -90,10 +90,10 @@ it('allows image data but rejects server-file and arbitrary-URL uploads', () => 
     expect(() => assertHostedCall('yandex_direct_upload_image', { ...args, confirm: true })).toThrow();
   }
 });
-it('allows Direct-fetched video URLs and base64, rejects server file paths', () => {
+it('allows Direct-fetched video URLs and video_id, rejects files and base64', () => {
   expect(() => assertHostedCall('yandex_direct_upload_video', { url: 'https://cdn.example/v.mp4', confirm: true })).not.toThrow();
-  expect(() => assertHostedCall('yandex_direct_upload_video', { base64: 'AAAA', confirm: true })).not.toThrow();
   expect(() => assertHostedCall('yandex_direct_upload_video', { video_id: '6ab6a59cd3856b50316563d2005', confirm: true })).not.toThrow();
+  expect(() => assertHostedCall('yandex_direct_upload_video', { base64: 'AAAA', confirm: true })).toThrow();
   expect(() => assertHostedCall('yandex_direct_upload_video', { file_path: '/tmp/v.mp4', confirm: true })).toThrow();
-  expect(() => assertHostedCall('yandex_direct_upload_video', { url: 'https://cdn.example/v.mp4', base64: 'AAAA', confirm: true })).toThrow();
+  expect(() => assertHostedCall('yandex_direct_upload_video', { url: 'https://cdn.example/v.mp4', video_id: 'x', confirm: true })).toThrow();
 });

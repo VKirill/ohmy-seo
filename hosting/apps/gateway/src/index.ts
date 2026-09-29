@@ -19,7 +19,7 @@ app.disable("x-powered-by");
 app.set("trust proxy", 1);
 app.use("/mcp", requestSecurity);
 // Keep 19-digit Direct ad Ids: express.json()/JSON.parse would round them.
-app.use(express.text({ type: "application/json", limit: "256kb" }));
+app.use(express.text({ type: "application/json", limit: "16mb" }));
 
 app.get("/healthz", async (_req, res) => {
   try {

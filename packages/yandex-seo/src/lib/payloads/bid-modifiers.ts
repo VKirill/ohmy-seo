@@ -67,11 +67,11 @@ export function buildBidModifierAdjustment(a: {
     case "video":
       return { ...scope, VideoAdjustment: { BidModifier: bm } };
     case "demographics":
-      return { ...scope, DemographicsAdjustment: { BidModifier: bm, ...(a.age ? { Age: a.age } : {}), ...(a.gender ? { Gender: a.gender } : {}) } };
+      return { ...scope, DemographicsAdjustments: [{ BidModifier: bm, ...(a.age ? { Age: a.age } : {}), ...(a.gender ? { Gender: a.gender } : {}) }] };
     case "regional":
-      return { ...scope, RegionalAdjustment: { BidModifier: bm, RegionId: a.region_id } };
+      return { ...scope, RegionalAdjustments: [{ BidModifier: bm, RegionId: a.region_id }] };
     case "retargeting":
-      return { ...scope, RetargetingAdjustment: { BidModifier: bm, RetargetingConditionId: a.retargeting_condition_id } };
+      return { ...scope, RetargetingAdjustments: [{ BidModifier: bm, RetargetingConditionId: a.retargeting_condition_id }] };
     case "raw":
       return { ...scope, ...(a.raw_adjustment ?? {}) };
   }
