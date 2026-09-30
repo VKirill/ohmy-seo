@@ -10,11 +10,11 @@ drafts/<client>/<theme>/
   group-….yaml
 ```
 
-Tool: **`yandex_direct_upload_from_yaml`**
+Tool: **`yandex_direct_upload_from_yaml`** *(только локальный stdio MCP: читает локальную файловую систему; в облачном шлюзе недоступен)*
 
 | Параметр | Смысл |
 |---|---|
-| `folder` | абсолютный путь к этой папке |
+| `folder` | абсолютный путь к этой папке на локальной машине |
 | `dry_run: true` (default) | план + `plan_hash`, без live |
 | `dry_run: false` + `plan_hash` + `confirm` + `acknowledge_live` | live-загрузка |
 | `account` / `client_login` | кабинет / агентский подклиент |
@@ -137,6 +137,10 @@ epk_settings:
     placement: both
     goal_id: 111
     cpa_micros: 5000000
+    search_placements:             # optional: Места показа на поиске для ЕПК
+      search_results: true
+      maps: false
+      product_gallery: true
   bid_modifiers:
     - { type: mobile, bid_modifier: 75 }
     - { type: video, bid_modifier: 110 }
@@ -155,10 +159,10 @@ group:
   Name: "1_turnkey-fahverk"        # префикс до _ → cluster_id, если нет _meta
   Type: TEXT_AD_GROUP              # schema enum; API v501 Type на group НЕ шлёт
   RegionIds: [1]                   # гео на группе, не на кампании
-  AutoTargetingCategories:         # optional
+  AutoTargetingCategories:         # optional (категории API: EXACT, ALTERNATIVE, COMPETITOR, BROADER, ACCESSORY)
     Items:
-      - { Category: TARGET_QUERIES, Value: "YES" }
-      - { Category: BROAD_MATCH, Value: "NO" }
+      - { Category: EXACT, Value: "YES" }
+      - { Category: BROADER, Value: "NO" }
 
 keywords:
   - { Keyword: "фахверк под ключ" }

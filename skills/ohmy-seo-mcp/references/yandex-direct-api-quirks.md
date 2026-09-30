@@ -77,11 +77,11 @@ Yandex does **not** enforce unique names. Retrying a non-idempotent upload creat
 
 ## 12. `Keywords.add` is for targeting, not minus-words
 
-Plain `Keywords.add` adds **targeting** keywords. For negative keywords use `runDirectNegativeKeywordsAdd({ account:'<account>', target:{ ad_group_id: gid }, keywords:[...], confirm:true })` — it calls `AdGroups.update` with `NegativeKeywords.Items`.
+Plain `Keywords.add` adds **targeting** keywords. For negative keywords use the MCP tool `yandex_direct_negative_keywords_add({ target: { ad_group_id: gid }, keywords: [...], mode: "append", confirm: true })` — it calls `AdGroups.update` with `NegativeKeywords.Items` (or `Campaigns.update` for `{ campaign_id: cid }`).
 
-## 13. `account-resolver` reports a missing scope that IS granted
+## 13. `account-resolver` scope resolution and multi-account selection
 
-The MCP `account-resolver` throws `Account '<account>' lacks required scope 'direct:api'` even though `direct:api` is in `scopes_granted`. Bypass it: `getAccessToken(<account_id>)` + call the endpoint directly (or `runYandexDirectApi({ account: <account_id>, ... })`).
+If multiple accounts are connected and none is marked as default, or if scopes were registered without `direct:api`, `account-resolver` reports that the account lacks the required scope or prompts to specify one. Pass the explicit `account` label to the tool (and `client_login` for agency sub-cabinets). Or invoke the raw gateway `yandex_direct_api({ account: "<account_label>", client_login: "...", endpoint: "...", params: { ... } })`.
 
 ## 14. Reports/date ranges use the cabinet timezone
 
@@ -116,6 +116,12 @@ Tool `runDirectUpdateCampaign` routes each field for you; use `raw_fields` / `ra
 
 Every candidate — `FrequencyCap`, `NetworkFrequencyCap`, at campaign level or inside `UnifiedCampaign` — is rejected as 8000 «unknown parameter». Частота показов can only be set in the UI for ЕПК. Do not promise it via the API.
 
+## 19. `Ads.update` needs a STRING Id; edits can re-trigger moderation
+
+Editing a `RESPONSIVE_AD` via `Ads.update` (v501) hits the same big-int trap as #3: pass `Id` as a **string** or you get 8800 «Ad not found». `runDirectUpdateAd` always stringifies `ad_id`. Only the `ResponsiveAd` sub-fields you pass are changed; changing creative (titles/texts/href/images/video) can send the ad back to moderation. Carousel is not an update field — see §23. `Notification.EmailSettings.SendWarnings` may return warning 10165 «Parameter will not be applied» depending on account config — benign, the rest of the update still applies (the tool surfaces `warnings[]`).
+
+**`VideoExtensionIds` on update is `{Items:[CreativeId,…]}`**, not a bare array. Live error 8000: «Ads.ResponsiveAd.VideoExtensionIds cannot contain an array». `create_ad_unified` (Ads.add) still sends a bare array of 1–6 CreativeIds. IDs are **VideoExtension CreativeIds** from `yandex_direct_upload_video` / Creatives.add — not AdVideos hex ids.
+
 ## 20. Товарные фиды — `Feeds.get` needs Ids OR no SelectionCriteria; `Status` = moderation
 
 `/json/v5/feeds` runs the product-feed service (add/get/update/delete). Quirk: `Feeds.get` with an **empty** `SelectionCriteria: {}` errors 8000 «Omitted required parameter Ids». To **list all** feeds, OMIT `SelectionCriteria` entirely; to fetch specific ones, pass `SelectionCriteria: { Ids: [...] }`. Valid `FieldNames`: `Id, Name, BusinessType, SourceType, FilterSchema, UpdatedAt, CampaignIds, NumberOfItems, NumberOfListings, Status, TitleAndTextSources, Fields` — the **`Status`** field is the feed processing/moderation state (e.g. `NEW`). `Feeds.add` shape: `{ Name, BusinessType, SourceType:"URL", UrlFeed:{Url,…} }` or `SourceType:"FILE", FileFeed:{Filename,Data(base64)}`. The API normalises an unrecognised `BusinessType` to `OTHER`. Tool: `runDirectFeeds({ mode:"add"|"get"|"update"|"delete", … })`. «Мастер кампаний» has no dedicated API create type; `SmartCampaign` / `CpmBannerCampaign` containers ARE accepted (need a valid Search+Network strategy), `DynamicTextCampaign` returns 3500 «creation not supported».
@@ -123,12 +129,6 @@ Every candidate — `FrequencyCap`, `NetworkFrequencyCap`, at campaign level or 
 ## 21. `PriorityGoals` on UPDATE require `Operation:"SET"` (create must NOT send it)
 
 CounterIds + Metrika goals + conversion value work on ЕПК: `UnifiedCampaign.CounterIds:{Items}` and `UnifiedCampaign.PriorityGoals:{Items:[{GoalId, Value}]}` (Value = ценность/стоимость конверсии in account-currency micros). Asymmetry: on **create** the PriorityGoals items take NO `Operation`; on **update** each item MUST carry `Operation:"SET"` — `ADD`/`REMOVE` return 3500 «only the SET operation is supported» and omitting it returns 8000 «Operation omitted». For conversion-cost bidding, `PAY_FOR_CONVERSION{Cpa,GoalId}` and `AVERAGE_CPA{AverageCpa,GoalId}` are structurally accepted (they reach «goal not found» with a fake goal — i.e. valid shape). The `create_campaign`/`update_campaign` tools expose `priority_goals:[{goal_id, value?}]` and handle the Operation asymmetry for you; the goal must exist in a linked counter.
-
-## 19. `Ads.update` needs a STRING Id; edits can re-trigger moderation
-
-Editing a `RESPONSIVE_AD` via `Ads.update` (v501) hits the same big-int trap as #3: pass `Id` as a **string** or you get 8800 «Ad not found». `runDirectUpdateAd` always stringifies `ad_id`. Only the `ResponsiveAd` sub-fields you pass are changed; changing creative (titles/texts/href/images/video) can send the ad back to moderation. Carousel is not an update field — see §23. `Notification.EmailSettings.SendWarnings` may return warning 10165 «Parameter will not be applied» depending on account config — benign, the rest of the update still applies (the tool surfaces `warnings[]`).
-
-**`VideoExtensionIds` on update is `{Items:[CreativeId,…]}`**, not a bare array. Live error 8000: «Ads.ResponsiveAd.VideoExtensionIds cannot contain an array». `create_ad_unified` (Ads.add) still sends a bare array of 1–6 CreativeIds. IDs are **VideoExtension CreativeIds** from `yandex_direct_upload_video` / Creatives.add — not AdVideos hex ids.
 
 ## 22. ЕПК bidding strategies — the strategy lives on ONE side; Search+Network compat is strict
 
@@ -174,3 +174,21 @@ Tool: `yandex_direct_upload_video` (url / file_path / base64, or `video_id` to f
 - В `Campaigns.update` при обновлении необходимо сохранять текущие параметры поисковой автостратегии и передавать обновлённый `PlacementTypes`.
 - Нельзя отключить все места показа одновременно (хотя бы одно должно быть `"YES"`).
 - Инструменты: `yandex_direct_set_placements` (action: "get" / "set"), `yandex_direct_get_campaign_details` (автоматически включает PlacementTypes), `yandex_direct_update_campaign` (параметр `search_placements`).
+
+## 26. `link_metrika_goals` vs `update_campaign` на ЕПК — привязка счетчиков и целей
+
+Утилита `yandex_direct_link_metrika_goals` была написана для классических `TEXT_CAMPAIGN` на эндпоинте `/json/v5/campaigns`. Она оборачивает параметры в `TextCampaign` и использует устаревшие стратегии (`WB_DAILY_BUDGET`, `AVERAGE_ROI`), которых нет в ЕПК.
+- **Попытка вызвать `yandex_direct_link_metrika_goals` на ЕПК-кампании** возвращает ошибку 8000 или обновляет не те поля.
+- **Для ЕПК (`UNIFIED_CAMPAIGN`) правильный инструмент — `yandex_direct_update_campaign`**:
+  - `counter_ids: [12345678]` — передаёт `UnifiedCampaign.CounterIds.Items`.
+  - `priority_goals: [{ goal_id: 111, value: 5000000 }]` — передаёт `UnifiedCampaign.PriorityGoals.Items` с обязательным в v501 полем `Operation: "SET"`.
+  - При необходимости оптимизации конверсионной автостратегии (`max_conversions`, `avg_cpa`, `pay_for_conversion`) — указывать `goal_id` прямо в блоке `strategy: { ... }`.
+
+## 27. Автотаргетинг на группах ЕПК — служебная фраза `---autotargeting`
+
+В Yandex Direct автотаргетинг группы объявлений представлен не как отдельный эндпоинт, а как служебная ключевая фраза со специальным значением `---autotargeting` в сервисе `Keywords`.
+- При создании группы объявлений в ЕПК автотаргетинг создаётся автоматически.
+- Для обновления категорий автотаргетинга используется метод `Keywords.update` (инструмент `yandex_direct_update_adgroup_autotargeting`).
+- **Категории API:** `EXACT` (целевые запросы), `ALTERNATIVE` (альтернативные), `COMPETITOR` (запросы с упоминанием конкурентов), `BROADER` (сопутствующие / широкие запросы), `ACCESSORY` (запросы с упоминанием аксессуаров).
+- **Устаревшие имена:** имя `TARGET_QUERIES` не имеет аналога среди категорий фраз и отбрасывается; `BROAD_MATCH` транслируется в `BROADER`; `EXACT_MENTION` транслируется в `EXACT`.
+- **Ошибка 5005:** «Запрещено выключать все категории в автотаргетинге». Хотя бы одна категория должна оставаться `"YES"`. Категория `EXACT` охраняется от случайного отключения.

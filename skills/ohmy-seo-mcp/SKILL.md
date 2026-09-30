@@ -25,18 +25,18 @@ Prefer these **typed MCP tools** — they embed the quirks (v501 endpoints, big�
 
 | Job | Tool(s) (реальные MCP-имена) |
 |---|---|
-| **Inspect / read** (no gate) | `yandex_direct_list_campaigns`, `…_list_adgroups`, `…_list_ads`, `…_list_keywords`, `…_get_stats`, `…_get_search_terms`, `…_get_change_history`; get-modes of `…_feeds`, `…_set_bid_modifiers`, `…_negative_keywords_add` |
-| **Build from YAML folder** | `yandex_direct_upload_from_yaml` — **папка** с `_campaign.yaml` + `group-*.yaml`; dry‑run → `plan_hash` → live; `epk_settings` post‑create |
-| **Build from CSV** | `yandex_direct_upload_campaign_bundle` |
-| **Create piece‑by‑piece (DRAFT)** | `yandex_direct_create_campaign`, `…_create_adgroup`, `…_create_ad_unified`, `…_create_sitelinks_set`, `…_create_promo_extension`, `…_upload_image`, `…_upload_video` |
+| **Inspect / read** (no gate) | `yandex_direct_list_campaigns`, `…_get_campaign_details` (полные настройки: стратегия, placements, цели, счетчики), `…_list_adgroups`, `…_list_ads`, `…_list_keywords`, `…_get_stats`, `…_get_search_terms`, `…_get_change_history`; get-mode `…_set_placements`, `…_feeds`, `…_set_bid_modifiers`, `…_negative_keywords_add` |
+| **Build from YAML folder** *(local stdio only)* | `yandex_direct_upload_from_yaml` — **папка** с `_campaign.yaml` + `group-*.yaml`; dry‑run → `plan_hash` → live; `epk_settings` post‑create (требует локальную ФС) |
+| **Build from CSV** *(local stdio only)* | `yandex_direct_upload_campaign_bundle` |
+| **Create piece‑by‑piece (DRAFT)** | `yandex_direct_create_campaign`, `…_create_adgroup`, `…_create_ad_unified`, `…_create_sitelinks_set`, `…_create_promo_extension`, `…_upload_image` *(в облаке base64)*, `…_upload_video` *(в облаке url или video_id)* |
 | **Point‑edit live objects** | `yandex_direct_update_campaign`, `…_update_adgroup`, `…_update_ad`, `…_update_budgets`, `…_update_adgroup_autotargeting`, `…_set_placements` |
-| **Targeting & corrections** | `yandex_direct_set_bid_modifiers`, `…_negative_keywords_add`, `…_link_metrika_goals` |
+| **Targeting & corrections** | `yandex_direct_set_bid_modifiers`, `…_negative_keywords_add`, `…_update_campaign` (`counter_ids` + `priority_goals`); *(legacy: `yandex_direct_link_metrika_goals` — только для classic TEXT_CAMPAIGN, не для ЕПК!)* |
 | **Product feeds** | `yandex_direct_feeds` |
 | **Lifecycle** | `yandex_direct_pause_campaigns`, `…_resume_campaigns`, `…_moderate_ads`, `…_delete_campaigns` |
-| **XLSX preview** | `yandex_direct_render_to_xlsx` `{ folder }` |
+| **XLSX preview** *(local stdio only)* | `yandex_direct_render_to_xlsx` `{ folder }` |
 | **Anything else** | `yandex_direct_api` — raw gateway v5/v501 |
 
-**Typical flows.** New → `yandex_direct_upload_from_yaml` *or* piece-by-piece create → verify → *(human OK)* → `yandex_direct_moderate_ads`. Tune → `update_*` + `set_bid_modifiers` + `negative_keywords_add`. Conversions → `update_campaign` + typed `strategy` + `counter_ids` + `priority_goals`.
+**Typical flows.** New → `yandex_direct_upload_from_yaml` (локально) *or* piece-by-piece create → verify → *(human OK)* → `yandex_direct_moderate_ads`. Tune → `update_*` + `set_placements` + `set_bid_modifiers` + `negative_keywords_add`. Conversions & Goals (ЕПК) → `update_campaign` + typed `strategy` + `counter_ids` + `priority_goals` (НЕ использовать legacy `link_metrika_goals`).
 
 ### YAML folder model (важно — не путать)
 
@@ -99,13 +99,15 @@ Everything is **v501**. Order: **Campaign → AdGroup → images/videos (optiona
 
 Beyond upload, the MCP surgically edits **existing** objects. Each update tool sends **only the fields you pass**; array fields (`excluded_sites`, `negative_keywords`, `region_ids`) are a **full replace** (pass `[]` to clear).
 
-- **`update_campaign`** — routes each field to the right place. Campaign top level: `name`, `daily_budget_micros` (manual strategy only), `excluded_sites` (площадки‑исключения РСЯ), `negative_keywords`, `notification` (email under `EmailSettings`, not `.Email`), `time_targeting` (hourly schedule). Inside `UnifiedCampaign`: typed `strategy` (below), `attribution_model` (short codes `LC`/`LSC`/`FC`/`LYDC`/`LSCCD`/`FCCD`/`LYDCCD`/`AUTO`), `settings` toggles, `tracking_params`, `counter_ids`, `priority_goals:[{goal_id, value}]` (value = conversion value / ценность конверсии). ExtendedGeoTargeting = the `settings` options `ENABLE_AREA_OF_INTEREST_TARGETING` / `ENABLE_CURRENT_AREA_TARGETING` / `ENABLE_REGULAR_AREA_TARGETING`. Escape hatches: `raw_fields` / `raw_unified_fields`.
+- **`update_campaign`** — routes each field to the right place. Campaign top level: `name`, `daily_budget_micros` (manual strategy only; auto strategies use `weekly_budget_micros` inside `strategy`), `excluded_sites` (площадки‑исключения РСЯ), `negative_keywords` (полная замена списка; для добавления используйте `negative_keywords_add`), `notification` (email under `EmailSettings`, not `.Email`), `time_targeting` (hourly schedule). Inside `UnifiedCampaign`: typed `strategy` (below), `search_placements` (Места показа: `search_results`, `maps`, `product_gallery`, `dynamic_places`, `search_organization_list` — если стратегия не передана, подгружает текущую и точечно обновляет флаги), `attribution_model` (short codes `LC`/`LSC`/`FC`/`LYDC`/`LSCCD`/`FCCD`/`LYDCCD`/`AUTO`), `settings` toggles, `tracking_params`, `counter_ids`, `priority_goals:[{goal_id, value}]` (value = conversion value / ценность конверсии в micros; на update автоматически передаётся с `Operation: "SET"`). ExtendedGeoTargeting = options `ENABLE_AREA_OF_INTEREST_TARGETING` / `ENABLE_CURRENT_AREA_TARGETING` / `ENABLE_REGULAR_AREA_TARGETING`. Escape hatches: `raw_fields` / `raw_unified_fields`.
 - **`update_adgroup`** — `name`, `region_ids`, `negative_keywords`, `tracking_params`.
+- **`update_adgroup_autotargeting`** — точечная настройка автотаргетинга группы объявлений. Находит служебную фразу `---autotargeting` группы и вызывает `Keywords.update`. Валидные категории API: `EXACT` (целевые), `ALTERNATIVE` (альтернативные), `COMPETITOR` (конкуренты), `BROADER` (сопутствующие / широкие), `ACCESSORY` (аксессуары). Устаревшее имя `TARGET_QUERIES` не имеет аналога в API и отбрасывается; `BROAD_MATCH` мапится в `BROADER`. Правило Яндекса: запрещено выключать все категории одновременно (ошибка 5005); категория `EXACT` защищена от случайного выключения.
 - **`update_ad`** — a combinatorial `RESPONSIVE_AD`: `titles`, `texts`, `href`, `image_hashes` (1–5), `video_extension_ids` (1–6 **CreativeIds** from `upload_video`), `sitelinks_set_id`, `ad_extensions`, `business_id`. **`carousel_image_hashes` is rejected** (`CAROUSEL_UI_ONLY`) — Direct Ads.add/update have no `Carousel`. **Pass `ad_id` as a STRING of digits** — never a JSON number. Update wraps `VideoExtensionIds` as `{Items:[…]}`. Editing creative can re‑trigger moderation.
-- **`set_placements`** — view or update ЕПК search placement types (Места показа: `search_results`, `maps`, `product_gallery`, `dynamic_places`, `search_organization_list`). `action: "get"` is read-only inspection (no confirm required); `action: "set"` updates `BiddingStrategy.Search.PlacementTypes` while preserving existing strategy settings. Requires `confirm: true` for mutations.
+- **`set_placements`** — view or update ЕПК search placement types (Места показа: `search_results`, `maps`, `product_gallery`, `dynamic_places`, `search_organization_list`). `action: "get"` (или вызов без флагов площадок) — чтение текущих мест показа (read-only, `confirm` не нужен); `action: "set"` — обновление `BiddingStrategy.Search.PlacementTypes` с сохранением параметров текущей поисковой стратегии (требует `confirm: true`).
 - **`set_bid_modifiers`** (корректировки, `mode: add|set|delete|get`) — `bid_modifier` is a **percent coefficient** (100 = no change, 50 = −50 %, 130 = +30 %). No enable/disable toggle — change via `mode:set`. **On ЕПК only `mobile` / `desktop` / `desktop_only` / `video` apply**; demographics/regional/retargeting belong to classic types. On `add` their API keys are plural arrays: `DemographicsAdjustments` / `RegionalAdjustments` / `RetargetingAdjustments` (singular is unknown parameter). `get` still uses `DemographicsAdjustmentFieldNames`.
 - **`negative_keywords_add`** — campaign or group, `mode: replace | append | get`. Prefer `append` (reads + merges + dedupes) so you don't wipe the existing list.
-- **YAML bundle** — optional `epk_settings:` in `_campaign.yaml`, applied **post‑create to every campaign** the strategy creates (при `one-per-cluster` — к каждой `cluster-*` кампании).
+- **`link_metrika_goals` (⚠️ ВНИМАНИЕ: legacy)** — инструмент для классических `TEXT_CAMPAIGN` (`/json/v5/campaigns`, стратегии `WB_DAILY_BUDGET`, `AVERAGE_ROI`). **НЕ использовать на ЕПК (`UNIFIED_CAMPAIGN`)** — вызовет ошибку схемы или запишет поля в несуществующий `TextCampaign`. Для ЕПК привязка целей и счетчиков выполняется через `update_campaign` (`counter_ids` + `priority_goals`).
+- **YAML bundle** — optional `epk_settings:` in `_campaign.yaml`, applied **post‑create to every campaign** the strategy creates (при `one-per-cluster` — к каждой `cluster-*` кампании). Поддерживает `strategy` (включая `search_placements`), `bid_modifiers`, `counter_ids`, `priority_goals`, `negative_keywords`, `excluded_sites`.
 
 ### Typed bidding `strategy`
 
@@ -132,6 +134,8 @@ Pick a strategy without hand‑building JSON. `strategy: { type, placement?, wee
 | Upload image / video extension | `upload_image` / `upload_video` | ✅ |
 | RSYa carousel (2–10 slides) | — (Direct UI / bulk actions) | ❌ not in Ads.add/update |
 | Budget, bidding strategies, placements, hourly schedule | `create_campaign` + `update_campaign` (typed `strategy`, `search_placements`, `time_targeting`) + `set_placements` | ✅ |
+| Inspect full campaign settings & placements | `get_campaign_details` (`v501` for ЕПК) | ✅ |
+| Auto-targeting categories | `update_adgroup_autotargeting` (`EXACT`/`ALTERNATIVE`/`COMPETITOR`/`BROADER`/`ACCESSORY`) | ✅ |
 | Bid adjustments — device + video | `set_bid_modifiers` | ✅ |
 | Bid adjustments — demographics / regional / retargeting | `set_bid_modifiers` (pass‑through) | ❌ classic campaigns only |
 | Excluded network sites, negative keywords, attribution, extended geo, notifications | `update_campaign` | ✅ |
@@ -151,6 +155,17 @@ The same server also fronts the other Yandex APIs and some housekeeping tools:
 - **Cache**: `cache_stats` (size + top tools), `invalidate_cache` (clear entries by tool/account/age). GET results are cached with TTL `MCP_YANDEX_SEO_CACHE_TTL_API` (default 3600 s); mutating calls auto‑invalidate related GETs.
 
 These read/gateway tools need no live‑mutation flags. For write endpoints reached through the Metrika/Webmaster gateways, apply the same caution as any live mutation.
+
+### Companion packages in the ohmy-seo monorepo
+
+When working across multiple platforms, use the sister MCP packages:
+- **Google Search Console (`@ohmy-seo/google-search-console` / `mcp-gsc`)**: `gsc_search_analytics` (clicks, impressions, CTR, position), `gsc_url_inspection` (indexing state), `gsc_list_sites`, `gsc_list_sitemaps`, `gsc_submit_sitemap`.
+- **Google Analytics 4 (`@ohmy-seo/ga4` / `mcp-ga4`)**: `ga4_run_report`, `ga4_run_realtime_report`, `ga4_batch_run_reports`, `ga4_run_pivot_report`, `ga4_list_properties`, `ga4_get_metadata`, `ga4_list_custom_dimensions`, `ga4_list_conversion_events`.
+- **Google Tag Manager (`@ohmy-seo/gtm` / `mcp-gtm`)**: `gtm_list_containers`, `gtm_list_workspaces`, `gtm_list_tags`, `gtm_create_tag`, `gtm_update_tag`, `gtm_delete_tag`, `gtm_create_version`, `gtm_publish_version`, `gtm_rollback`.
+- **Google Ads (`@ohmy-seo/google-ads` / `mcp-google-ads`)**: 44 tools for GAQL queries, reports, campaigns, and mutations with two-step safety gating.
+- **Mutagen (`@ohmy-seo/mutagen` / `mcp-mutagen`)**: `mutagen_competition` (keyword competition & search volume), `mutagen_parser_mass`, `mutagen_serp_report`.
+- **XMLStock (`@ohmy-seo/xmlstock` / `mcp-xmlstock`)**: `xmlstock_yandex_serp`, `xmlstock_google_serp`, `xmlstock_archive_search`, `xmlstock_usage_stats` (live and historical SERP).
+- **Roistat (`@ohmy-seo/roistat` / `mcp-roistat`)**: read-only multi-channel attribution and analytics reporting.
 
 ## Safety gate
 
@@ -173,7 +188,11 @@ If you script the raw API yourself: read responses as **raw text**, extract the 
 
 - **NEVER** build a classic `TextAd`/`TextImageAd` — combinatorial `RESPONSIVE_AD` in a `UNIFIED_CAMPAIGN` only.
 - **NEVER** post a combinatorial ad into a `TEXT_CAMPAIGN` (accepted but never serves on search).
+- **NEVER** use `yandex_direct_link_metrika_goals` on a ЕПК (`UNIFIED_CAMPAIGN`) — use `yandex_direct_update_campaign` (`counter_ids` + `priority_goals`).
 - **NEVER** send `Type` in `AdGroups.add` on v501.
+- **NEVER** turn off all auto-targeting categories simultaneously (error 5005) or send legacy `TARGET_QUERIES`.
+- **NEVER** turn off all search placement types simultaneously on ЕПК (at least one must be `YES`).
+- **NEVER** call filesystem-based tools (`upload_from_yaml`, `render_to_xlsx`, `file_path`) over the hosted cloud MCP gateway.
 - **NEVER** round‑trip an ad Id through a JS `Number`.
 - **NEVER** hardcode `Currency:"RUB"` or a ruble floor — resolve the account currency and read minimums from `Dictionaries.get{Currencies}`.
 - **NEVER** run a mutating call without both `*_ALLOW_LIVE_MUTATIONS` flags **and** an explicit per‑turn human OK.
@@ -184,5 +203,5 @@ If you script the raw API yourself: read responses as **raw text**, extract the 
 
 ## Reference
 
-- [`references/yandex-direct-api-quirks.md`](references/yandex-direct-api-quirks.md) — the full set of live‑verified API gotchas (v501‑only ads, big‑int IDs, bid‑modifier ЕПК matrix, strategy compatibility, `PriorityGoals` Operation, feeds, etc.). Read it before writing production Direct code.
+- [`references/yandex-direct-api-quirks.md`](references/yandex-direct-api-quirks.md) — the full set of live‑verified API gotchas (v501‑only ads, big‑int IDs, bid‑modifier ЕПК matrix, strategy compatibility, `PriorityGoals` Operation, feeds, placements, auto-targeting, etc.). Read it before writing production Direct code.
 - [`templates/yaml-bundle.md`](templates/yaml-bundle.md) — реальная folder-схема `_campaign.yaml` + `group-*.yaml`, `upload_strategy`, лимиты pool, `epk_settings`.
