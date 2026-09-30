@@ -156,3 +156,21 @@ Three live-verified steps (v5 upload/creatives, v501 ads):
 3. Attach 1–6 CreativeIds to the ad: Ads.add `VideoExtensionIds:[…]`; Ads.update `VideoExtensionIds:{Items:[…]}`.
 
 Tool: `yandex_direct_upload_video` (url / file_path / base64, or `video_id` to finish). Do **not** put AdVideos ids into `video_extension_ids`. Spec: MP4/WebM/MOV/AVI, 5–60 s, ≥360p, ≤100 MB.
+
+## 25. Места показа на поиске (PlacementTypes) — живут внутри BiddingStrategy.Search
+
+В интерфейсе Директа блок «Места показа» для ЕПК позволяет разделять показы:
+- «Поисковая выдача» (`SearchResults`)
+- «Товарная галерея» (`ProductGallery`)
+- «Динамические места» (`DynamicPlaces`)
+- «Яндекс Карты» (`Maps`)
+- «Список организаций в поисковой выдаче» (`SearchOrganizationList`)
+
+В Direct API v501:
+- `PlacementTypes` **не является** отдельным полем `UnifiedCampaign` (попытка передать его на верхнем уровне даёт 8000 «unknown parameter»).
+- Поле живёт строго внутри **`UnifiedCampaign.BiddingStrategy.Search.PlacementTypes`** со значениями `"YES"` / `"NO"`.
+- В `Campaigns.get` для выборки этих полей **обязательно** передавать специальный параметр:
+  `UnifiedCampaignSearchStrategyPlacementTypesFieldNames: ["SearchResults", "ProductGallery", "DynamicPlaces", "Maps", "SearchOrganizationList"]`.
+- В `Campaigns.update` при обновлении необходимо сохранять текущие параметры поисковой автостратегии и передавать обновлённый `PlacementTypes`.
+- Нельзя отключить все места показа одновременно (хотя бы одно должно быть `"YES"`).
+- Инструменты: `yandex_direct_set_placements` (action: "get" / "set"), `yandex_direct_get_campaign_details` (автоматически включает PlacementTypes), `yandex_direct_update_campaign` (параметр `search_placements`).

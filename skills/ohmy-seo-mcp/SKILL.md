@@ -29,7 +29,7 @@ Prefer these **typed MCP tools** — they embed the quirks (v501 endpoints, big�
 | **Build from YAML folder** | `yandex_direct_upload_from_yaml` — **папка** с `_campaign.yaml` + `group-*.yaml`; dry‑run → `plan_hash` → live; `epk_settings` post‑create |
 | **Build from CSV** | `yandex_direct_upload_campaign_bundle` |
 | **Create piece‑by‑piece (DRAFT)** | `yandex_direct_create_campaign`, `…_create_adgroup`, `…_create_ad_unified`, `…_create_sitelinks_set`, `…_create_promo_extension`, `…_upload_image`, `…_upload_video` |
-| **Point‑edit live objects** | `yandex_direct_update_campaign`, `…_update_adgroup`, `…_update_ad`, `…_update_budgets`, `…_update_adgroup_autotargeting` |
+| **Point‑edit live objects** | `yandex_direct_update_campaign`, `…_update_adgroup`, `…_update_ad`, `…_update_budgets`, `…_update_adgroup_autotargeting`, `…_set_placements` |
 | **Targeting & corrections** | `yandex_direct_set_bid_modifiers`, `…_negative_keywords_add`, `…_link_metrika_goals` |
 | **Product feeds** | `yandex_direct_feeds` |
 | **Lifecycle** | `yandex_direct_pause_campaigns`, `…_resume_campaigns`, `…_moderate_ads`, `…_delete_campaigns` |
@@ -102,6 +102,7 @@ Beyond upload, the MCP surgically edits **existing** objects. Each update tool s
 - **`update_campaign`** — routes each field to the right place. Campaign top level: `name`, `daily_budget_micros` (manual strategy only), `excluded_sites` (площадки‑исключения РСЯ), `negative_keywords`, `notification` (email under `EmailSettings`, not `.Email`), `time_targeting` (hourly schedule). Inside `UnifiedCampaign`: typed `strategy` (below), `attribution_model` (short codes `LC`/`LSC`/`FC`/`LYDC`/`LSCCD`/`FCCD`/`LYDCCD`/`AUTO`), `settings` toggles, `tracking_params`, `counter_ids`, `priority_goals:[{goal_id, value}]` (value = conversion value / ценность конверсии). ExtendedGeoTargeting = the `settings` options `ENABLE_AREA_OF_INTEREST_TARGETING` / `ENABLE_CURRENT_AREA_TARGETING` / `ENABLE_REGULAR_AREA_TARGETING`. Escape hatches: `raw_fields` / `raw_unified_fields`.
 - **`update_adgroup`** — `name`, `region_ids`, `negative_keywords`, `tracking_params`.
 - **`update_ad`** — a combinatorial `RESPONSIVE_AD`: `titles`, `texts`, `href`, `image_hashes` (1–5), `video_extension_ids` (1–6 **CreativeIds** from `upload_video`), `sitelinks_set_id`, `ad_extensions`, `business_id`. **`carousel_image_hashes` is rejected** (`CAROUSEL_UI_ONLY`) — Direct Ads.add/update have no `Carousel`. **Pass `ad_id` as a STRING of digits** — never a JSON number. Update wraps `VideoExtensionIds` as `{Items:[…]}`. Editing creative can re‑trigger moderation.
+- **`set_placements`** — view or update ЕПК search placement types (Места показа: `search_results`, `maps`, `product_gallery`, `dynamic_places`, `search_organization_list`). `action: "get"` is read-only inspection (no confirm required); `action: "set"` updates `BiddingStrategy.Search.PlacementTypes` while preserving existing strategy settings. Requires `confirm: true` for mutations.
 - **`set_bid_modifiers`** (корректировки, `mode: add|set|delete|get`) — `bid_modifier` is a **percent coefficient** (100 = no change, 50 = −50 %, 130 = +30 %). No enable/disable toggle — change via `mode:set`. **On ЕПК only `mobile` / `desktop` / `desktop_only` / `video` apply**; demographics/regional/retargeting belong to classic types. On `add` their API keys are plural arrays: `DemographicsAdjustments` / `RegionalAdjustments` / `RetargetingAdjustments` (singular is unknown parameter). `get` still uses `DemographicsAdjustmentFieldNames`.
 - **`negative_keywords_add`** — campaign or group, `mode: replace | append | get`. Prefer `append` (reads + merges + dedupes) so you don't wipe the existing list.
 - **YAML bundle** — optional `epk_settings:` in `_campaign.yaml`, applied **post‑create to every campaign** the strategy creates (при `one-per-cluster` — к каждой `cluster-*` кампании).
@@ -130,7 +131,7 @@ Pick a strategy without hand‑building JSON. `strategy: { type, placement?, wee
 | Create ЕПК / group / combinatorial ad | `create_campaign` / `create_adgroup` / `create_ad_unified` | ✅ |
 | Upload image / video extension | `upload_image` / `upload_video` | ✅ |
 | RSYa carousel (2–10 slides) | — (Direct UI / bulk actions) | ❌ not in Ads.add/update |
-| Budget, bidding strategies, placements, hourly schedule | `create_campaign` + `update_campaign` (typed `strategy`, `time_targeting`) | ✅ |
+| Budget, bidding strategies, placements, hourly schedule | `create_campaign` + `update_campaign` (typed `strategy`, `search_placements`, `time_targeting`) + `set_placements` | ✅ |
 | Bid adjustments — device + video | `set_bid_modifiers` | ✅ |
 | Bid adjustments — demographics / regional / retargeting | `set_bid_modifiers` (pass‑through) | ❌ classic campaigns only |
 | Excluded network sites, negative keywords, attribution, extended geo, notifications | `update_campaign` | ✅ |

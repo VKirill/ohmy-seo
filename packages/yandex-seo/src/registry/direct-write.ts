@@ -18,6 +18,7 @@ import { runDirectCreatePromoExtension } from "../tools/direct-create-promo-exte
 import { runDirectUpdateAdgroupAutotargeting } from "../tools/direct-update-adgroup-autotargeting.js";
 import { runDirectSetBidModifiers } from "../tools/direct-set-bid-modifiers.js";
 import { runDirectUpdateCampaign } from "../tools/direct-update-campaign.js";
+import { runDirectSetPlacements } from "../tools/direct-set-placements.js";
 import { runDirectUpdateAdGroup } from "../tools/direct-update-adgroup.js";
 import { runDirectUpdateAd } from "../tools/direct-update-ad.js";
 import { runDirectFeeds } from "../tools/direct-feeds.js";
@@ -839,6 +840,16 @@ export function registerDirectWrite(server: McpServer): void {
         time_targeting: z.record(z.string(), z.unknown()).optional().describe("{ Schedule:{Items:[...]}, ConsiderWorkingWeekends }"),
         strategy: strategySpecSchema.optional(),
         bidding_strategy: z.record(z.string(), z.unknown()).optional().describe("Raw escape hatch — full { Search, Network } BiddingStrategy verbatim. Prefer typed `strategy`."),
+        search_placements: z
+          .object({
+            search_results: z.boolean().optional().describe("Поисковая выдача (SearchResults: YES/NO)"),
+            product_gallery: z.boolean().optional().describe("Товарная галерея (ProductGallery: YES/NO)"),
+            dynamic_places: z.boolean().optional().describe("Динамические места на поиске (DynamicPlaces: YES/NO)"),
+            maps: z.boolean().optional().describe("Размещение в Картах (Maps: YES/NO)"),
+            search_organization_list: z.boolean().optional().describe("Список организаций в поисковой выдаче (SearchOrganizationList: YES/NO)"),
+          })
+          .optional()
+          .describe("Места показов на поиске (PlacementTypes) для ЕПК. Если strategy/bidding_strategy не переданы, текущая стратегия подгружается автоматически, и в ней обновляются только эти площадки."),
         attribution_model: z.enum(["LC", "LSC", "FC", "LYDC", "LSCCD", "FCCD", "LYDCCD", "AUTO"]).optional(),
         settings: z.array(z.object({ Option: z.string(), Value: z.enum(["YES", "NO"]) })).optional().describe("ЕПК Settings toggles (ExtendedGeo = ENABLE_AREA_OF_INTEREST_TARGETING etc.)"),
         tracking_params: z.string().optional(),
@@ -863,6 +874,7 @@ export function registerDirectWrite(server: McpServer): void {
         time_targeting: args.time_targeting,
         strategy: args.strategy,
         bidding_strategy: args.bidding_strategy,
+        search_placements: args.search_placements,
         attribution_model: args.attribution_model,
         settings: args.settings,
         tracking_params: args.tracking_params,
@@ -872,6 +884,47 @@ export function registerDirectWrite(server: McpServer): void {
         raw_fields: args.raw_fields,
         raw_unified_fields: args.raw_unified_fields,
         confirm: args.confirm,
+        account: args.account,
+        client_login: args.client_login,
+      }),
+  );
+
+  server.registerTool(
+    "yandex_direct_set_placements",
+    {
+      title: "Yandex Direct — View or Set ЕПК Search Placement Types (Места показа)",
+      description:
+        "Manage search placement types (Места показа на поиске) for a ЕПК (UnifiedCampaign) campaign: " +
+        "search_results (Поисковая выдача), maps (Яндекс Карты), product_gallery (Товарная галерея), " +
+        "dynamic_places (Динамические места), and search_organization_list (Список организаций в поисковой выдаче). " +
+        "action='get' (or omitting placement flags) inspects current placements (read-only, no confirm needed). " +
+        "action='set' updates placements in BiddingStrategy.Search.PlacementTypes while preserving existing strategy params. " +
+        "Setting placements requires confirm: true, OHMY_SEO_ALLOW_LIVE_MUTATIONS=true, YANDEX_DIRECT_ALLOW_LIVE_MUTATIONS=true.",
+      inputSchema: {
+        campaign_id: z.number().int().positive().describe("Campaign ID (ЕПК / UnifiedCampaign)"),
+        action: z.enum(["get", "set"]).optional().describe("Action: 'get' (view current placements) or 'set' (update placements). Defaults to 'set' if any placement flag is passed, otherwise 'get'."),
+        search_results: z.boolean().optional().describe("Поисковая выдача (SearchResults: YES/NO)"),
+        maps: z.boolean().optional().describe("Яндекс Карты (Maps: YES/NO)"),
+        product_gallery: z.boolean().optional().describe("Товарная галерея (ProductGallery: YES/NO)"),
+        dynamic_places: z.boolean().optional().describe("Динамические места на поиске (DynamicPlaces: YES/NO)"),
+        search_organization_list: z.boolean().optional().describe("Список организаций в поисковой выдаче (SearchOrganizationList: YES/NO)"),
+        confirm: z.boolean().optional().describe("Explicit confirmation required for action='set'"),
+        acknowledge_live: z.string().optional().describe("Live mutation acknowledgement string (optional)"),
+        account: z.string().min(1).optional().describe("Account label from list_accounts (optional if default configured)"),
+        client_login: z.string().min(1).optional().describe("Agency client login for sub-client cabinets (optional)"),
+      },
+    },
+    async (args) =>
+      runDirectSetPlacements({
+        campaign_id: args.campaign_id,
+        action: args.action,
+        search_results: args.search_results,
+        maps: args.maps,
+        product_gallery: args.product_gallery,
+        dynamic_places: args.dynamic_places,
+        search_organization_list: args.search_organization_list,
+        confirm: args.confirm,
+        acknowledge_live: args.acknowledge_live,
         account: args.account,
         client_login: args.client_login,
       }),

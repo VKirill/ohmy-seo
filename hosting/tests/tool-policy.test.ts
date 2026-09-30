@@ -17,6 +17,12 @@ describe('hosted tool authorization', () => {
     expect(isHostedTool('gsc_indexing_publish')).toBe(false);
     expect(() => assertHostedCall('gtm_rollback', { to_version_id: '1' })).not.toThrow();
     expect(() => assertHostedCall('gtm_rollback', { to_version_id: '1', plan_id: 'p' })).toThrow('confirm');
+    expect(isHostedTool('yandex_direct_set_placements')).toBe(true);
+    expect(() => assertHostedCall('yandex_direct_set_placements', { campaign_id: 123, action: 'get' })).not.toThrow();
+    expect(() => assertHostedCall('yandex_direct_set_placements', { campaign_id: 123 })).not.toThrow();
+    expect(() => assertHostedCall('yandex_direct_set_placements', { campaign_id: 123, action: 'set' })).toThrow('confirm');
+    expect(() => assertHostedCall('yandex_direct_set_placements', { campaign_id: 123, maps: true })).toThrow('confirm');
+    expect(() => assertHostedCall('yandex_direct_set_placements', { campaign_id: 123, maps: true, confirm: true })).not.toThrow();
   });
   it.each(['register_google_service_account', 'yandex_direct_render_to_xlsx', 'delete_account', 'start_oauth_flow',
     'yandex_direct_upload_from_yaml', 'unknown_tool'])('denies %s before execution', name => {

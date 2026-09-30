@@ -17,6 +17,16 @@ export const strategySpecSchema = z
       .enum(["search", "network", "both"])
       .optional()
       .describe("Where the strategy serves: search-only, network(РСЯ)-only, or both (default 'both' for auto; manual is always search-only)."),
+    search_placements: z
+      .object({
+        search_results: z.boolean().optional().describe("Поисковая выдача (SearchResults: YES/NO)"),
+        product_gallery: z.boolean().optional().describe("Товарная галерея (ProductGallery: YES/NO)"),
+        dynamic_places: z.boolean().optional().describe("Динамические места на поиске (DynamicPlaces: YES/NO)"),
+        maps: z.boolean().optional().describe("Размещение в Картах (Maps: YES/NO)"),
+        search_organization_list: z.boolean().optional().describe("Список организаций в поисковой выдаче (SearchOrganizationList: YES/NO)"),
+      })
+      .optional()
+      .describe("Места показов на поиске (PlacementTypes) для ЕПК стратегии"),
     weekly_budget_micros: z.number().int().positive().optional().describe("WeeklySpendLimit in ACCOUNT-currency micros (auto strategies; ≥ MinimumWeeklySpendLimit)"),
     bid_ceiling_micros: z.number().int().positive().optional().describe("Optional BidCeiling (max bid) in micros"),
     goal_id: z.number().int().positive().optional().describe("Metrika goal ID (required for conversion strategies: avg_cpa/pay_for_conversion/avg_crr/pay_for_conversion_crr; optional for max_conversions)"),

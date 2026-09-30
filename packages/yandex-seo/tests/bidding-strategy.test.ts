@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 // buildEpkBiddingStrategy is re-exported from the payload-builder barrel.
 // The barrel and its ./payloads/ modules are pure (no mcp-core/api-gateway
 // side-effects), so no vi.mock scaffolding is needed here.
-import { buildEpkBiddingStrategy } from "../src/lib/payload-builder.js";
+import { buildEpkBiddingStrategy, cleanStrategyObject } from "../src/lib/payload-builder.js";
 
 const OFF = { BiddingStrategyType: "SERVING_OFF" };
 const NETWORK_DEFAULT = { BiddingStrategyType: "NETWORK_DEFAULT" };
@@ -179,5 +179,62 @@ describe("buildEpkBiddingStrategy — required-field validation", () => {
 
   it("avg_cpc without avg_cpc_micros throws", () => {
     expect(() => buildEpkBiddingStrategy({ type: "avg_cpc" })).toThrow();
+  });
+});
+
+describe("buildEpkBiddingStrategy — search_placements", () => {
+  it("attaches PlacementTypes to Search when search_placements is provided", () => {
+    const result = buildEpkBiddingStrategy({
+      type: "manual",
+      search_placements: {
+        search_results: false,
+        maps: true,
+      },
+    });
+    expect((result.Search as Record<string, unknown>).PlacementTypes).toEqual({
+      SearchResults: "NO",
+      Maps: "YES",
+    });
+  });
+
+  it("attaches PlacementTypes to auto strategy on Search", () => {
+    const result = buildEpkBiddingStrategy({
+      type: "max_clicks",
+      weekly_budget_micros: 70000000,
+      search_placements: {
+        search_results: true,
+        maps: false,
+        product_gallery: false,
+        dynamic_places: false,
+        search_organization_list: false,
+      },
+    });
+    expect((result.Search as Record<string, unknown>).PlacementTypes).toEqual({
+      SearchResults: "YES",
+      Maps: "NO",
+      ProductGallery: "NO",
+      DynamicPlaces: "NO",
+      SearchOrganizationList: "NO",
+    });
+  });
+});
+
+describe("cleanStrategyObject", () => {
+  it("strips null, undefined, and PlacementTypes recursively", () => {
+    const raw = {
+      BiddingStrategyType: "AVERAGE_CPC",
+      PlacementTypes: { SearchResults: "YES" },
+      AverageCpc: {
+        AverageCpc: 123000,
+        WeeklySpendLimit: null,
+        Other: undefined,
+      },
+    };
+    expect(cleanStrategyObject(raw)).toEqual({
+      BiddingStrategyType: "AVERAGE_CPC",
+      AverageCpc: {
+        AverageCpc: 123000,
+      },
+    });
   });
 });

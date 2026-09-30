@@ -23,7 +23,7 @@ const WRITE_TOOLS = new Set([
   'yandex_direct_negative_keywords_add', 'yandex_direct_update_budgets', 'yandex_direct_create_sitelinks_set',
   'yandex_direct_create_promo_extension', 'yandex_direct_update_adgroup_autotargeting',
   'yandex_direct_set_bid_modifiers', 'yandex_direct_update_campaign', 'yandex_direct_update_adgroup',
-  'yandex_direct_update_ad', 'yandex_direct_feeds',
+  'yandex_direct_update_ad', 'yandex_direct_feeds', 'yandex_direct_set_placements',
   // gsc_indexing_publish is not hosted: it needs the indexing scope, which the app does not request.
   'gsc_submit_sitemap', 'gsc_delete_sitemap',
   'ga4_update_property', 'ga4_create_custom_dimension', 'ga4_update_custom_dimension', 'ga4_archive_custom_dimension',
@@ -72,7 +72,14 @@ export function assertHostedCall(name: string, args: Record<string, unknown>): v
     // gtm_rollback step 1 only reads versions and stores a short-lived plan; step 2
     // (plan_id + confirm + acknowledge_live) is the write and stays gated.
     const rollbackPreview = name === 'gtm_rollback' && args.confirm !== true && args.plan_id === undefined;
-    if (!rollbackPreview) requireWriteConfirmation(args);
+    const placementsGet = name === 'yandex_direct_set_placements' &&
+      (args.action === 'get' || (args.action === undefined &&
+        args.search_results === undefined &&
+        args.maps === undefined &&
+        args.product_gallery === undefined &&
+        args.dynamic_places === undefined &&
+        args.search_organization_list === undefined));
+    if (!rollbackPreview && !placementsGet) requireWriteConfirmation(args);
   }
   if (!GENERIC_TOOLS.has(name)) return;
   const endpoint = args.endpoint;

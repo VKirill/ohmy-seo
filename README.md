@@ -48,7 +48,7 @@
 |---|---|
 | Загрузка кампании | `yandex_direct_upload_from_yaml`, `yandex_direct_upload_campaign_bundle`, `yandex_direct_render_to_xlsx` |
 | Создание | `yandex_direct_create_campaign`, `…_adgroup`, `…_ad_unified`, `…_sitelinks_set`, `…_promo_extension`, `…_upload_image`, `…_upload_video` |
-| Point-edit | `yandex_direct_update_campaign`, `…_adgroup`, `…_ad`, `…_budgets`, `…_adgroup_autotargeting` |
+| Point-edit | `yandex_direct_update_campaign`, `…_adgroup`, `…_ad`, `…_budgets`, `…_adgroup_autotargeting`, `…_set_placements` |
 | Ставки / корректировки | `yandex_direct_set_bid_modifiers` (mobile/desktop/video), typed `strategy` |
 | Управление | `yandex_direct_pause_campaigns`, `…_resume_campaigns`, `…_delete_campaigns`, `…_moderate_ads` |
 | Таргет / минус | `yandex_direct_negative_keywords_add`, `…_feeds` |

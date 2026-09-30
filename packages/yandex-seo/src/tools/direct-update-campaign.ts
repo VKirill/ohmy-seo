@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { executeApiCall } from "../lib/api-gateway.js";
-import { buildCampaignUpdatePayload, buildEpkBiddingStrategy } from "../lib/payload-builder.js";
+import { buildCampaignUpdatePayload, buildEpkBiddingStrategy, cleanStrategyObject } from "../lib/payload-builder.js";
 import { strategySpecSchema } from "../lib/strategy-schema.js";
 import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
 
@@ -31,6 +31,16 @@ const InputSchema = z.object({
   time_targeting: z.record(z.string(), z.unknown()).optional().describe("Hourly schedule: { Schedule:{Items:[\"<day>,<c0..c23>\"]}, ConsiderWorkingWeekends:\"YES\"|\"NO\" }"),
   strategy: strategySpecSchema.optional(),
   bidding_strategy: z.record(z.string(), z.unknown()).optional().describe("Raw escape hatch — full { Search, Network } BiddingStrategy verbatim. Prefer the typed `strategy` param."),
+  search_placements: z
+    .object({
+      search_results: z.boolean().optional().describe("Поисковая выдача (SearchResults: YES/NO)"),
+      product_gallery: z.boolean().optional().describe("Товарная галерея (ProductGallery: YES/NO)"),
+      dynamic_places: z.boolean().optional().describe("Динамические места на поиске (DynamicPlaces: YES/NO)"),
+      maps: z.boolean().optional().describe("Размещение в Картах (Maps: YES/NO)"),
+      search_organization_list: z.boolean().optional().describe("Список организаций в поисковой выдаче (SearchOrganizationList: YES/NO)"),
+    })
+    .optional()
+    .describe("Места показов на поиске (PlacementTypes) для ЕПК. Если strategy/bidding_strategy не переданы, текущая стратегия подгружается автоматически, и в ней обновляются только эти площадки."),
   attribution_model: z
     .enum(["LC", "LSC", "FC", "LYDC", "LSCCD", "FCCD", "LYDCCD", "AUTO"])
     .optional()
@@ -57,7 +67,7 @@ type Input = z.infer<typeof InputSchema>;
 
 const EDITABLE_KEYS = [
   "name", "daily_budget_micros", "excluded_sites", "negative_keywords", "notification", "time_targeting",
-  "strategy", "bidding_strategy", "attribution_model", "settings", "tracking_params", "counter_ids", "goal_ids", "priority_goals",
+  "strategy", "bidding_strategy", "search_placements", "attribution_model", "settings", "tracking_params", "counter_ids", "goal_ids", "priority_goals",
   "raw_fields", "raw_unified_fields",
 ] as const;
 
@@ -73,6 +83,75 @@ export async function runDirectUpdateCampaign(input: Input) {
   if (provided.length === 0) throw new Error("no editable fields provided — pass at least one of: " + EDITABLE_KEYS.join(", "));
 
   try {
+    let finalBiddingStrategy = parsed.strategy
+      ? buildEpkBiddingStrategy({
+          ...parsed.strategy,
+          search_placements: parsed.strategy.search_placements ?? parsed.search_placements,
+        })
+      : parsed.bidding_strategy;
+
+    if (!finalBiddingStrategy && parsed.search_placements) {
+      const getRes = await executeApiCall({
+        apiName: "direct",
+        endpoint: "/json/v501/campaigns",
+        body: {
+          method: "get",
+          params: {
+            SelectionCriteria: { Ids: [parsed.campaign_id] },
+            FieldNames: ["Id"],
+            UnifiedCampaignFieldNames: ["BiddingStrategy"],
+            UnifiedCampaignSearchStrategyPlacementTypesFieldNames: [
+              "SearchResults",
+              "ProductGallery",
+              "DynamicPlaces",
+              "Maps",
+              "SearchOrganizationList",
+            ],
+          },
+        },
+        account: parsed.account,
+        client_login: parsed.client_login,
+      });
+
+      if (!getRes.ok) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({ error: "Failed to fetch existing campaign strategy for search_placements", details: getRes.body }),
+            },
+          ],
+        };
+      }
+
+      const data = getRes.data as { result?: { Campaigns?: Array<Record<string, unknown>> } };
+      const currentCamp = data?.result?.Campaigns?.[0];
+      const unified = (currentCamp?.["UnifiedCampaign"] as Record<string, unknown>) ?? {};
+      const curStrat = (unified["BiddingStrategy"] as Record<string, unknown>) ?? {};
+      const curSearch = (curStrat["Search"] as Record<string, unknown>) ?? {};
+      const curPlacements = (curSearch["PlacementTypes"] as Record<string, "YES" | "NO">) ?? {
+        SearchResults: "YES",
+        ProductGallery: "YES",
+        DynamicPlaces: "YES",
+        Maps: "YES",
+        SearchOrganizationList: "YES",
+      };
+
+      const nextPlacements: Record<string, "YES" | "NO"> = { ...curPlacements };
+      if (parsed.search_placements.search_results !== undefined) nextPlacements.SearchResults = parsed.search_placements.search_results ? "YES" : "NO";
+      if (parsed.search_placements.maps !== undefined) nextPlacements.Maps = parsed.search_placements.maps ? "YES" : "NO";
+      if (parsed.search_placements.product_gallery !== undefined) nextPlacements.ProductGallery = parsed.search_placements.product_gallery ? "YES" : "NO";
+      if (parsed.search_placements.dynamic_places !== undefined) nextPlacements.DynamicPlaces = parsed.search_placements.dynamic_places ? "YES" : "NO";
+      if (parsed.search_placements.search_organization_list !== undefined)
+        nextPlacements.SearchOrganizationList = parsed.search_placements.search_organization_list ? "YES" : "NO";
+
+      const updatedSearch = cleanStrategyObject(curSearch);
+      updatedSearch["PlacementTypes"] = nextPlacements;
+      finalBiddingStrategy = {
+        Search: updatedSearch,
+      };
+    }
+
     const body = buildCampaignUpdatePayload({
       campaign_id: parsed.campaign_id,
       name: parsed.name,
@@ -81,7 +160,7 @@ export async function runDirectUpdateCampaign(input: Input) {
       negative_keywords: parsed.negative_keywords,
       notification: parsed.notification,
       time_targeting: parsed.time_targeting,
-      bidding_strategy: parsed.strategy ? buildEpkBiddingStrategy(parsed.strategy) : parsed.bidding_strategy,
+      bidding_strategy: finalBiddingStrategy,
       attribution_model: parsed.attribution_model,
       settings: parsed.settings,
       tracking_params: parsed.tracking_params,

@@ -60,6 +60,12 @@ export async function runDirectGetCampaignDetails(input: z.infer<typeof InputSch
   const isUnified = parsed.api_version === "v501";
   const endpoint = isUnified ? "/json/v501/campaigns" : "/json/v5/campaigns";
   const typedKey = isUnified ? "UnifiedCampaignFieldNames" : "TextCampaignFieldNames";
+  const placementFieldKey = isUnified
+    ? "UnifiedCampaignSearchStrategyPlacementTypesFieldNames"
+    : "TextCampaignSearchStrategyPlacementTypesFieldNames";
+  const placementFieldNames = isUnified
+    ? ["SearchResults", "ProductGallery", "DynamicPlaces", "Maps", "SearchOrganizationList"]
+    : ["SearchResults", "ProductGallery", "DynamicPlaces"];
 
   try {
     const result = await executeApiCall({
@@ -71,6 +77,7 @@ export async function runDirectGetCampaignDetails(input: z.infer<typeof InputSch
           SelectionCriteria: selectionCriteria,
           FieldNames: parsed.field_names ?? DEFAULT_FIELD_NAMES,
           [typedKey]: parsed.typed_field_names ?? DEFAULT_TYPED_FIELD_NAMES,
+          [placementFieldKey]: placementFieldNames,
           Page: { Limit: parsed.limit },
         },
       },

@@ -29,9 +29,18 @@ export type StrategyType =
 
 export type StrategyPlacement = "search" | "network" | "both";
 
+export interface StrategySearchPlacements {
+  search_results?: boolean;
+  product_gallery?: boolean;
+  dynamic_places?: boolean;
+  maps?: boolean;
+  search_organization_list?: boolean;
+}
+
 export interface StrategySpec {
   type: StrategyType;
   placement?: StrategyPlacement; // default: "both" for auto; forced search-only for manual
+  search_placements?: StrategySearchPlacements;
   weekly_budget_micros?: number;
   bid_ceiling_micros?: number;
   goal_id?: number;
@@ -75,22 +84,56 @@ function buildAuto(spec: StrategySpec): Record<string, unknown> {
   }
 }
 
+function buildPlacementTypes(placements: StrategySearchPlacements): Record<string, "YES" | "NO"> {
+  const result: Record<string, "YES" | "NO"> = {};
+  if (placements.search_results !== undefined) result.SearchResults = placements.search_results ? "YES" : "NO";
+  if (placements.product_gallery !== undefined) result.ProductGallery = placements.product_gallery ? "YES" : "NO";
+  if (placements.dynamic_places !== undefined) result.DynamicPlaces = placements.dynamic_places ? "YES" : "NO";
+  if (placements.maps !== undefined) result.Maps = placements.maps ? "YES" : "NO";
+  if (placements.search_organization_list !== undefined)
+    result.SearchOrganizationList = placements.search_organization_list ? "YES" : "NO";
+  return result;
+}
+
+/** Recursively cleans undefined/null fields and existing PlacementTypes from strategy objects before update */
+export function cleanStrategyObject(obj: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value === null || value === undefined) continue;
+    if (key === "PlacementTypes") continue;
+    if (typeof value === "object" && !Array.isArray(value)) {
+      const sub = cleanStrategyObject(value as Record<string, unknown>);
+      if (Object.keys(sub).length > 0) result[key] = sub;
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
 /**
  * Build the ЕПК { Search, Network } BiddingStrategy from a friendly spec, applying the
  * live-verified compatibility rules so the API never returns "not compatible".
  */
 export function buildEpkBiddingStrategy(spec: StrategySpec): BiddingStrategyStruct {
   const OFF = { BiddingStrategyType: "SERVING_OFF" };
+  const placementTypes = spec.search_placements ? buildPlacementTypes(spec.search_placements) : undefined;
 
   if (spec.type === "manual") {
     // HIGHEST_POSITION only pairs with SERVING_OFF (search-only).
-    return { Search: { BiddingStrategyType: "HIGHEST_POSITION" }, Network: { ...OFF } };
+    const search: Record<string, unknown> = { BiddingStrategyType: "HIGHEST_POSITION" };
+    if (placementTypes && Object.keys(placementTypes).length > 0) search["PlacementTypes"] = placementTypes;
+    return { Search: search, Network: { ...OFF } };
   }
   if (spec.type === "serving_off") {
     return { Search: { ...OFF }, Network: { ...OFF } };
   }
 
   const strat = buildAuto(spec);
+  if (placementTypes && Object.keys(placementTypes).length > 0) {
+    strat["PlacementTypes"] = placementTypes;
+  }
+
   const placement = spec.placement ?? "both";
   if (placement === "network") return { Search: { ...OFF }, Network: strat };
   if (placement === "search") return { Search: strat, Network: { ...OFF } };
