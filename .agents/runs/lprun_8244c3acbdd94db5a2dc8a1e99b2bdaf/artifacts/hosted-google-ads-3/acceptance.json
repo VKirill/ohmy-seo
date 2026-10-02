@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "task_id": "hosted-google-ads-3",
+  "task_sha256": "851c4308bd7c8cade2b9186c311228270a749ce38f57d4589ec5aafaee75bccc",
+  "attempt": 1,
+  "provider_exit": 0,
+  "report": "complete",
+  "report_sha256": "945c279da30ff62de41930bf354dc15ed66cbcfa4d211be48800d6428d5ea9b4",
+  "owns_check": "passed",
+  "verification": "passed",
+  "review": "not_required",
+  "accepted": true,
+  "accepted_at": "2026-10-02T23:07:32.935Z",
+  "provider": "codex",
+  "model": "gpt-6-luna"
+}
