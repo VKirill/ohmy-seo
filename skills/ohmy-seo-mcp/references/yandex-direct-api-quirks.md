@@ -192,3 +192,7 @@ Tool: `yandex_direct_upload_video` (url / file_path / base64, or `video_id` to f
 - **Категории API:** `EXACT` (целевые запросы), `ALTERNATIVE` (альтернативные), `COMPETITOR` (запросы с упоминанием конкурентов), `BROADER` (сопутствующие / широкие запросы), `ACCESSORY` (запросы с упоминанием аксессуаров).
 - **Устаревшие имена:** имя `TARGET_QUERIES` не имеет аналога среди категорий фраз и отбрасывается; `BROAD_MATCH` транслируется в `BROADER`; `EXACT_MENTION` транслируется в `EXACT`.
 - **Ошибка 5005:** «Запрещено выключать все категории в автотаргетинге». Хотя бы одна категория должна оставаться `"YES"`. Категория `EXACT` охраняется от случайного отключения.
+
+## Reports: transient failures and `ok: false`
+
+`yandex_direct_get_search_terms`, `yandex_direct_get_stats` and `/json/v5/reports` via `yandex_direct_api` retry HTTP 500/502/503/504, network errors and Direct codes 52, 1000, 9000 (2→4→8→16 s or `retryIn`, within 60 s). A failed report returns `isError: true` with `status`, `error_code` and Direct's `error` body — never treat `ok: false` as an empty report.

@@ -85,11 +85,16 @@ export async function runDirectGetSearchTerms(input: z.infer<typeof InputSchema>
 
   try {
     const result = await pollReport({ body, accountLabel: parsed.account, clientLogin: parsed.client_login });
+    const payload = result.ok
+      ? { search_terms: result.rows ?? [], ok: true, attempts: result.attempts, total_wait_ms: result.total_wait_ms }
+      // Keep Direct's status and error body so a failed report never reads as an empty one.
+      : { search_terms: [], ok: false, status: result.status, error_code: result.error_code, error: result.error, attempts: result.attempts, total_wait_ms: result.total_wait_ms };
     return {
+      ...(result.ok ? {} : { isError: true as const }),
       content: [
         {
           type: "text" as const,
-          text: JSON.stringify({ search_terms: result.rows ?? [], ok: result.ok, attempts: result.attempts, total_wait_ms: result.total_wait_ms }, null, 2),
+          text: JSON.stringify(payload, null, 2),
         },
       ],
     };

@@ -9,6 +9,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { authenticate, pool } from "./tenant.js";
 import { callTool, getRuntime, shutdownAll } from "./runtime.js";
+import { exceptionCodes, failureCodes, logToolFailure } from "./tool-log.js";
 import { parseJsonSafe } from "./json-safe.js";
 
 const PORT = Number(process.env.PORT ?? 3301);
@@ -90,10 +91,16 @@ app.post("/mcp", async (req, res) => {
     return { tools: rt.tools };
   });
 
+  let toolName: string | undefined;
+  const startedAt = Date.now();
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    toolName = request.params.name;
     try {
-      return await callTool(userId, request.params.name, request.params.arguments);
+      const result = await callTool(userId, request.params.name, request.params.arguments);
+      if (result.isError) logToolFailure(userId, request.params.name, startedAt, failureCodes(result));
+      return result;
     } catch (e) {
+      logToolFailure(userId, request.params.name, startedAt, exceptionCodes(e));
       const message = e instanceof ToolPolicyError ? e.message : "Запрос не выполнен. Проверьте подключение или повторите позже.";
       return { content: [{ type: "text" as const, text: `Ошибка: ${message}` }], isError: true };
     }
@@ -101,6 +108,10 @@ app.post("/mcp", async (req, res) => {
 
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   res.on("close", () => {
+    // An SSE response cut before its data line reaches the client as HTTP 200 with an empty body.
+    if (!res.writableFinished) {
+      console.error(`[mcp] user ${userId}: response closed unfinished after ${Date.now() - startedAt}ms${toolName ? ` (${toolName})` : ""}`);
+    }
     void transport.close();
     void server.close();
   });
@@ -168,9 +179,19 @@ const httpServer = app.listen(PORT, () => {
   console.log(`[gateway] listening on :${PORT}`);
 });
 
+/** In-flight tool calls get this long to finish before children are killed; keep below compose stop_grace_period. */
+const DRAIN_MS = 75_000;
+
 async function stop(signal: string): Promise<void> {
   console.log(`[gateway] ${signal} received, draining`);
-  httpServer.close();
+  // Stop accepting connections, let in-flight responses finish, then close idle keep-alives.
+  const drained = new Promise<void>((resolve) => httpServer.close(() => resolve()));
+  httpServer.closeIdleConnections();
+  const timedOut = await Promise.race([
+    drained.then(() => false),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(true), DRAIN_MS).unref()),
+  ]);
+  if (timedOut) console.error("[gateway] drain timed out; closing remaining requests");
   await shutdownAll();
   await pool.end().catch(() => undefined);
   process.exit(0);

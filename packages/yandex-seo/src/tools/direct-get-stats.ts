@@ -85,6 +85,7 @@ export async function runDirectGetStats(input: z.infer<typeof InputSchema>) {
   try {
     const result = await pollReport({ body, accountLabel: parsed.account, clientLogin: parsed.client_login });
     return {
+      ...(result.ok ? {} : { isError: true as const }),
       content: [
         {
           type: "text" as const,

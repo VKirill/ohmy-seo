@@ -91,7 +91,10 @@ export async function runYandexDirectApi(input: {
         augmentedReport._note =
           "Auto-promoted `params` field to `body` (Direct-shaped payload detected in params).";
       }
-      return { content: [{ type: "text" as const, text: JSON.stringify(augmentedReport, null, 2) }] };
+      return {
+        ...(report.ok ? {} : { isError: true as const }),
+        content: [{ type: "text" as const, text: JSON.stringify(augmentedReport, null, 2) }],
+      };
     }
 
     const result = await executeApiCall({

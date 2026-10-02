@@ -71,11 +71,13 @@ services:
     build:
       context: ./apps/gateway
       args:
-        OHMY_SEO_REF: ${OHMY_SEO_REF:-v0.10.5}
+        OHMY_SEO_REF: ${OHMY_SEO_REF:-v0.10.6}
       cache_from:
         - ohmy-seo-gateway:latest
     image: ohmy-seo-gateway:latest
     container_name: ohmy-seo-gateway
+    # Gateway drains in-flight tool calls (DRAIN_MS = 75s) before stopping children.
+    stop_grace_period: 90s
     read_only: true
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
