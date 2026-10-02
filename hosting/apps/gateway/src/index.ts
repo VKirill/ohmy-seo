@@ -106,7 +106,9 @@ app.post("/mcp", async (req, res) => {
     }
   });
 
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  // Plain JSON, not SSE: on calls over 15s the SDK interleaves `: keepalive` comments,
+  // which naive clients (`body.startswith("event:")`) misread as an empty response.
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   res.on("close", () => {
     // An SSE response cut before its data line reaches the client as HTTP 200 with an empty body.
     if (!res.writableFinished) {
