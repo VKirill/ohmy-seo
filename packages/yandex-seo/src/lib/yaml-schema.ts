@@ -165,6 +165,14 @@ export const AutoTargetingCategoriesSchema = z.object({
 });
 
 export const GroupSchema = z.object({
+  /**
+   * Optional campaign this group belongs to (multi-campaign bundle). The string
+   * must match a key in the campaign-level `campaigns` map (when that map is set).
+   * When ANY group in a bundle sets `campaign`, the bundle is uploaded as N Yandex
+   * campaigns (one per distinct value) instead of a single campaign. Absent →
+   * the group falls into the base `_campaign.yaml` campaign (backward-compatible).
+   */
+  campaign: z.string().min(1).optional(),
   group: z.object({
     Name: z.string().min(1),
     Type: AdGroupType,
@@ -270,6 +278,34 @@ export const CampaignSchema = z.object({
     MobileAppCampaign: z.unknown().optional(),
     DynamicTextCampaign: z.unknown().optional(),
   }),
+  /**
+   * Optional multi-campaign map: campaign display name → per-campaign overrides.
+   * Presence (or any group carrying a `campaign` field) switches the bundle to
+   * multi-campaign upload — the pipeline creates one Yandex campaign per distinct
+   * campaign name and assigns each group by its `campaign` field. Every entry
+   * inherits the base `campaign` block (Type/StartDate/strategy/counters); only
+   * `DailyBudget` may be overridden per campaign (all campaigns are ЕПК/UNIFIED,
+   * so per-campaign Type is not honoured — the pipeline is v501 UNIFIED-only).
+   * Absent → single-campaign behaviour, fully backward-compatible.
+   */
+  campaigns: z
+    .record(
+      z.string(),
+      z
+        .object({
+          DailyBudget: z
+            .object({
+              Amount: z.number().int().positive(),
+              Currency: z
+                .enum(["RUB", "USD", "EUR", "BYN", "CHF", "KZT", "TRY", "UAH"])
+                .optional(),
+            })
+            .optional(),
+          StartDate: z.string().optional(),
+        })
+        .passthrough()
+    )
+    .optional(),
   sitelinks_set: SitelinksSetSchema.optional(),
   promo_extension: PromoExtensionSchema.optional(),
   /**

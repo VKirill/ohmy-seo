@@ -370,8 +370,43 @@ export function resolveCampaignType(bundle: ReturnType<typeof loadCampaignFolder
   return "search";
 }
 
+/**
+ * A bundle is "multi-campaign" when it declares a `campaigns` map OR any group
+ * carries a `campaign` field. Such bundles upload as N Yandex campaigns.
+ */
+export function isMultiCampaignBundle(bundle: ReturnType<typeof loadCampaignFolder>): boolean {
+  return !!bundle.campaign.campaigns || bundle.groups.some((g) => !!g.campaign);
+}
+
+/**
+ * Per-campaign daily budget map (campaign name → micros) derived from the
+ * bundle's `campaigns` map DailyBudget overrides. Undefined when no override
+ * is present (pipeline then uses the global budget for every campaign).
+ */
+export function resolveDailyBudgetByCampaign(
+  bundle: ReturnType<typeof loadCampaignFolder>
+): Record<string, number> | undefined {
+  const campaigns = bundle.campaign.campaigns;
+  if (!campaigns) return undefined;
+  const map: Record<string, number> = {};
+  for (const [name, def] of Object.entries(campaigns)) {
+    const amt = (def as { DailyBudget?: { Amount?: number } }).DailyBudget?.Amount;
+    if (typeof amt === "number") map[name] = amt;
+  }
+  return Object.keys(map).length > 0 ? map : undefined;
+}
+
 /** Resolve campaign_strategy from bundle upload_strategy field. */
 export function resolveCampaignStrategy(bundle: ReturnType<typeof loadCampaignFolder>): CampaignStrategy {
+  // Multi-campaign takes precedence: assign each cluster to its group's campaign.
+  if (isMultiCampaignBundle(bundle)) {
+    const defaultCampaign = bundle.campaign.campaign.Name;
+    const cluster_to_campaign: Record<string, string> = {};
+    for (const g of bundle.groups) {
+      cluster_to_campaign[groupClusterKey(g)] = g.campaign ?? defaultCampaign;
+    }
+    return { mode: "cluster-map", cluster_to_campaign, default_campaign: defaultCampaign };
+  }
   const uploadStrategy = bundle.campaign.upload_strategy ?? "one-per-cluster";
   if (uploadStrategy === "single-campaign") {
     return { mode: "single-campaign", campaign_name: bundle.campaign.campaign.Name };
@@ -406,6 +441,7 @@ function buildBundleUploadInput(
     campaign_type: resolveCampaignType(src),
     site_url: siteUrl,
     daily_budget_amount: camp.DailyBudget.Amount,
+    daily_budget_micros_by_campaign: resolveDailyBudgetByCampaign(src),
     region_ids: src.groups[0]?.group.RegionIds ?? [213],
     bidding_strategy_type: extractBiddingStrategy(tc),
     metrika_counter_ids: tc?.CounterIds?.Items,
@@ -489,6 +525,15 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
             bundle_summary: {
               campaign_name: camp.Name,
               campaign_type: camp.Type,
+              multi_campaign: isMultiCampaignBundle(bundle),
+              campaigns_breakdown: isMultiCampaignBundle(bundle)
+                ? bundle.groups.reduce<Record<string, number>>((acc, g) => {
+                    const name = g.campaign ?? camp.Name;
+                    acc[name] = (acc[name] ?? 0) + 1;
+                    return acc;
+                  }, {})
+                : undefined,
+              per_campaign_daily_budget_micros: resolveDailyBudgetByCampaign(bundle),
               groups: bundle.groups.length,
               total_ads: bundle.groups.reduce((s, g) => s + g.ads.length, 0),
               total_keywords: bundle.groups.reduce((s, g) => s + g.keywords.length, 0),

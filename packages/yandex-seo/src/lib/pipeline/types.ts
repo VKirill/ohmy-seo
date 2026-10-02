@@ -35,7 +35,19 @@ export type CampaignStrategy =
         string
       >;
     }
-  | { mode: "single-campaign"; campaign_name: string };
+  | { mode: "single-campaign"; campaign_name: string }
+  | {
+      /**
+       * Multi-campaign bundle: each cluster is assigned to a named campaign by an
+       * explicit cluster_id → campaign name map. Distinct campaign names produce
+       * distinct Yandex campaigns (created once each, reused by name). Clusters not
+       * present in the map fall back to `default_campaign`. Emitted by
+       * resolveCampaignStrategy from a bundle's per-group `campaign` fields.
+       */
+      mode: "cluster-map";
+      cluster_to_campaign: Record<string, string>;
+      default_campaign: string;
+    };
 
 export interface UploadCampaignBundleInput {
   csv_path: string;
@@ -55,6 +67,14 @@ export interface UploadCampaignBundleInput {
    * Preferred over the deprecated `daily_budget_rub` for non-RUB accounts.
    */
   daily_budget_amount?: number;
+  /**
+   * Per-campaign daily budget override (campaign NAME → micros), for multi-campaign
+   * (cluster-map) bundles. When a campaign name has an entry here, its Campaigns.add
+   * uses THIS budget instead of the global `daily_budget_amount`. Absent campaigns
+   * fall back to the global budget. Optional & backward-compatible: single-campaign
+   * bundles never set it. Bound into plan_hash only when non-empty (see plan-hash.ts).
+   */
+  daily_budget_micros_by_campaign?: Record<string, number>;
   region_ids: number[];
   bidding_strategy_type: "WB_DAILY_BUDGET" | "HIGHEST_POSITION" | "AVERAGE_CPC";
   metrika_counter_ids?: number[];

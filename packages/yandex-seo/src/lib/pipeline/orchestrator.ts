@@ -100,6 +100,7 @@ async function stage0DryRun(
     dedupe_by_name: input.dedupe_by_name ?? false,
     sitelinks_set_per_group: input.sitelinks_set_per_group ?? null,
     callouts_per_group: input.callouts_per_group ?? null,
+    daily_budget_micros_by_campaign: input.daily_budget_micros_by_campaign ?? null,
   });
 
   const expectedAckLive = `I-UNDERSTAND-BUNDLE-LIVE:${input.client_login ?? yandexLogin}:${planHash.slice(0, 12)}`;
@@ -618,6 +619,7 @@ export async function uploadCampaignBundle(
     dedupe_by_name: input.dedupe_by_name ?? false,
     sitelinks_set_per_group: input.sitelinks_set_per_group ?? null,
     callouts_per_group: input.callouts_per_group ?? null,
+    daily_budget_micros_by_campaign: input.daily_budget_micros_by_campaign ?? null,
   });
 
   const expectedAckLive = `I-UNDERSTAND-BUNDLE-LIVE:${input.client_login ?? yandexLogin}:${planHash.slice(0, 12)}`;
