@@ -14,6 +14,10 @@ const READ_TOOLS = new Set([
   'gtm_list_accounts', 'gtm_list_containers', 'gtm_list_workspaces', 'gtm_list_tags',
   'gtm_list_triggers', 'gtm_list_variables', 'gtm_list_versions', 'gtm_get_version',
   'gtm_list_user_permissions',
+  'ads_list_accessible_customers', 'ads_get_customer', 'ads_list_campaigns', 'ads_list_ad_groups',
+  'ads_list_ads', 'ads_list_keywords', 'ads_list_negative_keywords', 'ads_list_budgets', 'ads_list_shared_sets',
+  'ads_run_query', 'ads_resource_metadata', 'ads_search_terms_report', 'ads_keyword_performance_report',
+  'ads_campaign_performance_report', 'ads_change_history', 'ads_recommendations',
 ]);
 
 const WRITE_TOOLS = new Set([
@@ -32,6 +36,10 @@ const WRITE_TOOLS = new Set([
   'gtm_update_tag', 'gtm_delete_tag', 'gtm_create_version', 'gtm_publish_version', 'gtm_rollback',
   'gtm_create_container', 'gtm_delete_container', 'gtm_update_account',
   'gtm_create_user_permission', 'gtm_update_user_permission', 'gtm_delete_user_permission',
+  'ads_create_campaign_budget', 'ads_create_campaign', 'ads_add_campaign_criteria', 'ads_create_ad_group',
+  'ads_add_keywords', 'ads_add_negative_keywords', 'ads_create_ad', 'ads_update_ad_group', 'ads_update_campaign',
+  'ads_attach_shared_set', 'ads_apply_recommendation', 'ads_enable_campaign', 'ads_pause_campaign', 'ads_update_budget',
+  'ads_remove_keywords', 'ads_remove_negative_keywords', 'ads_remove_ads', 'ads_remove_campaign', 'ads_detach_shared_set',
 ]);
 const GENERIC_TOOLS = new Set(['yandex_metrika_api', 'yandex_webmaster_api', 'yandex_direct_api']);
 

@@ -48,6 +48,7 @@ export const YANDEX_API_SCOPES = [
  *   tagmanager.delete.containers        gtm_delete_container
  *   tagmanager.manage.accounts          gtm_update_account
  *   tagmanager.manage.users             GTM user permissions
+ *   adwords                              Google Ads reports and confirmed mutations
  * Never add a scope without a tool that uses it and a verification demo.
  */
 export const GOOGLE_SCOPES = [
@@ -64,6 +65,7 @@ export const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/tagmanager.delete.containers",
   "https://www.googleapis.com/auth/tagmanager.manage.accounts",
   "https://www.googleapis.com/auth/tagmanager.manage.users",
+  "https://www.googleapis.com/auth/adwords",
 ] as const;
 
 export const PROVIDER_LABEL: Record<ProviderId, string> = {
@@ -78,7 +80,7 @@ export const PROVIDER_SERVICES: Record<ProviderId, string[]> = {
   yandex: ["Яндекс Метрика", "Яндекс Вебмастер"],
   "yandex-direct": ["Яндекс Директ", "Яндекс Аудитории", "Яндекс Облако"],
   "yandex-api": ["Яндекс Метрика", "Яндекс Вебмастер", "Яндекс Директ", "Яндекс Аудитории", "Яндекс Облако"],
-  google: ["Search Console", "Analytics 4", "Tag Manager"],  // чтение
+  google: ["Search Console", "Analytics 4", "Tag Manager", "Google Ads"],
 };
 
 export const ALL_PROVIDERS: ProviderId[] = ["yandex", "yandex-direct", "yandex-api", "google"];
@@ -123,7 +125,7 @@ export const FAMILY_SERVICES: Record<FamilyId, string[]> = {
     "Яндекс Аудитории",
     "Яндекс Облако",
   ],
-  google: ["Search Console", "Analytics 4", "Tag Manager"],
+  google: ["Search Console", "Analytics 4", "Tag Manager", "Google Ads"],
 };
 
 export function isProviderId(v: string): v is ProviderId {

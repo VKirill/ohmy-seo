@@ -24,6 +24,30 @@ describe('hosted tool authorization', () => {
     expect(() => assertHostedCall('yandex_direct_set_placements', { campaign_id: 123, maps: true })).toThrow('confirm');
     expect(() => assertHostedCall('yandex_direct_set_placements', { campaign_id: 123, maps: true, confirm: true })).not.toThrow();
   });
+  it('hosts Google Ads reads and gates every mutation, while keeping OAuth management unhosted', () => {
+    const reads = ['ads_list_accessible_customers', 'ads_get_customer', 'ads_list_campaigns', 'ads_list_ad_groups',
+      'ads_list_ads', 'ads_list_keywords', 'ads_list_negative_keywords', 'ads_list_budgets', 'ads_list_shared_sets',
+      'ads_run_query', 'ads_resource_metadata', 'ads_search_terms_report', 'ads_keyword_performance_report',
+      'ads_campaign_performance_report', 'ads_change_history', 'ads_recommendations'];
+    const writes = ['ads_create_campaign_budget', 'ads_create_campaign', 'ads_add_campaign_criteria', 'ads_create_ad_group',
+      'ads_add_keywords', 'ads_add_negative_keywords', 'ads_create_ad', 'ads_update_ad_group', 'ads_update_campaign',
+      'ads_attach_shared_set', 'ads_apply_recommendation', 'ads_enable_campaign', 'ads_pause_campaign', 'ads_update_budget',
+      'ads_remove_keywords', 'ads_remove_negative_keywords', 'ads_remove_ads', 'ads_remove_campaign', 'ads_detach_shared_set'];
+    for (const name of reads) {
+      expect(isHostedTool(name)).toBe(true);
+      expect(() => assertHostedCall(name, {})).not.toThrow();
+    }
+    for (const name of writes) {
+      expect(isHostedTool(name)).toBe(true);
+      expect(() => assertHostedCall(name, {})).toThrow('confirm');
+      expect(() => assertHostedCall(name, { confirm: true })).not.toThrow();
+    }
+    for (const name of ['list_google_oauth_apps', 'register_google_oauth_app', 'delete_google_oauth_app',
+      'start_google_oauth_flow', 'complete_google_oauth_flow', 'delete_google_account',
+      'set_default_google_account', 'register_google_service_account']) {
+      expect(isHostedTool(name)).toBe(false);
+    }
+  });
   it.each(['register_google_service_account', 'yandex_direct_render_to_xlsx', 'delete_account', 'start_oauth_flow',
     'yandex_direct_upload_from_yaml', 'unknown_tool'])('denies %s before execution', name => {
     expect(isHostedTool(name)).toBe(false);

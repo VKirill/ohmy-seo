@@ -51,6 +51,12 @@ export default function Privacy() {
                 and change data retention settings, and only when you explicitly confirm that action.
               </li>
               <li>
+                <strong>Google Ads</strong> (<code>adwords</code>): accessible advertising customers, campaigns, ads,
+                keywords, budgets, reports, change history and recommendations. Write access is used only for changes
+                you explicitly confirm; starting or stopping campaigns, changing budgets, applying recommendations and
+                deletions also require an explicit live-operation acknowledgement.
+              </li>
+              <li>
                 <strong>Google Tag Manager</strong> (<code>tagmanager.readonly</code>, <code>tagmanager.edit.containers</code>,{" "}
                 <code>tagmanager.edit.containerversions</code>, <code>tagmanager.publish</code>,{" "}
                 <code>tagmanager.delete.containers</code>, <code>tagmanager.manage.accounts</code>,{" "}
@@ -246,6 +252,12 @@ export default function Privacy() {
                 используется только для изменения настроек ресурса (название, часовой пояс, валюта, отрасль), создания,
                 изменения и архивации пользовательских параметров, создания и удаления ключевых событий и изменения срока
                 хранения данных — после вашего явного подтверждения.
+              </li>
+              <li>
+                <strong>Google Ads</strong> (<code>adwords</code>): доступные рекламные аккаунты, кампании, объявления,
+                ключевые слова, бюджеты, отчёты, история изменений и рекомендации. Изменения выполняются только после
+                вашего явного подтверждения; запуск и остановка кампаний, изменение бюджета, применение рекомендаций и
+                удаление дополнительно требуют явного подтверждения операции в рабочем аккаунте.
               </li>
               <li>
                 <strong>Google Tag Manager</strong> (<code>tagmanager.readonly</code>, <code>tagmanager.edit.containers</code>,{" "}

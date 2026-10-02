@@ -18,13 +18,13 @@ it('refreshes active MCP runtimes after account additions/removals, without reis
   const [updated, concurrent] = await Promise.all([getRuntime(10), getRuntime(10)]);
   expect(updated).toBe(concurrent);
   expect(updated).not.toBe(initial);
-  expect(updated.clients.size).toBe(4);
+  expect([...updated.clients.keys()]).toEqual(['yandex-seo', 'gsc', 'ga4', 'gtm', 'google-ads']);
   expect(mocks.close).toHaveBeenCalledTimes(1);
   mocks.fresh.mockResolvedValue([]);
   const empty = await getRuntime(10);
   expect(empty.clients.size).toBe(0);
   expect(mocks.materialize).toHaveBeenLastCalledWith(10, []);
-  expect(mocks.close).toHaveBeenCalledTimes(5);
+  expect(mocks.close).toHaveBeenCalledTimes(6);
 });
 it('starts the Yandex MCP server for a unified API-only connection', async () => {
   mocks.fresh.mockResolvedValue([{ provider: 'yandex-api', connectionId: 3, label: 'api-account' }]);

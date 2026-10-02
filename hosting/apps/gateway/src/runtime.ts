@@ -24,6 +24,7 @@ const PACKAGES: PackageSpec[] = [
   { id: "gsc", entry: "packages/google-search-console/dist/index.js", masterKeyEnv: "MCP_GSC_MASTER_KEY", dbPathEnv: "MCP_GSC_DB_PATH", requires: "google" },
   { id: "ga4", entry: "packages/ga4/dist/index.js", masterKeyEnv: "MCP_GA4_MASTER_KEY", dbPathEnv: "MCP_GA4_DB_PATH", requires: "google" },
   { id: "gtm", entry: "packages/gtm/dist/index.js", masterKeyEnv: "MCP_GTM_MASTER_KEY", dbPathEnv: "MCP_GTM_DB_PATH", requires: "google" },
+  { id: "google-ads", entry: "packages/google-ads/dist/index.js", masterKeyEnv: "MCP_GOOGLE_ADS_MASTER_KEY", dbPathEnv: "MCP_GOOGLE_ADS_DB_PATH", requires: "google" },
 ];
 
 /** Platform-funded SERP tooling; off unless explicitly enabled. */
@@ -79,6 +80,7 @@ async function spawnPackage(userId: number, spec: PackageSpec, tenantPath: strin
       // The hosted policy gates writes before dispatch; package confirmation gates remain active.
       OHMY_SEO_ALLOW_LIVE_MUTATIONS: "true",
       YANDEX_DIRECT_ALLOW_LIVE_MUTATIONS: "true",
+      GOOGLE_ADS_ALLOW_LIVE_MUTATIONS: "true",
     },
     stderr: "pipe",
   });
