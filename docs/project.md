@@ -1,30 +1,43 @@
-# ohmy-seo
+---
+title: ohmy-seo project map
+type: overview
+created: 2026-10-16
+updated: 2026-10-16
+status: active
+confidence: medium
+tags: [project-map, monorepo]
+sources:
+  - package.json
+  - pnpm-workspace.yaml
+  - hosting/apps/gateway/src/runtime.ts
+  - hosting/compose.yml
+  - docs/architecture.md
+  - packages/core/package.json
+  - hosting/apps/web/src/lib/db.ts
+  - hosting/deploy/angie/ohmy-seo.ru.conf
+---
 
-Монорепозиторий MCP-серверов Яндекса, Google, Mutagen и XMLStock.
-Основное описание пакетов и запуска — [README](../README.md).
+# ohmy-seo project map
 
-## Веб-сервис
+TL;DR: This page routes maintainers to the system, package, deployment, and operations references; the root [PROJECT.md](../PROJECT.md) contains agent-facing entry points and invariants.
 
-Исходники размещённого ЛК и облачного MCP сохранены в [hosting](../hosting/OPERATIONS.md).
-Рабочий сайт: https://ohmy-seo.ru, MCP: https://mcp.ohmy-seo.ru/mcp.
-Развёртывание: Docker Compose в `/home/ohmy-seo/stack` на OVH.
-Секреты и рабочая база на сервере, в репозиторий не переносятся.
+## Repository map
 
-13.09.2026: реализованы повторные подключения аккаунтов, проверка идентичности
-двух OAuth-шагов Яндекса, защита привязки к сессии и обновление состава аккаунтов
-облачного MCP. Изменения выложены, существующее подключение Директа перенесено
-на проверенный внешний ID. Проверены OAuth-сценарии, Postgres, SQLite, runtime,
-сборка Next.js и работа сайта после развёртывания.
+- `packages/*` contains local MCP workspaces, with shared infrastructure in `@ohmy-seo/mcp-core` (`pnpm-workspace.yaml:1-3`, `packages/core/package.json:5-32`).
+- `hosting/apps/web` owns the account cabinet and hosted PostgreSQL schema; `hosting/apps/gateway` authenticates hosted MCP requests and starts selected package processes (`hosting/apps/web/src/lib/db.ts:18-114`, `hosting/apps/gateway/src/runtime.ts:22-39`).
+- Docker Compose runs web, gateway, PostgreSQL, and Redis; Angie proxies public requests to loopback ports (`hosting/compose.yml:10-107`, `hosting/deploy/angie/ohmy-seo.ru.conf:1-80`).
 
-Кнопки добавления сразу открывают авторизацию провайдера без ввода почты в ЛК.
-Старые адреса `/app/connect/*` перенаправляют туда же.
+## Where to look
 
-13.09.2026 заявка приложения «ohmy-seo Директ» на полный доступ отправлена:
-в кабинете статус «новая», доступ «полный». Ожидается решение Яндекса.
-Песочница включена; Campaigns.get успешно выполнен после подачи заявки
-(HTTP 200, Request ID 7518749591486993096).
+- [System overview](overview.md) for product boundaries.
+- [Architecture](architecture.md) for the C4 system diagram and hosted request sequence.
+- [Small package reference](packages.md) for Mutagen, Roistat, and XMLStock.
+- [Data model map](data-model.md) for hosted entities and workspace-owned data model links.
+- [Deployment](deployment.md) and [hosting operations](../hosting/OPERATIONS.md) for builds, configuration, VPS operations, and releases.
 
-Добавлено единое подключение Яндекс API через одноразовый код и PKCE.
-Приложение `ohmy-seo API`: 13be6295be0248c6b36e46304891c1f9.
-Реальный сценарий в ЛК проверен; Метрика/Вебмастер работают, новая заявка
-Директа ожидает одобрения. Старое приложение Директа остаётся рабочим.
+<!-- lane-pilot:backlinks -->
+## Referenced by
+
+- [Google Ads Workspace — Overview](../packages/google-ads/docs/overview.md)
+- [Google Tag Manager workspace overview](../packages/gtm/docs/overview.md)
+- [Yandex SEO workspace overview](../packages/yandex-seo/docs/overview.md)
