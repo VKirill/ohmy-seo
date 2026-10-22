@@ -195,4 +195,8 @@ Tool: `yandex_direct_upload_video` (url / file_path / base64, or `video_id` to f
 
 ## Reports: transient failures and `ok: false`
 
-`yandex_direct_get_search_terms`, `yandex_direct_get_stats` and `/json/v5/reports` via `yandex_direct_api` retry HTTP 500/502/503/504, network errors and Direct codes 52, 1000, 9000 (2→4→8→16 s or `retryIn`, within 60 s). A failed report returns `isError: true` with `status`, `error_code` and Direct's `error` body — never treat `ok: false` as an empty report.
+`yandex_direct_get_search_terms`, `yandex_direct_get_stats` and `/json/v5/reports` via `yandex_direct_api` retry HTTP 500/502/503/504, network errors and Direct codes 52, 1000, 9000 (2→4→8→16 s or `retryIn`, within 90 s). A failed report returns `isError: true` with `status`, `error_code` and Direct's `error` body — never treat `ok: false` as an empty report.
+
+Direct lets one report be requested **at most once per 10 s**; polling sooner returns **56** «Данный метод можно запрашивать не чаще чем 1 раз в 10 секунд». The tools wait `retryIn` from 201/202 but never less than 10 s, and treat 56 as "too early": they wait and request the **same `ReportName`** again. A new name queues a new report and hits 56 again — so never retry with a fresh name.
+
+If the report is still building after 90 s, the tools return `ok: false, pending: true, report_name, retry_after_ms` (no `isError`, no rows). Repeat the same call with that `report_name` (`ReportName` for `yandex_direct_api`) after `retry_after_ms`. `yandex_direct_get_search_terms` accepts an optional `report_name`; without it the name is derived from the request (params + Moscow day, + hour for `TODAY`), so a plain repeat also picks up the same report.

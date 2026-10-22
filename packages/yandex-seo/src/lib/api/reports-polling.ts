@@ -6,9 +6,10 @@ export interface ReportPollingOpts {
   accountLabel?: string;
   clientLogin?: string;  // Client-Login header — agency sub-client login (e.g. "agency-client-login")
   body: Record<string, unknown>;  // Direct Reports request body
-  maxWaitMs?: number;  // default 60_000
+  maxWaitMs?: number;  // default 90_000 — below the hosted gateway's 120 s tool-call timeout
   processingMode?: "auto" | "online" | "offline";  // default "auto"
   retryDelaysMs?: number[];  // backoff for transient failures; default 2s → 4s → 8s → 16s
+  pollIntervalMs?: number;  // minimum gap between requests for one report; default 10_000 (Direct's limit)
 }
 
 export interface ReportPollingResult {
@@ -18,6 +19,9 @@ export interface ReportPollingResult {
   rows?: Array<Record<string, string>>;  // parsed rows
   error?: unknown;  // parsed Direct error body (JSON) or raw text
   error_code?: number;  // Direct error_code, when the body carries one
+  pending?: boolean;  // report still building when the time budget ran out — repeat with the same report_name
+  report_name?: string;  // ReportName sent to Direct; reuse it to fetch the same report
+  retry_after_ms?: number;  // when pending: how long to wait before repeating the call
   attempts: number;
   total_wait_ms: number;
 }
@@ -47,6 +51,13 @@ const TRANSIENT_HTTP = new Set([500, 502, 503, 504]);
  */
 const TRANSIENT_DIRECT_CODES = new Set([52, 1000, 9000]);
 const DEFAULT_RETRY_DELAYS_MS = [2_000, 4_000, 8_000, 16_000];
+/**
+ * Direct lets one report be requested at most once per 10 s; polling sooner
+ * returns error 56 «Данный метод можно запрашивать не чаще чем 1 раз в 10 секунд».
+ * 56 means "too early", not failure: wait and request the same ReportName again.
+ */
+const DEFAULT_POLL_INTERVAL_MS = 10_000;
+const TOO_EARLY_DIRECT_CODE = 56;
 
 /** Parse Direct's JSON error body; fall back to the raw text. */
 export function parseReportError(text: string): { error: unknown; error_code?: number } {
@@ -76,27 +87,34 @@ export async function pollReport(opts: ReportPollingOpts): Promise<ReportPolling
   const acc = resolveAccount(spec.requiredScope, opts.accountLabel);
   const token = await getAccessToken(acc.id);
   const url = spec.baseUrl + "/json/v5/reports";
-  const maxWait = opts.maxWaitMs ?? 60_000;
+  const maxWait = opts.maxWaitMs ?? 90_000;
   const mode = opts.processingMode ?? "auto";
   const retryDelays = opts.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
+  const pollInterval = opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+  const params = (opts.body as { params?: { ReportName?: unknown } }).params;
+  const reportName = typeof params?.ReportName === "string" ? params.ReportName : undefined;
 
   const start = Date.now();
+  const elapsed = () => Date.now() - start;
   let attempts = 0;
   let transientRetries = 0;
+  // Once Direct has accepted the report (201/202/56), every request counts against its 10 s limit.
+  let queued = false;
   // Last transient failure, reported instead of a bare "timeout" if the budget runs out.
   let lastFailure: Omit<ReportPollingResult, "attempts" | "total_wait_ms"> | undefined;
 
   /** Wait before the next transient retry; false when retries or the time budget are spent. */
   const backoff = async (hintMs?: number): Promise<boolean> => {
     if (transientRetries >= retryDelays.length) return false;
-    const delay = Math.min(hintMs ?? retryDelays[transientRetries]!, 30_000);
+    let delay = Math.min(hintMs ?? retryDelays[transientRetries]!, 30_000);
+    if (queued) delay = Math.max(delay, pollInterval);
     transientRetries++;
-    if (Date.now() - start + delay >= maxWait) return false;
+    if (elapsed() + delay >= maxWait) return false;
     await sleep(delay);
     return true;
   };
 
-  while (Date.now() - start < maxWait) {
+  while (elapsed() < maxWait) {
     attempts++;
     const headers: Record<string, string> = {
       "Authorization": `Bearer ${token}`,
@@ -128,19 +146,39 @@ export async function pollReport(opts: ReportPollingOpts): Promise<ReportPolling
     if (response.status === 200) {
       const tsv = await response.text();
       const rows = parseReportTsv(tsv);
-      return { ok: true, status: 200, tsv, rows, attempts, total_wait_ms: Date.now() - start };
+      return { ok: true, status: 200, tsv, rows, report_name: reportName, attempts, total_wait_ms: elapsed() };
     }
-    if (response.status === 201 || response.status === 202) {
-      await sleep(Math.min(retryInMs(response) ?? 5000, 5000));
+
+    let failure: { error: unknown; error_code?: number } | undefined;
+    if (response.status !== 201 && response.status !== 202) {
+      failure = parseReportError(await response.text());
+    }
+    if (!failure || failure.error_code === TOO_EARLY_DIRECT_CODE) {
+      // Still building (201/202) or polled too early (56): wait retryIn, never under the 10 s limit.
+      queued = true;
+      const wait = Math.max(retryInMs(response) ?? 0, pollInterval);
+      if (elapsed() + wait >= maxWait) {
+        return {
+          ok: false,
+          pending: true,
+          status: response.status,
+          ...(failure ?? {}),
+          report_name: reportName,
+          retry_after_ms: wait,
+          attempts,
+          total_wait_ms: elapsed(),
+        };
+      }
+      await sleep(wait);
       continue;
     }
-    const { error, error_code } = parseReportError(await response.text());
-    lastFailure = { ok: false, status: response.status, error, error_code };
-    if (isTransientReportFailure(response.status, error_code) && (await backoff(retryInMs(response)))) {
+
+    lastFailure = { ok: false, status: response.status, ...failure };
+    if (isTransientReportFailure(response.status, failure.error_code) && (await backoff(retryInMs(response)))) {
       continue;
     }
-    return { ...lastFailure, attempts, total_wait_ms: Date.now() - start };
+    return { ...lastFailure, attempts, total_wait_ms: elapsed() };
   }
-  if (lastFailure) return { ...lastFailure, attempts, total_wait_ms: Date.now() - start };
-  return { ok: false, status: 0, error: "timeout", attempts, total_wait_ms: Date.now() - start };
+  if (lastFailure) return { ...lastFailure, attempts, total_wait_ms: elapsed() };
+  return { ok: false, status: 0, error: "timeout", attempts, total_wait_ms: elapsed() };
 }

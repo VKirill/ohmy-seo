@@ -92,7 +92,7 @@ export async function runYandexDirectApi(input: {
           "Auto-promoted `params` field to `body` (Direct-shaped payload detected in params).";
       }
       return {
-        ...(report.ok ? {} : { isError: true as const }),
+        ...(report.ok || report.pending ? {} : { isError: true as const }),
         content: [{ type: "text" as const, text: JSON.stringify(augmentedReport, null, 2) }],
       };
     }

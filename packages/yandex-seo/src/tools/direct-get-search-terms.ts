@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { pollReport } from "../lib/api/reports-polling.js";
 import { errorToMcpContent } from "@ohmy-seo/mcp-core/errors";
 import { z } from "zod";
@@ -37,7 +38,28 @@ const InputSchema = z.object({
     .min(1)
     .optional()
     .describe("Yandex Direct agency sub-client login, sent as the Client-Login header (e.g. 'agency-client-login'). Required to pull search-term reports for an agency sub-client rather than the token owner's own account."),
+  report_name: z
+    .string()
+    .min(1)
+    .max(255)
+    .optional()
+    .describe("Report name to fetch again (from a previous `pending` response). Omit to derive a stable name from the request."),
 });
+
+/**
+ * Stable ReportName for a request: a repeated call fetches the report Direct is
+ * already building instead of queueing a new one (and hitting error 56 again).
+ * The Moscow day — plus the hour for TODAY — keeps cached reports from going stale.
+ */
+export function searchTermsReportName(params: Record<string, unknown>, clientLogin?: string, now = new Date()): string {
+  const moscow = new Date(now.getTime() + 3 * 3600_000).toISOString();
+  const bucket = params.DateRangeType === "TODAY" ? moscow.slice(0, 13) : moscow.slice(0, 10);
+  const hash = createHash("sha256")
+    .update(JSON.stringify({ params, clientLogin: clientLogin ?? null, bucket }))
+    .digest("hex")
+    .slice(0, 16);
+  return `search-terms-${hash}`;
+}
 
 export async function runDirectGetSearchTerms(input: z.infer<typeof InputSchema>) {
   const parsed = InputSchema.parse(input);
@@ -64,7 +86,6 @@ export async function runDirectGetSearchTerms(input: z.infer<typeof InputSchema>
       ],
     },
     FieldNames: parsed.field_names,
-    ReportName: `search-terms-${Date.now()}`,
     ReportType: "SEARCH_QUERY_PERFORMANCE_REPORT",
     DateRangeType: parsed.date_range_type,
     Format: "TSV",
@@ -81,16 +102,27 @@ export async function runDirectGetSearchTerms(input: z.infer<typeof InputSchema>
     params.SelectionCriteria = sc;
   }
 
+  params.ReportName = parsed.report_name ?? searchTermsReportName(params, parsed.client_login);
   const body = { params };
 
   try {
     const result = await pollReport({ body, accountLabel: parsed.account, clientLogin: parsed.client_login });
+    const meta = { report_name: result.report_name, attempts: result.attempts, total_wait_ms: result.total_wait_ms };
     const payload = result.ok
-      ? { search_terms: result.rows ?? [], ok: true, attempts: result.attempts, total_wait_ms: result.total_wait_ms }
-      // Keep Direct's status and error body so a failed report never reads as an empty one.
-      : { search_terms: [], ok: false, status: result.status, error_code: result.error_code, error: result.error, attempts: result.attempts, total_wait_ms: result.total_wait_ms };
+      ? { search_terms: result.rows ?? [], ok: true, ...meta }
+      : result.pending
+        // No search_terms key: a report still being built must not read as an empty one.
+        ? {
+            ok: false,
+            pending: true,
+            retry_after_ms: result.retry_after_ms,
+            message: "Report is still being built. Repeat the call with the same report_name after retry_after_ms.",
+            ...meta,
+          }
+        // Keep Direct's status and error body so a failed report never reads as an empty one.
+        : { search_terms: [], ok: false, status: result.status, error_code: result.error_code, error: result.error, ...meta };
     return {
-      ...(result.ok ? {} : { isError: true as const }),
+      ...(result.ok || result.pending ? {} : { isError: true as const }),
       content: [
         {
           type: "text" as const,

@@ -259,7 +259,8 @@ export function registerDirectRead(server: McpServer): void {
       description:
         "Fetches performance statistics from Yandex Direct using the Reports v5 API (POST with polling). " +
         "The API may respond with 201/202 while the report is being built server-side — this tool polls " +
-        "automatically until the report is ready (up to 60 seconds by default). " +
+        "automatically, at most once per 10 s per report as Direct requires (error 56 is retried), for up to 90 s. " +
+        "If the report is still building after that, it returns pending: true with retry_after_ms — repeat the call with the same report_name. " +
         "Returns parsed rows (one object per row) plus raw TSV, attempt count, and total wait time. " +
         "Use field_names to select metrics (Date, CampaignId, Impressions, Clicks, Cost, Conversions, Ctr, AvgCpc, etc.). " +
         "Use selection_criteria to filter by CampaignIds, AdGroupIds, or add Filter arrays. " +
@@ -395,7 +396,8 @@ export function registerDirectRead(server: McpServer): void {
       description:
         "Get actual search queries that triggered ads — critical for negative-keyword cleanup. Uses Reports v5 with polling. " +
         "Fetches SEARCH_QUERY_PERFORMANCE_REPORT for the given campaign IDs, returning the real user queries that matched your keywords. " +
-        "The API may respond with 201/202 while the report is being built — this tool polls automatically until ready (up to 60 s). " +
+        "The API may respond with 201/202 while the report is being built — this tool polls automatically, at most once per 10 s (error 56 is retried), for up to 90 s. " +
+        "If the report is still building, it returns pending: true, report_name and retry_after_ms — repeat the call with that report_name. " +
         "Use the results to identify irrelevant queries and add them as negative keywords. " +
         "For custom date ranges pass date_range_type='CUSTOM_DATE' with date_from and date_to (YYYY-MM-DD).",
       inputSchema: {
@@ -431,6 +433,12 @@ export function registerDirectRead(server: McpServer): void {
           .min(1)
           .optional()
           .describe("Yandex Direct agency sub-client login, sent as the Client-Login header (e.g. 'agency-client-login'). Use it to pull search-term reports for an agency sub-client instead of the token owner's own account."),
+        report_name: z
+          .string()
+          .min(1)
+          .max(255)
+          .optional()
+          .describe("Report name to fetch again (from a previous `pending` response). Omit to derive a stable name from the request."),
       },
       annotations: READ_ONLY,
     },
@@ -443,6 +451,7 @@ export function registerDirectRead(server: McpServer): void {
         field_names: args.field_names,
         account: args.account,
         client_login: args.client_login,
+        report_name: args.report_name,
       }),
   );
 
