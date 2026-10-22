@@ -85,6 +85,7 @@ export async function runYandexDirectApi(input: {
         body: reportBody,
         accountLabel: input.account,
         clientLogin: input.client_login,
+        forceRecheck: input.force_refresh,
       });
       const augmentedReport: typeof report & { _note?: string } = { ...report };
       if (autoPromoted) {

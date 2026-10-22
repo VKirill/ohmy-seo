@@ -10,6 +10,7 @@ const InputSchema = z.object({
   ids: z.array(z.number()).optional(),
   limit: z.number().int().positive().max(10000).default(100),
   account: z.string().optional(),
+  client_login: z.string().optional().describe("Yandex Direct agency client login for sub-client access (optional)"),
 });
 
 export async function runDirectListAdGroups(input: z.infer<typeof InputSchema>) {
@@ -35,6 +36,7 @@ export async function runDirectListAdGroups(input: z.infer<typeof InputSchema>) 
         },
       },
       account: parsed.account,
+      client_login: parsed.client_login,
     });
     return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
   } catch (e) {

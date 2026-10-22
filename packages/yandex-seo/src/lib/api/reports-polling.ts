@@ -1,6 +1,7 @@
 import { resolveAccount } from "../account-resolver.js";
 import { getAccessToken } from "../oauth/token-broker.js";
 import { getApiSpec } from "./endpoints-spec.js";
+import { blockedDirectBody, getDirectAccessBlock, recordDirectResult } from "./direct-access.js";
 
 export interface ReportPollingOpts {
   accountLabel?: string;
@@ -10,6 +11,7 @@ export interface ReportPollingOpts {
   processingMode?: "auto" | "online" | "offline";  // default "auto"
   retryDelaysMs?: number[];  // backoff for transient failures; default 2s → 4s → 8s → 16s
   pollIntervalMs?: number;  // minimum gap between requests for one report; default 10_000 (Direct's limit)
+  forceRecheck?: boolean;  // call Direct even if this login was recently denied API access
 }
 
 export interface ReportPollingResult {
@@ -22,6 +24,7 @@ export interface ReportPollingResult {
   pending?: boolean;  // report still building when the time budget ran out — repeat with the same report_name
   report_name?: string;  // ReportName sent to Direct; reuse it to fetch the same report
   retry_after_ms?: number;  // when pending: how long to wait before repeating the call
+  skipped?: boolean;  // not sent: Direct recently denied API access for this login
   attempts: number;
   total_wait_ms: number;
 }
@@ -80,11 +83,27 @@ function retryInMs(response: Response): number | undefined {
   return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : undefined;
 }
 
+/** error_string/error_detail from a parsed Direct error body, for the access-block record. */
+function directErrorText(error: unknown): { error_string?: string; error_detail?: string } {
+  const e = (error as { error?: { error_string?: unknown; error_detail?: unknown } } | undefined)?.error;
+  return {
+    error_string: e?.error_string === undefined ? undefined : String(e.error_string),
+    error_detail: e?.error_detail === undefined ? undefined : String(e.error_detail),
+  };
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function pollReport(opts: ReportPollingOpts): Promise<ReportPollingResult> {
   const spec = getApiSpec("direct");
   const acc = resolveAccount(spec.requiredScope, opts.accountLabel);
+  if (!opts.forceRecheck) {
+    const block = getDirectAccessBlock(acc.id, opts.clientLogin);
+    if (block) {
+      const body = blockedDirectBody(block);
+      return { ok: false, status: 403, error: body, error_code: block.error_code, skipped: true, attempts: 0, total_wait_ms: 0 };
+    }
+  }
   const token = await getAccessToken(acc.id);
   const url = spec.baseUrl + "/json/v5/reports";
   const maxWait = opts.maxWaitMs ?? 90_000;
@@ -146,12 +165,16 @@ export async function pollReport(opts: ReportPollingOpts): Promise<ReportPolling
     if (response.status === 200) {
       const tsv = await response.text();
       const rows = parseReportTsv(tsv);
+      recordDirectResult(acc.id, opts.clientLogin, undefined);
       return { ok: true, status: 200, tsv, rows, report_name: reportName, attempts, total_wait_ms: elapsed() };
     }
 
     let failure: { error: unknown; error_code?: number } | undefined;
     if (response.status !== 201 && response.status !== 202) {
       failure = parseReportError(await response.text());
+      if (failure.error_code !== undefined) {
+        recordDirectResult(acc.id, opts.clientLogin, { error_code: failure.error_code, ...directErrorText(failure.error) });
+      }
     }
     if (!failure || failure.error_code === TOO_EARLY_DIRECT_CODE) {
       // Still building (201/202) or polled too early (56): wait retryIn, never under the 10 s limit.

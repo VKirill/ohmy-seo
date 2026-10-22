@@ -11,6 +11,7 @@ const InputSchema = z.object({
   })).min(1).max(8),
   confirm: z.boolean(),
   account: z.string().optional(),
+  client_login: z.string().optional().describe("Yandex Direct agency client login for sub-client access (optional)"),
 });
 
 export async function runDirectCreateSitelinksSet(input: z.infer<typeof InputSchema>) {
@@ -24,6 +25,7 @@ export async function runDirectCreateSitelinksSet(input: z.infer<typeof InputSch
       endpoint: "/json/v5/sitelinks",
       body,
       account: parsed.account,
+      client_login: parsed.client_login,
     });
     return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
   } catch (e) {

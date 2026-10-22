@@ -51,6 +51,11 @@ export function registerDirectRead(server: McpServer): void {
           .min(1)
           .optional()
           .describe("Account label from list_accounts (optional if a default account is configured)"),
+        client_login: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Yandex Direct agency sub-client login, sent as the Client-Login header. Required for agency accounts, which otherwise get error 8000 «Specify the user's login in the HTTP Client-Login header»."),
       },
       annotations: READ_ONLY,
     },
@@ -62,6 +67,7 @@ export function registerDirectRead(server: McpServer): void {
         ids: args.ids,
         limit: args.limit,
         account: args.account,
+        client_login: args.client_login,
       }),
   );
 
@@ -109,6 +115,11 @@ export function registerDirectRead(server: McpServer): void {
           .min(1)
           .optional()
           .describe("Account label from list_accounts (optional if a default account is configured)"),
+        client_login: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Yandex Direct agency sub-client login, sent as the Client-Login header. Required for agency accounts, which otherwise get error 8000 «Specify the user's login in the HTTP Client-Login header»."),
       },
       annotations: READ_ONLY,
     },
@@ -121,6 +132,7 @@ export function registerDirectRead(server: McpServer): void {
         ids: args.ids,
         limit: args.limit,
         account: args.account,
+        client_login: args.client_login,
       }),
   );
 
@@ -172,6 +184,11 @@ export function registerDirectRead(server: McpServer): void {
           .min(1)
           .optional()
           .describe("Account label from list_accounts (optional if a default account is configured)"),
+        client_login: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Yandex Direct agency sub-client login, sent as the Client-Login header. Required for agency accounts, which otherwise get error 8000 «Specify the user's login in the HTTP Client-Login header»."),
       },
       annotations: READ_ONLY,
     },
@@ -185,6 +202,7 @@ export function registerDirectRead(server: McpServer): void {
         ids: args.ids,
         limit: args.limit,
         account: args.account,
+        client_login: args.client_login,
       }),
   );
 
@@ -236,6 +254,11 @@ export function registerDirectRead(server: McpServer): void {
           .min(1)
           .optional()
           .describe("Account label from list_accounts (optional if a default account is configured)"),
+        client_login: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Yandex Direct agency sub-client login, sent as the Client-Login header. Required for agency accounts, which otherwise get error 8000 «Specify the user's login in the HTTP Client-Login header»."),
       },
       annotations: READ_ONLY,
     },
@@ -249,6 +272,7 @@ export function registerDirectRead(server: McpServer): void {
         keyword_text: args.keyword_text,
         limit: args.limit,
         account: args.account,
+        client_login: args.client_login,
       }),
   );
 
@@ -374,6 +398,11 @@ export function registerDirectRead(server: McpServer): void {
           .min(1)
           .optional()
           .describe("Account label from list_accounts (optional if a default account is configured)"),
+        client_login: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Yandex Direct agency sub-client login, sent as the Client-Login header. Required for agency accounts, which otherwise get error 8000 «Specify the user's login in the HTTP Client-Login header»."),
       },
       annotations: READ_ONLY,
     },
@@ -386,6 +415,7 @@ export function registerDirectRead(server: McpServer): void {
         ad_ids: args.ad_ids,
         field_names: args.field_names,
         account: args.account,
+        client_login: args.client_login,
       }),
   );
 

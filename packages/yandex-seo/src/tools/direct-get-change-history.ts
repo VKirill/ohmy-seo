@@ -20,6 +20,7 @@ const InputSchema = z.object({
   ad_ids: AdIds.optional(),
   field_names: z.array(z.enum(CHANGE_FIELD_NAMES)).optional(),
   account: z.string().optional(),
+  client_login: z.string().optional().describe("Yandex Direct agency client login for sub-client access (optional)"),
 });
 
 export async function runDirectGetChangeHistory(input: z.infer<typeof InputSchema>) {
@@ -60,6 +61,7 @@ export async function runDirectGetChangeHistory(input: z.infer<typeof InputSchem
       endpoint: "/json/v5/changes",
       body,
       account: parsed.account,
+      client_login: parsed.client_login,
     });
     return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
   } catch (e) {

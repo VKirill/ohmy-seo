@@ -7,6 +7,7 @@ import { parseJsonSafe } from "@ohmy-seo/mcp-core";
 import { AuthError, RateLimitError, ApiError } from "@ohmy-seo/mcp-core/errors";
 import { withCache, type CacheableTool } from "@ohmy-seo/mcp-core/cache";
 import { invalidateOnWrite } from "./api/invalidation.js";
+import { blockedDirectBody, directBodyError, getDirectAccessBlock, recordDirectResult } from "./api/direct-access.js";
 
 export interface ExecuteOpts {
   apiName: ApiName;
@@ -81,6 +82,11 @@ export function assertSafeIntegerIds(value: unknown, path = "body"): void {
  * Core API gateway — resolves account, obtains token, builds URL, fires request.
  * GET requests are wrapped in withCache (skipCacheIf skips 4xx responses).
  * Non-GET success calls invalidateOnWrite to purge stale GET cache entries.
+ *
+ * Direct answers request-level failures with HTTP 200 and a top-level `{error}`
+ * body; those come back as `ok: false` (and are never cached). A login Direct
+ * denied API access to (3000/513) is not called again until its re-check
+ * window passes or `force_refresh` is set.
  */
 export async function executeApiCall(opts: ExecuteOpts): Promise<ExecuteResult> {
   const spec = getApiSpec(opts.apiName);
@@ -88,6 +94,12 @@ export async function executeApiCall(opts: ExecuteOpts): Promise<ExecuteResult> 
 
   // Resolve account: explicit label from opts.account, or implicit by requiredScope
   const acc = resolveAccount(spec.requiredScope, opts.account);
+  const isDirect = opts.apiName === "direct";
+
+  if (isDirect && !opts.force_refresh) {
+    const block = getDirectAccessBlock(acc.id, opts.client_login);
+    if (block) return { ok: false, status: 403, body: blockedDirectBody(block) };
+  }
 
   const token = await getAccessToken(acc.id);
 
@@ -117,15 +129,24 @@ export async function executeApiCall(opts: ExecuteOpts): Promise<ExecuteResult> 
       : {}),
   };
 
+  /** Turn Direct's HTTP-200 `{error}` body into a failure and track access denials. */
+  const checkDirect = (result: ExecuteResult): ExecuteResult => {
+    if (!isDirect) return result;
+    const err = directBodyError(result.ok ? result.data : result.body);
+    // A non-Direct failure (proxy HTML, 5xx) says nothing about access — leave the block state alone.
+    if (result.ok || err) recordDirectResult(acc.id, opts.client_login, err);
+    return result.ok && err ? { ok: false, status: result.status, body: result.data } : result;
+  };
+
   const doFetch = async (): Promise<ExecuteResult> => {
     try {
       const response = await request(url, init);
-      return { ok: true, status: response.status, data: response.data };
+      return checkDirect({ ok: true, status: response.status, data: response.data });
     } catch (e) {
       if (e instanceof AuthError) throw e;
       if (e instanceof RateLimitError) throw e;
       if (e instanceof ApiError) {
-        return { ok: false, status: e.status, body: tryJson(e.body) };
+        return checkDirect({ ok: false, status: e.status, body: tryJson(e.body) });
       }
       throw e;
     }
@@ -150,7 +171,7 @@ export async function executeApiCall(opts: ExecuteOpts): Promise<ExecuteResult> 
     body: normalizedBody ?? null,
   };
 
-  return withCache<ExecuteResult>(
+  const cached = await withCache<ExecuteResult>(
     {
       toolName,
       accountId: acc.id,
@@ -160,4 +181,8 @@ export async function executeApiCall(opts: ExecuteOpts): Promise<ExecuteResult> 
     },
     doFetch,
   );
+  // Entries cached before errors were detected may still hold a Direct `{error}` body.
+  return cached.ok && isDirect && directBodyError(cached.data)
+    ? { ok: false, status: cached.status, body: cached.data }
+    : cached;
 }

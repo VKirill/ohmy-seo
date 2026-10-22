@@ -55,7 +55,7 @@ async function fetchDraftAdIds(
       account,
       client_login,
     });
-    if (!res.ok) return { error: "Ads.get failed: HTTP error" };
+    if (!res.ok) return { error: topLevelApiError(res.body as Record<string, unknown>) ?? "Ads.get failed: HTTP error" };
     const data = res.data as Record<string, unknown>; // guardian: allow — Direct API response is untyped JSON
     const apiErr = topLevelApiError(data);
     if (apiErr) return { error: `Ads.get failed: ${apiErr}` };
@@ -127,7 +127,7 @@ export async function runDirectModerateAds(input: ModerateAdsInput) {
         client_login: parsed.client_login,
       });
       if (!res.ok) {
-        itemErrors.push(`chunk ${i / MODERATE_CHUNK + 1}: HTTP error`);
+        itemErrors.push(`chunk ${i / MODERATE_CHUNK + 1}: ${topLevelApiError(res.body as Record<string, unknown>) ?? "HTTP error"}`);
         continue;
       }
       const data = res.data as Record<string, unknown>; // guardian: allow — Direct API response is untyped JSON

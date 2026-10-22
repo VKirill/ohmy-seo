@@ -93,7 +93,9 @@ export function registerOauth(server: McpServer): void {
         "Returns all Yandex accounts connected via OAuth and stored in the local database. Each entry " +
         "includes the account label, linked yandex_login, granted scopes, token expiry timestamp, and " +
         "whether the account is set as default. Access and refresh tokens are never returned — they " +
-        "remain encrypted at rest. Use this to audit available accounts before calling domain tools.",
+        "remain encrypted at rest. Use this to audit available accounts before calling domain tools. " +
+        "`direct_access_denied` lists Direct logins (own cabinet or agency client_login) that answered 3000/513 " +
+        "(account blocked / no API access): Direct tools skip them until recheck_after.",
       inputSchema: {},
       annotations: READ_ONLY,
     },

@@ -11,6 +11,7 @@ const InputSchema = z.object({
   })),
   confirm: z.boolean(),
   account: z.string().optional(),
+  client_login: z.string().optional().describe("Yandex Direct agency client login for sub-client access (optional)"),
 });
 
 export async function runDirectUpdateAdgroupAutotargeting(input: z.infer<typeof InputSchema>) {
@@ -41,6 +42,7 @@ export async function runDirectUpdateAdgroupAutotargeting(input: z.infer<typeof 
         },
       },
       account: parsed.account,
+      client_login: parsed.client_login,
     });
 
     if (!kwGetResult.ok) {
@@ -65,6 +67,7 @@ export async function runDirectUpdateAdgroupAutotargeting(input: z.infer<typeof 
       endpoint: "/json/v5/keywords",
       body,
       account: parsed.account,
+      client_login: parsed.client_login,
     });
     return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
   } catch (e) {

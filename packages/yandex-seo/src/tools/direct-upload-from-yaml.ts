@@ -249,7 +249,7 @@ async function createSitelinksSetLive(
     client_login,
   });
   if (!sitelinksResult.ok) {
-    return { error: "sitelinks creation failed: HTTP error" };
+    return { error: `sitelinks creation failed: ${topLevelApiError(sitelinksResult.body as Record<string, unknown>) ?? "HTTP error"}` };
   }
   // Direct API returns nested result; shape is opaque at this layer
   const data = sitelinksResult.data as Record<string, unknown>; // guardian: allow — Direct API response is untyped JSON
@@ -288,7 +288,7 @@ async function createCalloutsLive(
     client_login,
   });
   if (!calloutResult.ok) {
-    return { ids, errors: ["callouts creation failed: HTTP error"] };
+    return { ids, errors: [`callouts creation failed: ${topLevelApiError(calloutResult.body as Record<string, unknown>) ?? "HTTP error"}`] };
   }
   const data = calloutResult.data as Record<string, unknown>; // guardian: allow — Direct API response is untyped JSON
   const calloutApiErr = topLevelApiError(data);
@@ -646,7 +646,7 @@ export async function runDirectUploadFromYaml(input: z.infer<typeof InputSchema>
         client_login: clientLogin,
       });
       if (!promoResult.ok) {
-        context.dep_errors.push(`promo extension creation failed: HTTP error`);
+        context.dep_errors.push(`promo extension creation failed: ${topLevelApiError(promoResult.body as Record<string, unknown>) ?? "HTTP error"}`);
       } else {
         const data = promoResult.data as Record<string, unknown>; // guardian: allow — Direct API response is untyped JSON
         const promoApiErr = topLevelApiError(data);

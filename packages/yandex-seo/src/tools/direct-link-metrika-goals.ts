@@ -15,6 +15,7 @@ const InputSchema = z.object({
     .describe("Goal priority for WB_DAILY_BUDGET PriorityGoals (default NORMAL)"),
   confirm: z.boolean().describe("Must be true — confirms intent to modify the campaign"),
   account: z.string().min(1).optional().describe("Account label from list_accounts (optional if a default account is configured)"),
+  client_login: z.string().optional().describe("Yandex Direct agency client login for sub-client access (optional)"),
 });
 
 type LinkInput = z.infer<typeof InputSchema>;
@@ -131,6 +132,7 @@ export async function runDirectLinkMetrikaGoals(input: LinkInput) {
         params: updateParams,
       },
       account: parsed.account,
+      client_login: parsed.client_login,
     });
 
     if (!updateResult.ok) {
@@ -184,10 +186,16 @@ export async function runDirectLinkMetrikaGoals(input: LinkInput) {
         },
       },
       account: parsed.account,
+      client_login: parsed.client_login,
     });
 
     if (!getResult.ok) {
-      warnings.push(`Could not verify persistence — Campaigns.get returned HTTP ${getResult.status}`);
+      const apiErr = (getResult.body as { error?: { error_code?: unknown; error_string?: unknown } } | undefined)?.error;
+      warnings.push(
+        apiErr
+          ? `Could not verify persistence — Campaigns.get returned Direct error ${String(apiErr.error_code)}: ${String(apiErr.error_string)}`
+          : `Could not verify persistence — Campaigns.get returned HTTP ${getResult.status}`,
+      );
     } else {
       const getData = getResult.data as Record<string, unknown>;
       const getApiResult = (getData?.result as Record<string, unknown>) ?? {};

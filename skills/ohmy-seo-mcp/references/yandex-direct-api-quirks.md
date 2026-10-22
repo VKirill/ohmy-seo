@@ -200,3 +200,11 @@ Tool: `yandex_direct_upload_video` (url / file_path / base64, or `video_id` to f
 Direct lets one report be requested **at most once per 10 s**; polling sooner returns **56** «Данный метод можно запрашивать не чаще чем 1 раз в 10 секунд». The tools wait `retryIn` from 201/202 but never less than 10 s, and treat 56 as "too early": they wait and request the **same `ReportName`** again. A new name queues a new report and hits 56 again — so never retry with a fresh name.
 
 If the report is still building after 90 s, the tools return `ok: false, pending: true, report_name, retry_after_ms` (no `isError`, no rows). Repeat the same call with that `report_name` (`ReportName` for `yandex_direct_api`) after `retry_after_ms`. `yandex_direct_get_search_terms` accepts an optional `report_name`; without it the name is derived from the request (params + Moscow day, + hour for `TODAY`), so a plain repeat also picks up the same report.
+
+## Errors in HTTP 200 bodies and blocked logins
+
+Direct answers request-level failures with **HTTP 200** and a top-level `{ "error": { error_code, error_string, error_detail } }`. All Direct tools, `yandex_direct_api` included, return these as `ok: false` with the body in `body`, and never cache them. Treat `ok: true` as success only.
+
+Error **3000** («No access to API», e.g. "The user's account is blocked») and **513** (login not connected to Direct) concern the login, not the request. After either one OhMySEO stops sending requests for that login, meaning the account or `account + client_login` pair (an agency's other sub-clients are not affected), for **6 hours**. Calls return `ok: false, status: 403, body: { skipped: true, error, blocked_since, recheck_after }` without reaching Direct. `list_accounts` shows these logins under `direct_access_denied`. Once access is fixed in the cabinet, call `yandex_direct_api` with `force_refresh: true` to check again right away; the first successful answer lifts the block.
+
+Agency accounts (`treby.treby`, `agency.vechkasov`, `kirill.vech-e`, `kirill.vech-e2` …) get **8000** «Specify the user's login in the HTTP Client-Login header» without `client_login`. Every Direct tool accepts `client_login`; list the sub-clients with `yandex_direct_api` `POST /json/v5/agencyclients` (`method: "get"`, `FieldNames: ["Login","ClientInfo"]`).

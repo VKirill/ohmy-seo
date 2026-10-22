@@ -375,6 +375,11 @@ export function registerDirectWrite(server: McpServer): void {
           .min(1)
           .optional()
           .describe("Account label from list_accounts (optional if a default account is configured)"),
+        client_login: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Yandex Direct agency sub-client login, sent as the Client-Login header. Required for agency accounts, which otherwise get error 8000 «Specify the user's login in the HTTP Client-Login header»."),
       },
     },
     async (args) =>
@@ -386,6 +391,7 @@ export function registerDirectWrite(server: McpServer): void {
         priority: args.priority,
         confirm: args.confirm,
         account: args.account,
+        client_login: args.client_login,
       }),
   );
 
@@ -534,6 +540,11 @@ export function registerDirectWrite(server: McpServer): void {
           .min(1)
           .optional()
           .describe("Account label from list_accounts (optional if a default account is configured)"),
+        client_login: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Yandex Direct agency sub-client login, sent as the Client-Login header. Required for agency accounts, which otherwise get error 8000 «Specify the user's login in the HTTP Client-Login header»."),
       },
     },
     async (args) =>
@@ -542,6 +553,7 @@ export function registerDirectWrite(server: McpServer): void {
         confirm: args.confirm,
         acknowledge_live: args.acknowledge_live,
         account: args.account,
+        client_login: args.client_login,
       }),
   );
 
@@ -667,6 +679,11 @@ export function registerDirectWrite(server: McpServer): void {
           .min(1)
           .optional()
           .describe("Account label from list_accounts (optional if a default account is configured)"),
+        client_login: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Yandex Direct agency sub-client login, sent as the Client-Login header. Required for agency accounts, which otherwise get error 8000 «Specify the user's login in the HTTP Client-Login header»."),
       },
     },
     async (args) =>
@@ -674,6 +691,7 @@ export function registerDirectWrite(server: McpServer): void {
         sitelinks: args.sitelinks,
         confirm: args.confirm,
         account: args.account,
+        client_login: args.client_login,
       }),
   );
 
@@ -710,6 +728,11 @@ export function registerDirectWrite(server: McpServer): void {
           .min(1)
           .optional()
           .describe("Account label from list_accounts (optional if a default account is configured)"),
+        client_login: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Yandex Direct agency sub-client login, sent as the Client-Login header. Required for agency accounts, which otherwise get error 8000 «Specify the user's login in the HTTP Client-Login header»."),
       },
     },
     async (args) =>
@@ -717,6 +740,7 @@ export function registerDirectWrite(server: McpServer): void {
         promo: args.promo,
         confirm: args.confirm,
         account: args.account,
+        client_login: args.client_login,
       }),
   );
 
@@ -748,6 +772,11 @@ export function registerDirectWrite(server: McpServer): void {
           .min(1)
           .optional()
           .describe("Account label from list_accounts (optional if a default account is configured)"),
+        client_login: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Yandex Direct agency sub-client login, sent as the Client-Login header. Required for agency accounts, which otherwise get error 8000 «Specify the user's login in the HTTP Client-Login header»."),
       },
     },
     async (args) =>
@@ -756,6 +785,7 @@ export function registerDirectWrite(server: McpServer): void {
         categories: args.categories,
         confirm: args.confirm,
         account: args.account,
+        client_login: args.client_login,
       }),
   );
 

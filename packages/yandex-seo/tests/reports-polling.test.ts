@@ -1,4 +1,10 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+// pollReport records Direct access denials in state.db — keep that off the developer's copy.
+process.env.MCP_YANDEX_SEO_DB_PATH = join(mkdtempSync(join(tmpdir(), "reports-polling-")), "state.db");
 
 vi.mock("../src/lib/account-resolver.js", () => ({ resolveAccount: () => ({ id: 1 }) }));
 vi.mock("../src/lib/oauth/token-broker.js", () => ({ getAccessToken: async () => "token" }));
