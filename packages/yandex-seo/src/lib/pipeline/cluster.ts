@@ -44,9 +44,13 @@ async function doCreateCampaign(args: CreateCampaignArgs): Promise<number | unde
   // WB_DAILY_BUDGET is not a valid ЕПК search strategy — map it to HIGHEST_POSITION.
   const searchStrategy =
     input.bidding_strategy_type === "WB_DAILY_BUDGET" ? "HIGHEST_POSITION" : input.bidding_strategy_type;
+  // Multi-campaign bundles may override the daily budget per campaign name;
+  // fall back to the global budget when this campaign has no override.
+  const dailyBudgetMicros =
+    input.daily_budget_micros_by_campaign?.[campaignName] ?? resolveDailyBudgetMicros(input);
   const campaignPayload = buildUnifiedCampaignPayload({
     name: campaignName,
-    daily_budget_micros: resolveDailyBudgetMicros(input),
+    daily_budget_micros: dailyBudgetMicros,
     search_strategy_type: searchStrategy,
     counter_ids: input.metrika_counter_ids,
     goal_ids: input.metrika_goal_ids,
