@@ -8,6 +8,13 @@ import { tenantKey } from "./crypto.js";
 
 const OHMY_ROOT = process.env.OHMY_SEO_ROOT ?? "/opt/ohmy-seo";
 const IDLE_MS = Number(process.env.TENANT_IDLE_MS ?? 15 * 60 * 1000);
+/**
+ * Largest single JSON-RPC line read from a child. One response is held whole in
+ * gateway memory (container limit 1.5 GB, up to 32 parallel calls), and an agent
+ * cannot use a report of this size anyway, so oversized answers are refused with
+ * a hint to narrow the request rather than buffered.
+ */
+const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 const REFRESH_MS = Number(process.env.TENANT_REFRESH_MS ?? 4 * 60 * 1000);
 
 type PackageSpec = {
@@ -33,10 +40,19 @@ const SHARED_PACKAGES: PackageSpec[] = [
   { id: "xmlstock", entry: "packages/xmlstock/dist/index.js", masterKeyEnv: "MCP_XMLSTOCK_MASTER_KEY", dbPathEnv: "MCP_XMLSTOCK_DB_PATH", requires: null },
 ];
 
+/** A failure the client should see verbatim instead of the generic stub. */
+export class GatewayUserError extends Error {
+  override name = "GatewayUserError";
+}
+
 export type Runtime = {
   userId: number;
   accountSignature: string;
+  /** Live children only: a child whose transport closed is removed and respawned on the next call. */
   clients: Map<string, Client>;
+  /** Packages that started at boot; ids missing from `clients` are respawned by getRuntime. */
+  specs: Map<string, PackageSpec>;
+  tenantPath: string;
   toolOwner: Map<string, string>;
   tools: Tool[];
   lastUsedAt: number;
@@ -45,6 +61,8 @@ export type Runtime = {
 
 const runtimes = new Map<number, Runtime>();
 const starting = new Map<number, Promise<Runtime>>();
+/** Why a child died, so the call it took down gets a clear error. */
+const deathCause = new WeakMap<Client, "overflow" | "closed">();
 
 function packagesFor(accounts: Account[]): PackageSpec[] {
   const providers = new Set<string>(accounts.map((a) => a.provider));
@@ -66,7 +84,7 @@ async function spawnPackage(userId: number, spec: PackageSpec, tenantPath: strin
       `--allow-fs-write=${tenantDir(userId)}`,
       join(OHMY_ROOT, spec.entry),
     ],
-    maxBufferSize: 16 * 1024 * 1024,
+    maxBufferSize: MAX_RESPONSE_BYTES,
     env: {
       PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
       HOME: tenantDir(userId),
@@ -92,6 +110,42 @@ async function spawnPackage(userId: number, spec: PackageSpec, tenantPath: strin
 }
 
 
+/**
+ * Wires a child so its death removes it from the runtime. The SDK closes the
+ * transport (killing the process) on a read-buffer overflow, a crash or an exit;
+ * without this the dead Client stayed in `clients` and every later call failed
+ * with "Not connected" until the idle reaper, which each failing call postponed.
+ */
+function watchClient(rt: Runtime, id: string, client: Client): void {
+  client.onerror = (error) => {
+    // The SDK's own message, not child output; it precedes the close it triggers.
+    if (error.message.startsWith("ReadBuffer exceeded")) deathCause.set(client, "overflow");
+  };
+  client.onclose = () => {
+    if (!deathCause.has(client)) deathCause.set(client, "closed");
+    if (rt.clients.get(id) !== client) return;
+    rt.clients.delete(id);
+    if (runtimes.get(rt.userId) === rt) {
+      console.error(`[runtime] user ${rt.userId}: package ${id} exited (${deathCause.get(client)}), will respawn`);
+    }
+  };
+}
+
+/** Restarts children that died since the last call; runs under the tenant's `starting` lock. */
+async function respawnDead(rt: Runtime): Promise<void> {
+  for (const [id, spec] of rt.specs) {
+    if (rt.clients.has(id)) continue;
+    try {
+      const c = await spawnPackage(rt.userId, spec, rt.tenantPath);
+      rt.clients.set(id, c);
+      watchClient(rt, id, c);
+      console.log(`[runtime] user ${rt.userId}: package ${id} respawned`);
+    } catch {
+      console.error(`[runtime] user ${rt.userId}: package ${id} failed to respawn`);
+    }
+  }
+}
+
 export async function getRuntime(userId: number): Promise<Runtime> {
   // Serialize both startup and account-set changes for the same tenant.
   const inFlight = starting.get(userId);
@@ -106,7 +160,8 @@ export async function getRuntime(userId: number): Promise<Runtime> {
     const existing = runtimes.get(userId);
     if (existing && existing.accountSignature === signature) {
       existing.lastUsedAt = Date.now();
-      materialize(userId, accounts);
+      existing.tenantPath = materialize(userId, accounts);
+      await respawnDead(existing);
       return existing;
     }
     if (existing) await shutdownRuntime(userId);
@@ -114,29 +169,15 @@ export async function getRuntime(userId: number): Promise<Runtime> {
     const specs = packagesFor(accounts);
 
     const clients = new Map<string, Client>();
+    const started = new Map<string, PackageSpec>();
     const toolOwner = new Map<string, string>();
     const tools: Tool[] = [];
-
-    for (const spec of specs) {
-      try {
-        const c = await spawnPackage(userId, spec, tenantPath);
-        clients.set(spec.id, c);
-        const listed = await c.listTools();
-        for (const t of listed.tools) {
-          // ohmy-seo tool names are already unique across packages.
-          if (!isHostedTool(t.name) || toolOwner.has(t.name)) continue;
-          toolOwner.set(t.name, spec.id);
-          tools.push(hostedTool(t));
-        }
-      } catch (e) {
-        console.error(`[runtime] user ${userId}: package ${spec.id} failed to start`);
-      }
-    }
-
     const rt: Runtime = {
       userId,
       accountSignature: signature,
       clients,
+      specs: started,
+      tenantPath,
       toolOwner,
       tools,
       lastUsedAt: Date.now(),
@@ -151,6 +192,25 @@ export async function getRuntime(userId: number): Promise<Runtime> {
         })();
       }, REFRESH_MS),
     };
+
+    for (const spec of specs) {
+      try {
+        const c = await spawnPackage(userId, spec, tenantPath);
+        clients.set(spec.id, c);
+        started.set(spec.id, spec);
+        watchClient(rt, spec.id, c);
+        const listed = await c.listTools();
+        for (const t of listed.tools) {
+          // ohmy-seo tool names are already unique across packages.
+          if (!isHostedTool(t.name) || toolOwner.has(t.name)) continue;
+          toolOwner.set(t.name, spec.id);
+          tools.push(hostedTool(t));
+        }
+      } catch (e) {
+        console.error(`[runtime] user ${userId}: package ${spec.id} failed to start`);
+      }
+    }
+
     runtimes.set(userId, rt);
     console.log(`[runtime] user ${userId}: ${clients.size} servers, ${tools.length} tools`);
     return rt;
@@ -179,7 +239,16 @@ export async function callTool(userId: number, name: string, args: unknown) {
     if (!owner) throw new Error("Инструмент недоступен для подключённых аккаунтов.");
     const client = rt.clients.get(owner);
     if (!client) throw new Error("Сервис временно недоступен.");
-    return await client.callTool({ name, arguments: input }, undefined, { timeout: 120000 });
+    try {
+      return await client.callTool({ name, arguments: input }, undefined, { timeout: 120000 });
+    } catch (e) {
+      if (rt.clients.get(owner) === client) throw e;
+      // This call took the child down (or was in flight when it died); the next call respawns it.
+      if (deathCause.get(client) === "overflow") {
+        throw new GatewayUserError(`Ответ слишком большой (больше ${MAX_RESPONSE_BYTES / 1024 / 1024} МБ). Сузьте период, число кампаний или полей и повторите.`);
+      }
+      throw new GatewayUserError("Сервис перезапускается после сбоя. Повторите запрос.");
+    }
   } finally {
     const remaining = (activeCalls.get(userId) ?? 1) - 1;
     if (remaining) activeCalls.set(userId, remaining); else activeCalls.delete(userId);

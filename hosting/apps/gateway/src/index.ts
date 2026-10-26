@@ -8,7 +8,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { authenticate, pool } from "./tenant.js";
-import { callTool, getRuntime, shutdownAll } from "./runtime.js";
+import { callTool, GatewayUserError, getRuntime, shutdownAll } from "./runtime.js";
 import { exceptionCodes, failureCodes, logToolFailure } from "./tool-log.js";
 import { parseJsonSafe } from "./json-safe.js";
 
@@ -101,7 +101,7 @@ app.post("/mcp", async (req, res) => {
       return result;
     } catch (e) {
       logToolFailure(userId, request.params.name, startedAt, exceptionCodes(e));
-      const message = e instanceof ToolPolicyError ? e.message : "Запрос не выполнен. Проверьте подключение или повторите позже.";
+      const message = e instanceof ToolPolicyError || e instanceof GatewayUserError ? e.message : "Запрос не выполнен. Проверьте подключение или повторите позже.";
       return { content: [{ type: "text" as const, text: `Ошибка: ${message}` }], isError: true };
     }
   });
