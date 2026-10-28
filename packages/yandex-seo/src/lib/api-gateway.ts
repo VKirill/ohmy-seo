@@ -4,7 +4,7 @@ import { resolveAccount } from "./account-resolver.js";
 import { getAccessToken } from "./oauth/token-broker.js";
 import { request } from "@ohmy-seo/mcp-core/http";
 import { parseJsonSafe } from "@ohmy-seo/mcp-core";
-import { AuthError, RateLimitError, ApiError } from "@ohmy-seo/mcp-core/errors";
+import { AuthError, RateLimitError, ApiError, TransientNetworkError } from "@ohmy-seo/mcp-core/errors";
 import { withCache, type CacheableTool } from "@ohmy-seo/mcp-core/cache";
 import { invalidateOnWrite } from "./api/invalidation.js";
 import { blockedDirectBody, directBodyError, getDirectAccessBlock, recordDirectResult } from "./api/direct-access.js";
@@ -79,6 +79,23 @@ export function assertSafeIntegerIds(value: unknown, path = "body"): void {
 }
 
 /**
+ * Direct can take well over 30 s on heavy reads (keywordbids with AuctionBids
+ * at the top of the hour). Two 50 s tries plus the pause stay under the hosted
+ * gateway's 120 s tool-call limit.
+ */
+const DIRECT_TIMEOUT_MS = parseInt(process.env.DIRECT_HTTP_TIMEOUT_MS ?? "50000", 10);
+const DIRECT_RETRY_DELAY_MS = 2_000;
+
+/** Direct methods that change nothing, so a timed-out call is safe to send again. */
+const DIRECT_READ_METHODS = /^(get|check\w*|hasSearchVolume|deduplicate)$/;
+
+export function isDirectRead(method: string, body: unknown): boolean {
+  if (method === "GET") return true;
+  const m = body && typeof body === "object" ? (body as { method?: unknown }).method : undefined;
+  return typeof m === "string" && DIRECT_READ_METHODS.test(m);
+}
+
+/**
  * Core API gateway — resolves account, obtains token, builds URL, fires request.
  * GET requests are wrapped in withCache (skipCacheIf skips 4xx responses).
  * Non-GET success calls invalidateOnWrite to purge stale GET cache entries.
@@ -87,6 +104,9 @@ export function assertSafeIntegerIds(value: unknown, path = "body"): void {
  * body; those come back as `ok: false` (and are never cached). A login Direct
  * denied API access to (3000/513) is not called again until its re-check
  * window passes or `force_refresh` is set.
+ *
+ * A Direct read that times out or loses the connection is sent once more;
+ * if that fails too, TransientNetworkError reaches the tool as a retryable error.
  */
 export async function executeApiCall(opts: ExecuteOpts): Promise<ExecuteResult> {
   const spec = getApiSpec(opts.apiName);
@@ -138,17 +158,29 @@ export async function executeApiCall(opts: ExecuteOpts): Promise<ExecuteResult> 
     return result.ok && err ? { ok: false, status: result.status, body: result.data } : result;
   };
 
+  const readOnly = isDirect ? isDirectRead(method, normalizedBody) : undefined;
+  const maxAttempts = readOnly ? 2 : 1;
+
   const doFetch = async (): Promise<ExecuteResult> => {
-    try {
-      const response = await request(url, init);
-      return checkDirect({ ok: true, status: response.status, data: response.data });
-    } catch (e) {
-      if (e instanceof AuthError) throw e;
-      if (e instanceof RateLimitError) throw e;
-      if (e instanceof ApiError) {
-        return checkDirect({ ok: false, status: e.status, body: tryJson(e.body) });
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const response = await request(url, init, isDirect ? { timeoutMs: DIRECT_TIMEOUT_MS } : {});
+        return checkDirect({ ok: true, status: response.status, data: response.data });
+      } catch (e) {
+        if (e instanceof AuthError) throw e;
+        if (e instanceof RateLimitError) throw e;
+        if (e instanceof ApiError) {
+          return checkDirect({ ok: false, status: e.status, body: tryJson(e.body) });
+        }
+        if (e instanceof TransientNetworkError && isDirect) {
+          if (attempt < maxAttempts) {
+            await new Promise((r) => setTimeout(r, DIRECT_RETRY_DELAY_MS));
+            continue;
+          }
+          throw new TransientNetworkError(e.kind, e.timeoutMs, attempt, readOnly);
+        }
+        throw e;
       }
-      throw e;
     }
   };
 

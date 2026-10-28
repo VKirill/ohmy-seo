@@ -67,7 +67,11 @@ export function registerGateways(server: McpServer): void {
         "MCP_YANDEX_SEO_CACHE_TTL_API, default 3600 s), and error normalisation. " +
         "GET responses are cached; POST/PUT/DELETE bypass cache and invalidate related GET entries. " +
         "Endpoint catalog and usage examples: see skill yandex-direct (cookbook.md). " +
-        "Pass client_login for agency sub-client access. Combinatorial ad Ids exceed 2^53 — pass them as quoted strings of digits inside `body`, never as JSON numbers.",
+        "Pass client_login for agency sub-client access. " +
+        "Each Direct request waits up to 50 s; a read (method get/check*) that times out or loses the connection is resent once. " +
+        "If Direct still does not answer, the tool returns isError with JSON { ok: false, error: 'timeout' | 'network', retryable: true, attempts } — " +
+        "repeat the call later; a timed-out write is never resent, check whether it was applied before repeating it. " +
+        "Combinatorial ad Ids exceed 2^53 — pass them as quoted strings of digits inside `body`, never as JSON numbers.",
       inputSchema: {
         ...GENERIC_API_INPUT,
         client_login: z.string().optional().describe("Yandex Direct agency client login for sub-client access (optional)"),

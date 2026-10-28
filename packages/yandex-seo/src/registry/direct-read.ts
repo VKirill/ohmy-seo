@@ -284,7 +284,10 @@ export function registerDirectRead(server: McpServer): void {
         "Fetches performance statistics from Yandex Direct using the Reports v5 API (POST with polling). " +
         "The API may respond with 201/202 while the report is being built server-side — this tool polls " +
         "automatically, at most once per 10 s per report as Direct requires (error 56 is retried), for up to 90 s. " +
-        "If the report is still building after that, it returns pending: true with retry_after_ms — repeat the call with the same report_name. " +
+        "If the report is still building after that, it returns pending: true with retry_after_ms — wait that long and repeat the call " +
+        "with the same report_name and the same parameters: Direct keeps building that report and returns it once ready. " +
+        "A new report_name orders a new report that starts building from scratch, so a slow report never finishes that way; " +
+        "the same report_name with different parameters is rejected by Direct. " +
         "Returns parsed rows (one object per row) plus raw TSV, attempt count, and total wait time. " +
         "Use field_names to select metrics (Date, CampaignId, Impressions, Clicks, Cost, Conversions, Ctr, AvgCpc, etc.). " +
         "Use selection_criteria to filter by CampaignIds, AdGroupIds, or add Filter arrays. " +
@@ -293,7 +296,7 @@ export function registerDirectRead(server: McpServer): void {
         report_name: z
           .string()
           .min(1)
-          .describe("Unique report name (used by Yandex to cache results server-side)"),
+          .describe("Report name, unique per set of parameters. Reuse it unchanged (with the same parameters) to fetch a report that came back pending; Direct caches built reports by this name."),
         date_range_type: z
           .enum(["TODAY", "YESTERDAY", "LAST_7_DAYS", "LAST_30_DAYS", "CUSTOM_DATE"])
           .default("LAST_7_DAYS")

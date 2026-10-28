@@ -19,6 +19,24 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * The provider sent no response within the request timeout, or the connection
+ * failed before any HTTP status (reset, DNS, TLS). Both clear up on their own.
+ * `attempts` counts the tries made; `readOnly` is false when a write may have
+ * been applied despite the missing answer.
+ */
+export class TransientNetworkError extends Error {
+  constructor(
+    public kind: "timeout" | "network",
+    public timeoutMs: number,
+    public attempts = 1,
+    public readOnly?: boolean,
+  ) {
+    super(kind === "timeout" ? `No response within ${timeoutMs} ms` : "Network error before any response");
+    this.name = "TransientNetworkError";
+  }
+}
+
 export class OAuthFlowError extends Error {
   constructor(message: string, public yandexError?: string) {
     super(message);
@@ -92,6 +110,23 @@ export function errorToMcpContent(err: unknown): McpErrorResult {
       "). Re-run start_oauth_flow to reconnect the account, or use delete_account and re-link.";
   } else if (err instanceof RateLimitError) {
     text = "Rate limited. Wait " + err.retryAfterSec + " seconds before retrying.";
+  } else if (err instanceof TransientNetworkError) {
+    const what =
+      err.kind === "timeout"
+        ? `The API did not respond within ${Math.round(err.timeoutMs / 1000)} s`
+        : "The connection to the API failed before any response";
+    const advice =
+      err.readOnly === false
+        ? "This was a write: check whether it was applied before repeating it."
+        : "Repeat the request in a minute.";
+    text = JSON.stringify({
+      ok: false,
+      error: err.kind,
+      retryable: true,
+      timeout_ms: err.timeoutMs,
+      attempts: err.attempts,
+      message: `${what} (${err.attempts} attempt${err.attempts === 1 ? "" : "s"}). ${advice}`,
+    });
   } else if (err instanceof ApiError) {
     text =
       "API error " +

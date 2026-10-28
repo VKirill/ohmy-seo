@@ -1,5 +1,5 @@
 import { fetch, type RequestInit } from "undici";
-import { AuthError, RateLimitError, ApiError } from "./errors.js";
+import { AuthError, RateLimitError, ApiError, TransientNetworkError } from "./errors.js";
 import { sanitizeForOutput } from "./errors.js";
 import { parseJsonSafe } from "./json-safe.js";
 
@@ -9,8 +9,18 @@ export type HttpResponse = {
   headers: Record<string, string>;
 };
 
-export async function request(url: string, init?: RequestInit): Promise<HttpResponse> {
-  const timeoutMs = parseInt(process.env.HTTP_TIMEOUT_MS ?? "30000", 10);
+export type RequestOptions = {
+  /** Time to wait for the response headers; defaults to HTTP_TIMEOUT_MS (30 s). */
+  timeoutMs?: number;
+};
+
+/**
+ * Fetch with a timeout. A timeout or a connection failure before any response
+ * throws TransientNetworkError, so tools can report it as retryable instead of
+ * a bare AbortError / "fetch failed".
+ */
+export async function request(url: string, init?: RequestInit, opts: RequestOptions = {}): Promise<HttpResponse> {
+  const timeoutMs = opts.timeoutMs ?? parseInt(process.env.HTTP_TIMEOUT_MS ?? "30000", 10);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -27,6 +37,11 @@ export async function request(url: string, init?: RequestInit): Promise<HttpResp
       headers,
       signal: controller.signal,
     });
+  } catch (e) {
+    if (controller.signal.aborted) throw new TransientNetworkError("timeout", timeoutMs);
+    // undici reports resets, DNS and TLS failures as TypeError("fetch failed").
+    if (e instanceof TypeError && e.message === "fetch failed") throw new TransientNetworkError("network", timeoutMs);
+    throw e;
   } finally {
     clearTimeout(timer);
   }
