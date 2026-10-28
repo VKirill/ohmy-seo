@@ -287,7 +287,7 @@ export function registerDirectRead(server: McpServer): void {
         "If the report is still building after that, it returns pending: true with retry_after_ms — wait that long and repeat the call " +
         "with the same report_name and the same parameters: Direct keeps building that report and returns it once ready. " +
         "A new report_name orders a new report that starts building from scratch, so a slow report never finishes that way; " +
-        "the same report_name with different parameters is rejected by Direct. " +
+        "keep one report_name per set of parameters: Direct does not reject the same name with other parameters, it builds a different report. " +
         "Returns parsed rows (one object per row) plus raw TSV, attempt count, and total wait time. " +
         "Use field_names to select metrics (Date, CampaignId, Impressions, Clicks, Cost, Conversions, Ctr, AvgCpc, etc.). " +
         "Use selection_criteria to filter by CampaignIds, AdGroupIds, or add Filter arrays. " +
